@@ -1002,7 +1002,8 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
               {th("start", "起讫", true)}
               <th>地址</th>
               {STAT_FIELDS.map((f) => th(f.key, f.label, true))}
-              <th>备注 / 出处</th>
+              <th>备注</th>
+              <th>出处</th>
             </tr>
           </thead>
           <tbody>
@@ -1020,10 +1021,11 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
                   {u.precision === "city" && <div className="dimtext mono small">坐标待定位</div>}
                 </td>
                 {STAT_FIELDS.map((f) => <td key={f.key} className="mono">{fmtNum(u.stats[f.key])}</td>)}
-                <td className="small">{u.remark}{u.source ? <div className="dimtext small">出处:{u.source}</div> : null}</td>
+                <td className="small">{u.remark}</td>
+                <td className="small">{u.source || <span className="dimtext">—</span>}</td>
               </tr>
             ))}
-            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 1} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
+            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
           </tbody>
         </table>
       </div>
