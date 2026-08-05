@@ -1,44 +1,61 @@
 # 中国电子工业历史地图 · Historical Atlas of China's Electronics Industry
 
-单人维护的交互式历史地图:时间轴上的厂所兴废、分立与合并谱系、可检索的引文表。纯静态站点,只读展示,无任何在线编辑或投稿功能——**只有你能改数据,方式是覆盖仓库里的一个 Excel 文件**。
+单人维护的交互式历史地图:时间轴上的厂所兴废、沿革谱系、产品记录与厂所名录。纯静态站点,只读展示,无任何在线编辑或投稿功能——**只有你能改数据,方式是覆盖仓库里的那一个 Excel 文件**。
+
+现有数据为上海一市:29 家厂所 / 研究所、47 条半导体器件记录、19 种计算机整机,统计断面为 1990 年。
+
+## 数据源
+
+仓库根目录的 **`CN_Electronic_Industry.xlsx`** 是全站唯一数据源,三张表:
+
+| 工作表 | 内容 | 关键列 |
+| --- | --- | --- |
+| `Fact and Comp-Shanghai` | 厂所名录 | A 列单位名称、`Industry`(电子计算机 / 半导体 / 外围设备 / 研究所)、`Product`、`Start Date`、`End Date`、`Founder`、`City`、`Add.`、1990 年统计块(职工总数…实现利润)、`Remark`、`Source` |
+| `Semi-Product` | 半导体器件投产记录 | `Product`、`Factory`、`Time`、`Personnel`、`Remark` |
+| `Comp-Product` | 计算机整机研制记录 | `Product`、`字长`、`内存`、`Speed（次秒）`、`Research Insti`、`Factory`、`Time`、`Personnel`、`Remark` |
+
+约定与容错:
+
+- **日期**写作 `YYYYMMDD`,月/日不详处补 0(`19410000` = 只知 1941 年);`1960 late`、`19650000-19720500；19730000技术鉴定` 这类写法也能读,取其中第一个日期,原文在界面上照录。
+- **`Founder` 列**是前身与来历的叙述,`->` 分隔的链条会被拆成有序的沿革步骤显示。
+- 单位名称的**括号别名**(如「上海电子计算机厂（上无十三）」)自动生效;其余简称与手民之误在 `src/geocode.js` 的 `ALIASES` 里对照(如「上五十三」当为「上无十三」)。只收录能确证同一性的写法。
+- 表内新增行无需改代码:未在对照表中的单位会落在市中心并标为「坐标待定位」。
+
+## 站点上的两类推定
+
+原表没有的东西,站点会算出来,但都在界面上注明依据,不与原始记载混为一谈:
+
+**一、经纬度。** 原表只有门牌地址。`src/geocode.js` 按路名与门牌号人工推定落点,分三档精度:`street`(街段,误差数百米)、`district`(区级)、`city`(原表未著录地址,落在市中心,节点带红点并虚线描边)。**这些坐标只用于制图定位,不可当作测绘成果引用。** 要换成实测值有两条路:改 `geocode.js` 里的 `PLACES`,或在 `Fact and Comp-Shanghai` 表末尾加 `Lat` / `Lng` 两列——表里的值优先。
+
+**二、沿革与协作连线。** 由 `Founder` 列的措辞推定类型(合资 / 分立 / 划归 / 合并 / 更名),连向名录中确有其名的单位;同一台整机由两家以上名录内单位共同研制的,记一条「协作」。详情页每条都标着「推定」与依据来源。谱系页里只由协作连起来的一族标作「群」,与沿革承继的「系」区分。
+
+## 日常更新数据(唯一的维护动作)
+
+**方式一 · 网页端(不用装任何东西)**:在 GitHub 仓库页点 `CN_Electronic_Industry.xlsx` → 右上 **Upload files** 上传同名新文件覆盖 → Commit。Actions 自动重新构建部署,一两分钟后线上更新。
+
+**方式二 · 本地**:改完文件后 `git add -A && git commit -m "更新数据" && git push`。
+
+改动前想核对表格有没有写错,可在站点「名录」页点「导入 Excel」——**只在你自己的浏览器里预览**,线上数据不受影响,右上角会出现「● 本地预览」提示,点它即可退出。「导出 Excel」把站点当前数据按原版式回写一份,并附上推定的 `Lat` / `Lng` 两列,适合作为下一轮编辑的起点。
+
+Git 的提交历史顺带成了数据的修订史,任何一次改动都能回溯或还原。
 
 ## 结构
 
 ```
-public/data.xlsx     唯一数据源(节点 / 沿革事件 / 引文 / 字段说明 四张表)
+CN_Electronic_Industry.xlsx   唯一数据源(构建时内联进产物,线上不再请求)
 src/
-  App.jsx            界面(地图 · 谱系 · 引文)
-  xlsxio.js          Excel 读写      consts.js / utils.js
-  china.geo.json     省界底图        seed.js  内置示例数据(仅在 data.xlsx 载入失败时兜底)
+  App.jsx            界面(地图 · 谱系 · 产品 · 名录)
+  xlsxio.js          工作簿解析、事件推定与导出
+  geocode.js         地址→坐标的人工对照表、别名表
+  data.js            载入内联的工作簿      consts.js / utils.js
+  china.geo.json     省界底图(全国尺度)
+  city.geo.json      上海区界底图(城市尺度)
 .github/workflows/deploy.yml   push 即自动构建并发布到 GitHub Pages
 ```
 
 ## 一次性部署到 GitHub Pages
 
-1. 新建 GitHub 仓库(如 `electronics-atlas`),把本目录**全部内容**推送到 `main` 分支:
-
-   ```bash
-   git init && git add -A && git commit -m "初始提交"
-   git branch -M main
-   git remote add origin https://github.com/<用户名>/electronics-atlas.git
-   git push -u origin main
-   ```
-
-2. 仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
-
-几十秒后站点上线:`https://<用户名>.github.io/electronics-atlas/`。构建使用相对路径,项目页、根域名或自定义域名都能直接跑。**自定义域名**在 Settings → Pages → Custom domain 填写并按提示配 DNS 即可。
-
-## 日常更新数据(唯一的维护动作)
-
-数据全在 `public/data.xlsx`,字段含义见其中「字段说明」表。
-
-**方式一 · 网页端(不用装任何东西)**:在 GitHub 仓库页进入 `public/` → 点 `data.xlsx` → 右上 **Upload files** 上传同名新文件覆盖 → Commit。Actions 自动重新部署,一两分钟后线上更新。
-
-**方式二 · 本地**:改完 `public/data.xlsx` 后 `git add -A && git commit -m "更新数据" && git push`。
-
-改动前想核对表格有没有写错,可在站点「引文」页点「导入 Excel」——**只在你自己的浏览器里预览**,线上数据不受影响,右上角会出现「● 本地预览」提示,点它即可退出。「导出 Excel」则把站点当前数据导回一份规范的 `data.xlsx`,适合作为编辑起点。
-
-Git 的提交历史顺带成了数据的修订史,任何一次改动都能回溯或还原。
+仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**,推一次 `main` 即可。构建使用相对路径,项目页、根域名或自定义域名都能直接跑。
 
 ## 本地开发(只在改代码时需要)
 
@@ -46,15 +63,21 @@ Git 的提交历史顺带成了数据的修订史,任何一次改动都能回溯
 
 ```bash
 npm install
-npm run dev       # http://localhost:5173
+npm run dev       # http://localhost:5173,改 xlsx 会热更新
 npm run build     # 产物在 dist/
 ```
 
-注意别用 `file://` 直接打开 `dist/index.html`(浏览器禁止本地 fetch,读不到 data.xlsx);本地看构建结果请在 `dist/` 里跑 `python3 -m http.server 8000`。
+数据表在构建时以 base64 编入产物(见 `vite.config.js` 的 `xlsxAsBase64` 插件),所以 `dist/index.html` 直接用 `file://` 打开也能跑。
+
+## 底图与许可
+
+- 全国省界:`src/china.geo.json`,当代省级政区(含 1997 年后的重庆直辖市)。
+- 城市尺度区界:`src/city.geo.json`,上海 16 个市辖区,取自 [geoBoundaries](https://www.geoboundaries.org/)(gbOpen CHN ADM3, simplified),**CC BY 4.0**,坐标已取至小数点后四位并裁剪至上海市域。地图右下角标注了出处。
+- 两层底图随缩放交叉淡入淡出:全国尺度看省界,城市尺度看区界;右下角有比例尺。
+- 两者都是**当代政区**。需要历史政区可将 CHGIS 等边界转为 GeoJSON 替换(要求:FeatureCollection,`properties.name` 为政区名)。
 
 ## 已知事项
 
-- 当前 `public/data.xlsx` 为**示例数据**(多处标注「示例 / 待考」),仅演示格式,请以真实数据覆盖。
-- 底图为当代省级政区(含 1997 年后的重庆直辖市)。需要历史政区可将 CHGIS 等边界转为 GeoJSON 替换 `src/china.geo.json`(要求:FeatureCollection,`properties.name` 为政区名)。
-- 首屏 JS 约 753 KB(gzip 约 251 KB),主要来自 d3 与 SheetJS。
-- `npm audit` 会提示 SheetJS(`xlsx@0.18.5`)的原型污染通告;该风险针对解析不可信工作簿,本站只解析你自己仓库中的 `data.xlsx` 与你本人选择的文件。
+- 首屏 JS 约 850 KB(gzip 约 290 KB),主要来自 d3 与 SheetJS。
+- `npm audit` 会提示 SheetJS(`xlsx@0.18.5`)的原型污染通告;该风险针对解析不可信工作簿,本站只解析你自己仓库中的数据表与你本人选择的文件。
+- 原表中有 1 家单位(上海光学仪器研究所)未著录年份,不进入地图与谱系,只列在「名录」页。

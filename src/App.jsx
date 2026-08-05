@@ -2,22 +2,24 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import * as d3 from "d3";
 import { Play, Pause, ChevronLeft, ChevronRight, X, Plus, Minus, Upload, Download, Search, Crosshair } from "lucide-react";
 import GEO_RAW from "./china.geo.json";
-import { SEED } from "./seed.js";
-import { YEAR_MIN, YEAR_MAX, TYPE_META, EVENT_META, HUB_LABELS } from "./consts.js";
-import { clone, clampYear } from "./utils.js";
-import { EMPTY_DATA, parseWorkbookBuffer, exportWorkbook } from "./xlsxio.js";
+import CITY_RAW from "./city.geo.json";
+import { INDUSTRY_META, industryMeta, TYPE_META, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
+import { clampYear, fmtDate, fmtNum } from "./utils.js";
+import { parseWorkbook, exportWorkbook, EMPTY_DATA } from "./xlsxio.js";
+import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
 
 /* ============================================================
    中国电子工业历史地图 · Historical Atlas of China's Electronics Industry
-   Single-maintainer build:
-   · 数据源 = 仓库内 public/data.xlsx(站点启动时载入,GitHub Pages 自动部署)
-   · 只读展示站点:无贡献/审核功能,更新数据 = 覆盖 data.xlsx 并 push
+   · 数据源 = 仓库根目录的 CN_Electronic_Industry.xlsx,构建时内联进产物
+   · 只读展示站点:更新数据 = 覆盖该 xlsx 并 push,Actions 自动重建
    · 「导入 Excel」仅在本人浏览器中预览,不影响线上数据
    ============================================================ */
 
-const CHINA = GEO_RAW;
-
-const EXPAND_K = 2.2;
+const EXPAND_PX = 90;   // 同城单位散开所需的屏上跨度
+/* 放大上限:约当视野宽 7 km。再放大只会把「街段级近似」的落点显示得
+   像实测点位,超出数据本身的精度,故到此为止。 */
+const MAX_K = 1200;
+const FADE_FROM = 15, FADE_TO = 45;  // 省界底图在城市尺度上淡出
 
 /* ---------- geo: rewind polygons for d3's spherical winding ---------- */
 function rewind(fc) {
@@ -32,28 +34,51 @@ function rewind(fc) {
   });
   return f;
 }
-const GEO = rewind(CHINA);
+const GEO = rewind(GEO_RAW);
+/* 城市尺度的区界底图(现为上海 16 区);与省界层交叉淡入淡出 */
+const CITY = rewind(CITY_RAW);
+const CITY_ATTR = CITY_RAW.attribution || "";
 
 /* ---------- helpers ---------- */
-const isAlive = (e, year) => e.founded <= year && (e.ended == null || e.ended > year);
+const isAlive = (u, year) => !!u.start && u.start.y <= year && (u.end == null || u.end.y > year);
+const spanText = (u) =>
+  (u.start ? fmtDate(u.start) : "年份待考") + "–" + (u.end ? fmtDate(u.end) : "…");
+const cityLabel = (s) => ({ Shanghai: "上海", shanghai: "上海" }[s] || s);
 
-function fmtCite(c) {
-  if (!c) return "";
-  const bits = [];
-  if (c.author && c.author !== "—") bits.push(c.author);
-  bits.push("《" + c.title + "》");
-  if (c.source) bits.push(c.source);
-  if (c.locator) bits.push(c.locator);
-  if (c.year && c.year !== "—") bits.push(c.year);
-  return bits.join(",");
+/** 单链聚类:把彼此在 ~60km 内的单位归为一「城」,低倍下折叠成一个徽标。
+    用地理距离而非 City 列,新增其他城市的数据时无需另行配置。 */
+function clusterUnits(units, thresholdDeg = 0.6) {
+  const parent = units.map((_, i) => i);
+  const find = (a) => (parent[a] === a ? a : (parent[a] = find(parent[a])));
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const dy = units[i].lat - units[j].lat;
+      const dx = (units[i].lng - units[j].lng) * Math.cos((units[i].lat * Math.PI) / 180);
+      if (Math.hypot(dy, dx) <= thresholdDeg) {
+        const a = find(i), b = find(j);
+        if (a !== b) parent[b] = a;
+      }
+    }
+  }
+  const g = {};
+  units.forEach((u, i) => { const r = find(i); (g[r] = g[r] || []).push(u); });
+  return Object.values(g).map((members) => {
+    const names = members.map((m) => cityLabel(m.city)).filter(Boolean);
+    const tally = {};
+    names.forEach((n) => { tally[n] = (tally[n] || 0) + 1; });
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+    const dists = Array.from(new Set(members.map((m) => m.district).filter(Boolean)));
+    return { ids: members.map((m) => m.id), label: top ? top[0] : dists[0] || "未定位" };
+  });
 }
 
-
 /* ============================================================ MAP ============================================================ */
-function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
+function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const zoomRef = useRef(null);
+  const didFit = useRef(false);
+  const lastData = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [t, setT] = useState(() => d3.zoomIdentity);
   const [hover, setHover] = useState(null);
@@ -73,7 +98,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
     const svg = svgRef.current;
     if (!svg) return;
     const s = d3.select(svg);
-    const z = d3.zoom().scaleExtent([1, 16]).on("zoom", (ev) => setT(ev.transform));
+    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => setT(ev.transform));
     zoomRef.current = z;
     s.call(z);
     return () => { s.on(".zoom", null); };
@@ -90,46 +115,101 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
     () => (geoPath ? GEO.features.map((f, i) => ({ d: geoPath(f), key: i, name: f.properties && f.properties.name })) : []),
     [geoPath]
   );
+  const cityPaths = useMemo(
+    () => (geoPath ? CITY.features.map((f, i) => ({
+      d: geoPath(f), key: i, name: f.properties.name, c: geoPath.centroid(f),
+    })) : []),
+    [geoPath]
+  );
 
+  /* 每个单位的地理落点 */
   const basePos = useMemo(() => {
     const m = {};
     if (!projection) return m;
-    data.entities.forEach((e) => {
-      const p = projection([e.lng, e.lat]);
-      if (p && isFinite(p[0])) m[e.id] = p;
+    data.units.forEach((u) => {
+      const p = projection([u.lng, u.lat]);
+      if (p && isFinite(p[0])) m[u.id] = p;
     });
     return m;
-  }, [projection, data.entities]);
+  }, [projection, data.units]);
 
-  const hubs = useMemo(() => {
+  /* 同址单位(经纬度完全一致)在放大后呈环形散开,否则彼此叠死 */
+  const coloc = useMemo(() => {
     const g = {};
-    data.entities.forEach((e) => { if (e.hub) (g[e.hub] = g[e.hub] || []).push(e.id); });
-    const out = {};
-    Object.entries(g).forEach(([hk, ids]) => {
-      const pts = ids.map((id) => basePos[id]).filter(Boolean);
-      if (!pts.length) return;
-      out[hk] = { ids, cx: d3.mean(pts, (p) => p[0]), cy: d3.mean(pts, (p) => p[1]), R: 16 + ids.length * 2.1 };
+    data.units.forEach((u) => {
+      const key = u.lat.toFixed(4) + "," + u.lng.toFixed(4);
+      (g[key] = g[key] || []).push(u.id);
     });
-    return out;
-  }, [data.entities, basePos]);
+    const m = {};
+    Object.values(g).forEach((ids) => {
+      if (ids.length < 2) return;
+      ids.forEach((id, i) => { m[id] = { i, n: ids.length, R: 26 + ids.length * 3 }; });
+    });
+    return m;
+  }, [data.units]);
+
+  const clusters = useMemo(() => clusterUnits(data.units), [data.units]);
+  const clusterInfo = useMemo(() => {
+    return clusters.map((c) => {
+      const pts = c.ids.map((id) => basePos[id]).filter(Boolean);
+      if (!pts.length) return null;
+      let spread = 0;
+      for (let i = 0; i < pts.length; i++)
+        for (let j = i + 1; j < pts.length; j++)
+          spread = Math.max(spread, Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]));
+      return { ...c, cx: d3.mean(pts, (p) => p[0]), cy: d3.mean(pts, (p) => p[1]), spread, R: 12 + c.ids.length * 0.5 };
+    }).filter(Boolean);
+  }, [clusters, basePos]);
 
   const k = t.k;
-  const expanded = k >= EXPAND_K;
+  const clusterOf = useMemo(() => {
+    const m = {};
+    clusterInfo.forEach((c, ci) => c.ids.forEach((id) => { m[id] = ci; }));
+    return m;
+  }, [clusterInfo]);
+
+  const isExpanded = useCallback(
+    (ci) => {
+      const c = clusterInfo[ci];
+      return !c || c.ids.length < 2 || c.spread * k > EXPAND_PX;
+    },
+    [clusterInfo, k]
+  );
 
   const posOf = useCallback((id) => {
-    const e = byId[id];
-    if (!e) return null;
-    const h = e.hub && hubs[e.hub];
-    if (h && h.ids.length > 1) {
-      if (!expanded) return [h.cx, h.cy];
-      const i = h.ids.indexOf(id), n = h.ids.length;
-      const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-      return [h.cx + (Math.cos(a) * h.R) / k, h.cy + (Math.sin(a) * h.R) / k];
-    }
-    return basePos[id] || null;
-  }, [byId, hubs, basePos, k, expanded]);
+    const ci = clusterOf[id];
+    const c = clusterInfo[ci];
+    if (c && !isExpanded(ci)) return [c.cx, c.cy];
+    const p = basePos[id];
+    if (!p) return null;
+    const co = coloc[id];
+    if (!co) return p;
+    const a = (co.i / co.n) * Math.PI * 2 - Math.PI / 2;
+    return [p[0] + (Math.cos(a) * co.R) / k, p[1] + (Math.sin(a) * co.R) / k];
+  }, [basePos, coloc, clusterInfo, clusterOf, isExpanded, k]);
 
-  const evNear = useMemo(() => data.events.filter((v) => Math.abs(v.year - year) <= 2), [data.events, year]);
+  /* 比例尺:取数据中心处 0.1° 经度的投影长度换算 */
+  const kmPerPx = useMemo(() => {
+    if (!projection || !data.units.length) return null;
+    const lat = d3.mean(data.units, (u) => u.lat), lng = d3.mean(data.units, (u) => u.lng);
+    const a = projection([lng, lat]), b = projection([lng + 0.1, lat]);
+    if (!a || !b) return null;
+    const px = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return px > 0 ? (0.1 * 111.32 * Math.cos((lat * Math.PI) / 180)) / px : null;
+  }, [projection, data.units]);
+
+  const scaleBar = useMemo(() => {
+    if (!kmPerPx) return null;
+    const perPx = kmPerPx / k;
+    const nice = [0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000];
+    const pick = nice.find((d) => d / perPx >= 60) || nice[nice.length - 1];
+    return { km: pick, px: pick / perPx };
+  }, [kmPerPx, k]);
+
+  const evNear = useMemo(
+    () => data.events.filter((v) => v.year != null && Math.abs(v.year - year) <= 2),
+    [data.events, year]
+  );
   const ghostSet = useMemo(() => {
     const s = new Set();
     evNear.forEach((v) => [...(v.from || []), ...(v.to || [])].forEach((id) => s.add(id)));
@@ -140,11 +220,14 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
   const arcs = useMemo(() => {
     const out = [];
     evNear.forEach((v) => {
-      const meta = EVENT_META[v.type] || EVENT_META["协作"];
+      const meta = eventMeta(v.type);
       const pairs = [];
       if (v.to && v.to.length) v.from.forEach((f) => v.to.forEach((tt) => pairs.push([f, tt])));
       else for (let i = 1; i < v.from.length; i++) pairs.push([v.from[0], v.from[i]]);
       pairs.forEach(([a, b]) => {
+        const ua = byId[a], ub = byId[b];
+        if (!ua || !ub) return;
+        if (!shown.has(ua.industry) && !shown.has(ub.industry)) return;
         const pa = posOf(a), pb = posOf(b);
         if (!pa || !pb) return;
         const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
@@ -159,28 +242,42 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
       });
     });
     return out;
-  }, [evNear, posOf, year]);
+  }, [evNear, posOf, year, byId, shown]);
 
   const zoomBy = (f) => {
     if (svgRef.current && zoomRef.current)
       d3.select(svgRef.current).transition().duration(230).call(zoomRef.current.scaleBy, f);
   };
-  const resetZoom = () => {
-    if (svgRef.current && zoomRef.current)
-      d3.select(svgRef.current).transition().duration(320).call(zoomRef.current.transform, d3.zoomIdentity);
-  };
-  const flyTo = useCallback((x, y, kk) => {
+  const flyTo = useCallback((x, y, kk, dur = 620) => {
     if (!svgRef.current || !zoomRef.current || !size.w) return;
     const tr = d3.zoomIdentity.translate(size.w / 2 - kk * x, size.h / 2 - kk * y).scale(kk);
-    d3.select(svgRef.current).transition().duration(620).call(zoomRef.current.transform, tr);
+    const s = d3.select(svgRef.current);
+    (dur ? s.transition().duration(dur) : s).call(zoomRef.current.transform, tr);
   }, [size]);
+
+  /* 数据全在一城时,国界尺度什么也看不清 —— 首屏自动套合到数据范围 */
+  const fitData = useCallback((dur) => {
+    if (!projection || !size.w) return;
+    const pts = data.units.map((u) => basePos[u.id]).filter(Boolean);
+    if (!pts.length) return;
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const spanX = Math.max(x1 - x0, 1e-6), spanY = Math.max(y1 - y0, 1e-6);
+    const kk = Math.max(1, Math.min(MAX_K, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
+    flyTo((x0 + x1) / 2, (y0 + y1) / 2, kk, dur);
+  }, [projection, size, data.units, basePos, flyTo]);
+
+  useEffect(() => {
+    if (lastData.current !== data) { lastData.current = data; didFit.current = false; }
+    if (didFit.current || !projection || !size.w) return;
+    didFit.current = true;
+    fitData(0);
+  }, [projection, size, data, fitData]);
 
   useEffect(() => {
     if (!flyReq || !projection) return;
-    const e = byId[flyReq.id];
-    if (!e) return;
-    const p = basePos[e.id];
-    if (p) flyTo(p[0], p[1], e.hub ? 4.6 : 5.6);
+    const p = basePos[flyReq.id];
+    if (p) flyTo(p[0], p[1], Math.min(MAX_K, Math.max(k, 320)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyReq, projection]);
 
@@ -190,14 +287,39 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
   };
 
   const nodeList = useMemo(() => {
-    return data.entities
-      .filter((e) => basePos[e.id])
-      .filter((e) => (expanded ? true : !(e.hub && hubs[e.hub] && hubs[e.hub].ids.length > 1)))
-      .map((e) => ({ e, alive: isAlive(e, year), ghost: !isAlive(e, year) && ghostSet.has(e.id) }))
+    return data.units
+      .filter((u) => basePos[u.id] && shown.has(u.industry))
+      .filter((u) => isExpanded(clusterOf[u.id]))
+      .map((u) => ({ u, alive: isAlive(u, year), ghost: !isAlive(u, year) && ghostSet.has(u.id) }))
       .filter((n) => n.alive || n.ghost);
-  }, [data.entities, basePos, expanded, hubs, year, ghostSet]);
+  }, [data.units, basePos, shown, isExpanded, clusterOf, year, ghostSet]);
 
-  const hovE = hover && byId[hover.id];
+  /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
+  const labelSet = useMemo(() => {
+    const out = new Set();
+    if (k < 45 || !size.w) return out;
+    const FS = 10.5, boxes = [];
+    nodeList.slice().sort((a, b) => {
+      const sa = a.u.semi.length + a.u.comp.length, sb = b.u.semi.length + b.u.comp.length;
+      return sb - sa || (a.u.start ? a.u.start.y : 9999) - (b.u.start ? b.u.start.y : 9999);
+    }).forEach(({ u }) => {
+      const p = posOf(u.id);
+      if (!p) return;
+      const sx = t.x + k * p[0] + 9, sy = t.y + k * p[1];
+      const text = u.alt || u.name;
+      const w = text.length * FS * 1.02, h = FS + 5;
+      if (sx > size.w || sx + w < 0 || sy < 0 || sy > size.h) return;
+      const box = [sx, sy - h / 2, sx + w, sy + h / 2];
+      if (boxes.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) return;
+      boxes.push(box);
+      out.add(u.id);
+    });
+    return out;
+  }, [nodeList, posOf, t, k, size]);
+
+  const baseOpacity = k <= FADE_FROM ? 1 : Math.max(0, 1 - (k - FADE_FROM) / (FADE_TO - FADE_FROM));
+  const cityOpacity = k <= FADE_FROM ? 0 : Math.min(1, (k - FADE_FROM) / (FADE_TO - FADE_FROM));
+  const hovU = hover && byId[hover.id];
 
   return (
     <div className="maparea" ref={wrapRef}>
@@ -212,93 +334,104 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
           ))}
         </defs>
         <g transform={"translate(" + t.x + "," + t.y + ") scale(" + t.k + ")"}>
-          {provPaths.map((p) => (
-            <path key={p.key} d={p.d} className="prov" strokeWidth={0.8 / k}>
-              <title>{p.name}</title>
-            </path>
-          ))}
-
-          {/* hub rings (expanded) */}
-          {expanded && Object.entries(hubs).map(([hk, h]) => h.ids.length > 1 && (
-            <g key={"ring" + hk} pointerEvents="none">
-              <circle cx={h.cx} cy={h.cy} r={(h.R + 11) / k} fill="none" stroke="rgba(216,231,246,.34)"
-                strokeWidth={1 / k} strokeDasharray={(3 / k) + " " + (4 / k)} />
-              <text x={h.cx} y={h.cy - (h.R + 17) / k} textAnchor="middle" fontSize={10 / k}
-                className="maplabel dim">{HUB_LABELS[hk] || hk}</text>
+          {baseOpacity > 0 && (
+            <g opacity={baseOpacity}>
+              {provPaths.map((p) => (
+                <path key={p.key} d={p.d} className="prov" strokeWidth={0.8 / k}>
+                  <title>{p.name}</title>
+                </path>
+              ))}
             </g>
-          ))}
+          )}
 
-          {/* event arcs */}
-          {arcs.map((a) => (
-            <g key={a.key} opacity={a.fade} pointerEvents="none">
-              <path d={a.d} fill="none" stroke={a.meta.color} strokeWidth={1.7 / k}
-                strokeDasharray={a.meta.dash ? a.meta.dash.map((d) => d / k).join(" ") : undefined}
-                markerEnd={"url(#arr-" + a.meta.slug + ")"}
-                pathLength={a.meta.dash ? undefined : 1}
-                className={a.meta.dash ? "" : "arcin"} />
-              {a.v.uncertain && <circle cx={a.mid[0]} cy={a.mid[1]} r={2.4 / k} fill="#E4573D" />}
-              {k >= 2.1 && (
-                <text x={a.mid[0]} y={a.mid[1] - 5 / k} textAnchor="middle" fontSize={9.5 / k}
-                  fill={a.meta.color} className="maplabel mono">
-                  {a.v.year} {a.v.type}{a.v.uncertain ? " · 待考" : ""}
-                </text>
-              )}
+          {/* 区界底图:省界淡出的同时淡入,城市尺度上提供方位 */}
+          {cityOpacity > 0 && (
+            <g opacity={cityOpacity}>
+              {cityPaths.map((p) => (
+                <path key={p.key} d={p.d} className="city" strokeWidth={0.9 / k}>
+                  <title>{p.name}区</title>
+                </path>
+              ))}
+              {cityOpacity > 0.25 && cityPaths.map((p) => (
+                isFinite(p.c[0]) && (
+                  <text key={"cl" + p.key} x={p.c[0]} y={p.c[1]} textAnchor="middle" fontSize={15 / k}
+                    className="maplabel dim" strokeWidth={3.6 / k} pointerEvents="none">{p.name}</text>
+                )
+              ))}
             </g>
-          ))}
+          )}
 
-          {/* collapsed hub badges */}
-          {!expanded && Object.entries(hubs).map(([hk, h]) => {
-            if (h.ids.length < 2) return null;
-            const members = h.ids.map((id) => byId[id]).filter(Boolean);
+          {/* 折叠的城市徽标 */}
+          {clusterInfo.map((c, ci) => {
+            if (isExpanded(ci)) return null;
+            const members = c.ids.map((id) => byId[id]).filter((u) => u && shown.has(u.industry));
             const nAlive = members.filter((m) => isAlive(m, year)).length;
-            const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => h.ids.includes(id)));
-            const holdsSel = sel && h.ids.includes(sel);
+            const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)));
+            const holdsSel = sel && c.ids.includes(sel);
             if (!nAlive && !hasEvent && !holdsSel) return null;
             return (
-              <g key={"hub" + hk} transform={"translate(" + h.cx + "," + h.cy + ")"}
-                className="hubbadge" onClick={(ev) => { ev.stopPropagation(); flyTo(h.cx, h.cy, 4.2); }}>
+              <g key={"cl" + ci} transform={"translate(" + c.cx + "," + c.cy + ")"}
+                className="hubbadge" onClick={(ev) => { ev.stopPropagation(); flyTo(c.cx, c.cy, Math.max(k * 6, 60)); }}>
                 {hasEvent && <circle r={15 / k} fill="none" stroke="#F2C14E" strokeWidth={1 / k} className="pulse" />}
                 <circle r={10 / k} fill="#16345A" stroke={hasEvent ? "#F2C14E" : "#D8E7F6"} strokeWidth={(hasEvent ? 1.8 : 1.2) / k} />
                 <text textAnchor="middle" dy={3.4 / k} fontSize={9.5 / k} fill="#EAF2FB" className="mono">{nAlive}</text>
-                <text x={13 / k} dy={3.4 / k} fontSize={10 / k} className="maplabel">{HUB_LABELS[hk] || hk}</text>
-                <title>{(HUB_LABELS[hk] || hk) + " · 当前存续 " + nAlive + " 个单位,点击放大"}</title>
+                <text x={13 / k} dy={3.4 / k} fontSize={10 / k} strokeWidth={2.6 / k} className="maplabel">{c.label}</text>
+                <title>{c.label + " · 当前存续 " + nAlive + " 个单位,点击放大"}</title>
               </g>
             );
           })}
 
-          {/* nodes */}
-          {nodeList.map(({ e, ghost }) => {
-            const p = posOf(e.id);
+          {/* 事件连线 */}
+          {arcs.map((a) => (
+            <g key={a.key} opacity={a.fade} pointerEvents="none">
+              <path d={a.d} fill="none" stroke={a.meta.color} strokeWidth={1.7 / k}
+                strokeDasharray={a.meta.dash ? a.meta.dash.map((dd) => dd / k).join(" ") : undefined}
+                markerEnd={"url(#arr-" + a.meta.slug + ")"}
+                pathLength={a.meta.dash ? undefined : 1}
+                className={a.meta.dash ? "" : "arcin"} />
+              {a.v.uncertain && <circle cx={a.mid[0]} cy={a.mid[1]} r={2.4 / k} fill="#E4573D" />}
+              <text x={a.mid[0]} y={a.mid[1] - 5 / k} textAnchor="middle" fontSize={9.5 / k}
+                fill={a.meta.color} strokeWidth={2.6 / k} className="maplabel mono">
+                {a.v.year} {a.v.type}
+              </text>
+            </g>
+          ))}
+
+          {/* 节点 */}
+          {nodeList.map(({ u, ghost }) => {
+            const p = posOf(u.id);
             if (!p) return null;
-            const meta = TYPE_META[e.type] || TYPE_META.factory;
-            const isSel = sel === e.id;
-            const born = e.founded === year && !ghost;
-            const showLabel = isSel || (expanded && k >= 2.5) || (hover && hover.id === e.id);
+            const meta = industryMeta(u.industry);
+            const shape = (TYPE_META[u.type] || TYPE_META.factory).shape;
+            const isSel = sel === u.id;
+            const born = u.start && u.start.y === year && !ghost;
+            const vague = u.precision === "city";
+            const showLabel = isSel || labelSet.has(u.id) || (hover && hover.id === u.id);
             return (
-              <g key={e.id} transform={"translate(" + p[0] + "," + p[1] + ")"}
+              <g key={u.id} transform={"translate(" + p[0] + "," + p[1] + ")"}
                 className={"node" + (born ? " nb" : "")}
-                onClick={(ev) => { ev.stopPropagation(); setSel(e.id); }}
-                onMouseMove={(ev) => onNodeHover(ev, e.id)}
+                onClick={(ev) => { ev.stopPropagation(); setSel(u.id); }}
+                onMouseMove={(ev) => onNodeHover(ev, u.id)}
                 onMouseLeave={() => setHover(null)}>
                 {isSel && <circle r={10.5 / k} fill="none" stroke="#F2C14E" strokeWidth={1.6 / k} />}
-                {e.type === "institute" ? (
+                {shape === "square" ? (
                   <rect x={-5.2 / k} y={-5.2 / k} width={10.4 / k} height={10.4 / k} rx={1.4 / k}
-                    fill={ghost ? "none" : meta.color} stroke={ghost ? meta.color : "#0E2440"}
-                    strokeWidth={1.2 / k} strokeDasharray={ghost ? (3 / k) + " " + (2.4 / k) : undefined}
-                    opacity={ghost ? 0.55 : 1} />
+                    fill={ghost ? "none" : meta.color} stroke={ghost || vague ? meta.color : "#0E2440"}
+                    strokeWidth={1.2 / k} strokeDasharray={ghost || vague ? (3 / k) + " " + (2.4 / k) : undefined}
+                    opacity={ghost ? 0.55 : vague ? 0.72 : 1} />
                 ) : (
                   <>
-                    {e.type === "group" && <circle r={8.6 / k} fill="none" stroke={meta.color} strokeWidth={1 / k} opacity={ghost ? 0.55 : 0.9} />}
-                    <circle r={6 / k} fill={ghost ? "none" : meta.color} stroke={ghost ? meta.color : "#0E2440"}
-                      strokeWidth={1.2 / k} strokeDasharray={ghost ? (3 / k) + " " + (2.4 / k) : undefined}
-                      opacity={ghost ? 0.55 : 1} />
-                    {!ghost && <circle r={2 / k} fill="#0E2440" />}
+                    {shape === "ring" && <circle r={8.6 / k} fill="none" stroke={meta.color} strokeWidth={1 / k} opacity={ghost ? 0.55 : 0.9} />}
+                    <circle r={6 / k} fill={ghost ? "none" : meta.color} stroke={ghost || vague ? meta.color : "#0E2440"}
+                      strokeWidth={1.2 / k} strokeDasharray={ghost || vague ? (3 / k) + " " + (2.4 / k) : undefined}
+                      opacity={ghost ? 0.55 : vague ? 0.72 : 1} />
+                    {!ghost && !vague && <circle r={2 / k} fill="#0E2440" />}
                   </>
                 )}
-                {e.uncertain && <circle cx={5.4 / k} cy={-5.4 / k} r={1.8 / k} fill="#E4573D" />}
+                {vague && <circle cx={5.4 / k} cy={-5.4 / k} r={1.8 / k} fill="#E4573D" />}
                 {showLabel && (
-                  <text x={9 / k} dy={3.6 / k} fontSize={10.5 / k} className="maplabel strong">
-                    {e.code && e.code !== "—" ? e.code : e.name.slice(0, 6)}
+                  <text x={9 / k} dy={3.6 / k} fontSize={10.5 / k} strokeWidth={2.6 / k} className="maplabel strong">
+                    {u.alt || u.name}
                   </text>
                 )}
               </g>
@@ -308,10 +441,13 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
       </svg>
 
       {/* tooltip */}
-      {hovE && hover && (
+      {hovU && hover && (
         <div className="tooltip" style={{ left: hover.x + 14, top: hover.y + 10 }}>
-          <div className="tt-name">{hovE.name}</div>
-          <div className="tt-meta mono">{(TYPE_META[hovE.type] || {}).label} · {hovE.founded}–{hovE.ended == null ? "…" : hovE.ended}{hovE.uncertain ? " · 待考" : ""}</div>
+          <div className="tt-name">{hovU.name}</div>
+          <div className="tt-meta mono">
+            {hovU.industry} · {spanText(hovU)}
+            {hovU.precision === "city" ? " · 坐标待定位" : ""}
+          </div>
         </div>
       )}
 
@@ -319,26 +455,59 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
       <div className="mapcontrols">
         <button className="icobtn" onClick={() => zoomBy(1.6)} aria-label="放大"><Plus size={15} /></button>
         <button className="icobtn" onClick={() => zoomBy(1 / 1.6)} aria-label="缩小"><Minus size={15} /></button>
-        <button className="icobtn" onClick={resetZoom} aria-label="复位视图"><Crosshair size={15} /></button>
+        <button className="icobtn" onClick={() => fitData(420)} aria-label="回到数据范围"><Crosshair size={15} /></button>
       </div>
 
-      {/* legend */}
-      <div className="legend">
-        <div className="lg-title mono">图例 LEGEND</div>
-        <div className="lg-row">
-          {Object.entries(TYPE_META).map(([kk, m]) => (
-            <span key={kk} className="lg-item"><i className={"sw sw-" + kk} style={{ backgroundColor: m.color }} />{m.label}</span>
-          ))}
+      {/* scale bar */}
+      {scaleBar && (
+        <div className="scalebar mono">
+          <svg width={scaleBar.px + 2} height="12">
+            <line x1="1" y1="8" x2={scaleBar.px + 1} y2="8" stroke="#BBD3EC" strokeWidth="1.4" />
+            <line x1="1" y1="3" x2="1" y2="11" stroke="#BBD3EC" strokeWidth="1.4" />
+            <line x1={scaleBar.px + 1} y1="3" x2={scaleBar.px + 1} y2="11" stroke="#BBD3EC" strokeWidth="1.4" />
+          </svg>
+          <span>{scaleBar.km < 1 ? Math.round(scaleBar.km * 1000) + " m" : scaleBar.km + " km"}</span>
         </div>
-        <div className="lg-row">
-          {Object.entries(EVENT_META).map(([kk, m]) => (
-            <span key={kk} className="lg-item">
-              <svg width="26" height="8"><line x1="1" y1="4" x2="25" y2="4" stroke={m.color} strokeWidth="1.8"
-                strokeDasharray={m.dash ? m.dash.join(" ") : undefined} /></svg>{kk}
-            </span>
-          ))}
-          <span className="lg-item"><i className="sw sw-uncertain" />待考</span>
-        </div>
+      )}
+      {cityOpacity > 0.25 && CITY_ATTR && <div className="attrib mono">{CITY_ATTR}</div>}
+    </div>
+  );
+}
+
+/* ============================================================ LEGEND + FILTER ============================================================ */
+function Legend({ data, shown, setShown }) {
+  const industries = useMemo(
+    () => Array.from(new Set(data.units.map((u) => u.industry).filter(Boolean))),
+    [data.units]
+  );
+  const toggle = (ind) => {
+    const next = new Set(shown);
+    if (next.has(ind)) next.delete(ind); else next.add(ind);
+    setShown(next.size ? next : new Set(industries));
+  };
+  return (
+    <div className="legend">
+      <div className="lg-title mono">行业 INDUSTRY(点击筛选)</div>
+      <div className="lg-row">
+        {industries.map((ind) => (
+          <button key={ind} className={"lg-item lg-btn" + (shown.has(ind) ? "" : " off")} onClick={() => toggle(ind)}>
+            <i className="sw" style={{ backgroundColor: industryMeta(ind).color }} />{ind}
+          </button>
+        ))}
+      </div>
+      <div className="lg-row">
+        <span className="lg-item"><i className="sw" style={{ background: "#BBD3EC" }} />工厂</span>
+        <span className="lg-item"><i className="sw sw-square" style={{ background: "#BBD3EC" }} />研究所</span>
+        <span className="lg-item"><i className="sw sw-ring" style={{ background: "#BBD3EC" }} />合资</span>
+        <span className="lg-item"><i className="sw sw-uncertain" />坐标待定位</span>
+      </div>
+      <div className="lg-row">
+        {Object.entries(EVENT_META).map(([kk, m]) => (
+          <span key={kk} className="lg-item">
+            <svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke={m.color} strokeWidth="1.8"
+              strokeDasharray={m.dash ? m.dash.join(" ") : undefined} /></svg>{kk}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -348,6 +517,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, onOpenIntro }) {
 function Ruler({ data, year, setYear, playing, setPlaying }) {
   const ref = useRef(null);
   const [w, setW] = useState(0);
+  const { yearMin, yearMax } = data;
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -355,17 +525,23 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const x = useMemo(() => d3.scaleLinear().domain([YEAR_MIN, YEAR_MAX]).range([14, Math.max(80, w - 14)]), [w]);
+  const x = useMemo(() => d3.scaleLinear().domain([yearMin, yearMax]).range([14, Math.max(80, w - 14)]), [w, yearMin, yearMax]);
+
   const evYears = useMemo(() => {
     const m = {};
-    data.events.forEach((v) => { (m[v.year] = m[v.year] || []).push(v); });
+    data.events.forEach((v) => { if (v.year != null) (m[v.year] = m[v.year] || []).push(v); });
     return m;
   }, [data.events]);
+  const prodYears = useMemo(() => {
+    const m = {};
+    [...data.semi, ...data.comp].forEach((p) => { if (p.date) m[p.date.y] = (m[p.date.y] || 0) + 1; });
+    return m;
+  }, [data.semi, data.comp]);
 
   const setFromClient = (cx) => {
     if (!ref.current) return;
     const r = ref.current.getBoundingClientRect();
-    setYear(clampYear(Math.round(x.invert(cx - r.left))));
+    setYear(clampYear(Math.round(x.invert(cx - r.left)), yearMin, yearMax));
   };
   const dragging = useRef(false);
   const onPD = (e) => { dragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); setFromClient(e.clientX); };
@@ -373,25 +549,25 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
   const onPU = () => { dragging.current = false; };
 
   const years = [];
-  for (let y = YEAR_MIN; y <= YEAR_MAX; y++) years.push(y);
+  for (let y = yearMin; y <= yearMax; y++) years.push(y);
 
   return (
     <div className="ruler-row" tabIndex={0} aria-label={"年份标尺,当前 " + year + " 年,左右方向键调整"}
       onKeyDown={(e) => {
-        if (e.key === "ArrowLeft") { setYear(clampYear(year - (e.shiftKey ? 5 : 1))); e.preventDefault(); }
-        else if (e.key === "ArrowRight") { setYear(clampYear(year + (e.shiftKey ? 5 : 1))); e.preventDefault(); }
+        if (e.key === "ArrowLeft") { setYear(clampYear(year - (e.shiftKey ? 5 : 1), yearMin, yearMax)); e.preventDefault(); }
+        else if (e.key === "ArrowRight") { setYear(clampYear(year + (e.shiftKey ? 5 : 1), yearMin, yearMax)); e.preventDefault(); }
         else if (e.key === " ") { setPlaying(!playing); e.preventDefault(); }
       }}>
       <button className="icobtn play" onClick={() => setPlaying(!playing)} aria-label={playing ? "暂停" : "播放"}>
         {playing ? <Pause size={15} /> : <Play size={15} />}
       </button>
-      <button className="icobtn" onClick={() => setYear(clampYear(year - 1))} aria-label="上一年"><ChevronLeft size={15} /></button>
-      <button className="icobtn" onClick={() => setYear(clampYear(year + 1))} aria-label="下一年"><ChevronRight size={15} /></button>
+      <button className="icobtn" onClick={() => setYear(clampYear(year - 1, yearMin, yearMax))} aria-label="上一年"><ChevronLeft size={15} /></button>
+      <button className="icobtn" onClick={() => setYear(clampYear(year + 1, yearMin, yearMax))} aria-label="下一年"><ChevronRight size={15} /></button>
       <svg ref={ref} className="rulersvg" height="48"
         onPointerDown={onPD} onPointerMove={onPM} onPointerUp={onPU} onPointerCancel={onPU}>
         {w > 0 && (
           <g>
-            <line x1={x(YEAR_MIN)} y1={32} x2={x(YEAR_MAX)} y2={32} stroke="rgba(216,231,246,.5)" strokeWidth="1" />
+            <line x1={x(yearMin)} y1={32} x2={x(yearMax)} y2={32} stroke="rgba(216,231,246,.5)" strokeWidth="1" />
             {years.map((y) => (
               <line key={y} x1={x(y)} y1={32} x2={x(y)} y2={32 - (y % 10 === 0 ? 9 : y % 5 === 0 ? 6.5 : 3.5)}
                 stroke={"rgba(216,231,246," + (y % 5 === 0 ? ".65" : ".3") + ")"} strokeWidth="1" />
@@ -399,14 +575,19 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
             {years.filter((y) => y % 10 === 0).map((y) => (
               <text key={"t" + y} x={x(y)} y={45} textAnchor="middle" fontSize="9.5" className="mono" fill="#7E9BBD">{y}</text>
             ))}
+            {/* 产品记录密度 */}
+            {Object.entries(prodYears).map(([y, n]) => (
+              <line key={"p" + y} x1={x(+y)} y1={36} x2={x(+y)} y2={36 - Math.min(n, 6) * 0.9 - 1.5}
+                stroke="#8FD9A8" strokeWidth="1.6" opacity=".8" />
+            ))}
             {Object.entries(evYears).map(([y, vs]) => (
               <g key={"d" + y} className="evdiamond" onClick={(e) => { e.stopPropagation(); setYear(+y); }}>
                 {vs.slice(0, 3).map((v, i) => (
                   <path key={i} transform={"translate(" + x(+y) + "," + (13 - i * 6.5) + ") rotate(45)"}
-                    d="M-3.2,-3.2h6.4v6.4h-6.4z" fill={(EVENT_META[v.type] || {}).color || "#D8E7F6"}
+                    d="M-3.2,-3.2h6.4v6.4h-6.4z" fill={eventMeta(v.type).color}
                     stroke="#0E2440" strokeWidth=".7" />
                 ))}
-                <title>{vs.map((v) => v.year + " " + v.type + (v.uncertain ? "(待考)" : "")).join(" / ")}</title>
+                <title>{vs.map((v) => v.year + " " + v.type).join(" / ")}</title>
               </g>
             ))}
             <g pointerEvents="none">
@@ -422,10 +603,13 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
 }
 
 /* ============================================================ LINEAGE ============================================================ */
-function LineageView({ data, byId, year, setYear, sel, setSel }) {
+function LineageView({ data, year, setYear, sel, setSel }) {
+  const { yearMin, yearMax } = data;
+  const dated = useMemo(() => data.units.filter((u) => u.start), [data.units]);
+
   const layout = useMemo(() => {
     const parent = {};
-    data.entities.forEach((e) => { parent[e.id] = e.id; });
+    dated.forEach((u) => { parent[u.id] = u.id; });
     const find = (a) => (parent[a] === a ? a : (parent[a] = find(parent[a])));
     const uni = (a, b) => { if (parent[a] == null || parent[b] == null) return; a = find(a); b = find(b); if (a !== b) parent[b] = a; };
     data.events.forEach((v) => {
@@ -433,42 +617,48 @@ function LineageView({ data, byId, year, setYear, sel, setSel }) {
       for (let i = 1; i < all.length; i++) uni(all[0], all[i]);
     });
     const fam = {};
-    data.entities.forEach((e) => { const r = find(e.id); (fam[r] = fam[r] || []).push(e); });
-    let famList = Object.values(fam).map((list) => {
-      list.sort((a, b) => (a.founded - b.founded) || a.id.localeCompare(b.id));
-      return { members: list, start: Math.min(...list.map((m) => m.founded)), label: list[0].name };
+    dated.forEach((u) => { const r = find(u.id); (fam[r] = fam[r] || []).push(u); });
+    const famList = Object.values(fam).map((list) => {
+      list.sort((a, b) => (a.start.y - b.start.y) || a.id.localeCompare(b.id));
+      const ids = new Set(list.map((m) => m.id));
+      /* 只由「协作」连起来的一族不是同一谱系,标作「群」以免与沿革承继混淆 */
+      const hasLineage = data.events.some((v) =>
+        v.type !== "协作" && [...(v.from || []), ...(v.to || [])].some((id) => ids.has(id)));
+      return { members: list, start: Math.min(...list.map((m) => m.start.y)), label: list[0].name, hasLineage };
     });
     const multi = famList.filter((f) => f.members.length > 1).sort((a, b) => (b.members.length - a.members.length) || (a.start - b.start));
-    const singles = famList.filter((f) => f.members.length === 1).flatMap((f) => f.members).sort((a, b) => a.founded - b.founded);
+    const singles = famList.filter((f) => f.members.length === 1).flatMap((f) => f.members).sort((a, b) => a.start.y - b.start.y);
     const families = [...multi];
-    if (singles.length) families.push({ members: singles, label: "其他·未关联条目", isOther: true });
+    if (singles.length) families.push({ members: singles, label: "其他 · 未见沿革关联", isOther: true });
 
     const PXY = 15, LEFT = 18, TOP = 34, ROW = 34;
-    const x = (yy) => LEFT + (yy - YEAR_MIN) * PXY;
+    const x = (yy) => LEFT + (yy - yearMin) * PXY;
     let cy = TOP;
     const rowsY = {}, headers = [];
     families.forEach((f) => {
-      headers.push({ label: f.isOther ? f.label : f.label + " 系", y: cy + 6 });
+      headers.push({ label: f.isOther ? f.label : f.label + (f.hasLineage ? " 系" : " 群 · 仅协作关联"), y: cy + 6 });
       cy += 22;
       f.members.forEach((m) => { rowsY[m.id] = cy + 10; cy += ROW; });
       cy += 16;
     });
-    return { x, rowsY, headers, W: LEFT + (YEAR_MAX - YEAR_MIN + 1) * PXY + 150, H: cy + 8 };
-  }, [data]);
+    return { x, rowsY, headers, W: LEFT + (yearMax - yearMin + 1) * PXY + 170, H: cy + 8 };
+  }, [data.events, dated, yearMin, yearMax]);
 
   const { x, rowsY, headers, W, H } = layout;
 
   return (
     <div className="lineage-wrap">
-      <div className="lineage-cap mono">横条 = 存续区间 · 竖线 = 沿革事件 · 虚线 = 待考 · 点击横条查看详情,点击空白处改变年份</div>
+      <div className="lineage-cap mono">
+        横条 = 存续区间 · 竖线 = 沿革事件(据原表「Founder」列与整机研制记录推定) · 绿点 = 产品投产/研制年 · 点击横条查看详情,点击空白处改变年份
+      </div>
       <div className="lineage-scroll">
         <svg width={W} height={H} className="lineagesvg"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            const yy = Math.round(YEAR_MIN + (e.clientX - r.left - 18) / 15);
-            setYear(clampYear(yy));
+            const yy = Math.round(yearMin + (e.clientX - r.left - 18) / 15);
+            setYear(clampYear(yy, yearMin, yearMax));
           }}>
-          {Array.from({ length: Math.floor(YEAR_MAX / 5) - Math.ceil(YEAR_MIN / 5) + 1 }, (_, i) => Math.ceil(YEAR_MIN / 5) * 5 + i * 5).map((yy) => (
+          {Array.from({ length: Math.floor(yearMax / 5) - Math.ceil(yearMin / 5) + 1 }, (_, i) => Math.ceil(yearMin / 5) * 5 + i * 5).map((yy) => (
             <g key={yy}>
               <line x1={x(yy)} y1={24} x2={x(yy)} y2={H - 4} stroke="rgba(216,231,246,.09)" strokeWidth="1" />
               {yy % 10 === 0 && <text x={x(yy)} y={16} textAnchor="middle" fontSize="10" className="mono" fill="#7E9BBD">{yy}</text>}
@@ -477,46 +667,50 @@ function LineageView({ data, byId, year, setYear, sel, setSel }) {
           {headers.map((hd, i) => (
             <text key={i} x={6} y={hd.y} fontSize="11" className="famhdr">{hd.label}</text>
           ))}
-          {data.entities.map((e) => {
-            const ry = rowsY[e.id];
+          {dated.map((u) => {
+            const ry = rowsY[u.id];
             if (ry == null) return null;
-            const meta = TYPE_META[e.type] || TYPE_META.factory;
-            const x1 = x(e.founded);
-            const ongoing = e.ended == null;
-            const x2 = ongoing ? x(YEAR_MAX) + 8 : x(e.ended);
+            const meta = industryMeta(u.industry);
+            const x1 = x(u.start.y);
+            const ongoing = u.end == null;
+            const x2 = ongoing ? x(yearMax) + 8 : x(u.end.y);
             const bw = x2 - x1;
-            const isSel = sel === e.id;
+            const isSel = sel === u.id;
+            const prods = [...u.semi, ...u.comp].filter((p) => p.date);
             return (
-              <g key={e.id} className="lbar" onClick={(ev) => { ev.stopPropagation(); setSel(e.id); }}>
+              <g key={u.id} className="lbar" onClick={(ev) => { ev.stopPropagation(); setSel(u.id); }}>
                 <rect x={x1} y={ry - 7} width={Math.max(bw, 4)} height={14} rx={3}
                   fill={meta.color + "30"} stroke={isSel ? "#F2C14E" : meta.color}
-                  strokeWidth={isSel ? 2.2 : 1.2}
-                  strokeDasharray={e.uncertain ? "4 3" : undefined} />
+                  strokeWidth={isSel ? 2.2 : 1.2} />
                 {ongoing && <path d={"M" + (x2 + 2) + "," + (ry - 5) + " L" + (x2 + 7) + "," + ry + " L" + (x2 + 2) + "," + (ry + 5)}
                   fill="none" stroke={meta.color} strokeWidth="1.4" />}
-                <text x={bw >= 130 ? x1 + 7 : x2 + 12} y={ry + 4} fontSize="11"
+                {prods.map((p, i) => (
+                  <circle key={p.id + i} cx={x(p.date.y)} cy={ry} r="2.1" fill="#8FD9A8" opacity=".9">
+                    <title>{p.date.y + " " + p.product}</title>
+                  </circle>
+                ))}
+                <text x={bw >= 150 ? x1 + 7 : x2 + 12} y={ry + 4} fontSize="11"
                   className={"lbl" + (isSel ? " on" : "")}>
-                  {(e.code && e.code !== "—" ? e.code + " " : "") + e.name}
+                  {u.name}{u.alt ? "(" + u.alt + ")" : ""}
                 </text>
-                <title>{e.name + " " + e.founded + "–" + (e.ended == null ? "…" : e.ended)}</title>
+                <title>{u.name + " " + spanText(u)}</title>
               </g>
             );
           })}
           {data.events.map((v) => {
-            const meta = EVENT_META[v.type] || EVENT_META["协作"];
+            if (v.year == null) return null;
+            const meta = eventMeta(v.type);
             const ids = [...(v.from || []), ...(v.to || [])].filter((id) => rowsY[id] != null);
             if (ids.length < 2) return null;
             const ys = ids.map((id) => rowsY[id]);
             const y1 = Math.min(...ys), y2 = Math.max(...ys);
             const xe = x(v.year);
-            const dash = v.uncertain ? "4 4" : meta.dash ? meta.dash.join(" ") : undefined;
             return (
               <g key={v.id} pointerEvents="none">
-                <line x1={xe} y1={y1} x2={xe} y2={y2} stroke={meta.color} strokeWidth="1.7" strokeDasharray={dash} />
+                <line x1={xe} y1={y1} x2={xe} y2={y2} stroke={meta.color} strokeWidth="1.7"
+                  strokeDasharray={meta.dash ? meta.dash.join(" ") : undefined} />
                 {ids.map((id) => <circle key={id} cx={xe} cy={rowsY[id]} r="3" fill={meta.color} stroke="#0E2440" strokeWidth=".8" />)}
-                <text x={xe + 6} y={y1 - 6} fontSize="10" className="mono" fill={meta.color}>
-                  {v.year} {v.type}{v.uncertain ? <tspan fill="#E4573D"> 待考</tspan> : null}
-                </text>
+                <text x={xe + 6} y={y1 - 6} fontSize="10" className="mono" fill={meta.color}>{v.year} {v.type}</text>
               </g>
             );
           })}
@@ -526,107 +720,265 @@ function LineageView({ data, byId, year, setYear, sel, setSel }) {
           </g>
         </svg>
       </div>
+      {dated.length < data.units.length && (
+        <div className="dimtext small" style={{ marginTop: 6 }}>
+          另有 {data.units.length - dated.length} 家未标年份的单位未列入本表,见「名录」页。
+        </div>
+      )}
     </div>
   );
 }
 
 /* ============================================================ DETAIL PANEL ============================================================ */
-function DetailPanel({ e, data, byId, onClose, gotoEntity, gotoCitation }) {
-  if (!e) return null;
-  const meta = TYPE_META[e.type] || TYPE_META.factory;
+function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear }) {
+  if (!u) return null;
+  const meta = industryMeta(u.industry);
   const evs = data.events
-    .filter((v) => (v.from || []).includes(e.id) || (v.to || []).includes(e.id))
-    .sort((a, b) => a.year - b.year);
-  const cites = (e.cites || []).map((cid) => ({ cid, c: data.citations.find((c) => c.id === cid) }));
+    .filter((v) => (v.from || []).includes(u.id) || (v.to || []).includes(u.id))
+    .sort((a, b) => (a.year || 0) - (b.year || 0));
+  const stats = STAT_FIELDS.filter((f) => u.stats[f.key] != null);
+
   return (
-    <div className="panel" role="dialog" aria-label={e.name}>
-      {e.uncertain && <div className="stamp">待考</div>}
+    <div className="panel" role="dialog" aria-label={u.name}>
       <div className="panel-h">
         <div>
           <div className="chiprow">
-            <span className="chip mono" style={{ borderColor: meta.color, color: meta.color }}>{meta.label}</span>
-            {e.code && e.code !== "—" && <span className="chip mono">{e.code}</span>}
-            <span className="chip mono">{e.founded}–{e.ended == null ? "…" : e.ended}</span>
+            <span className="chip mono" style={{ borderColor: meta.color, color: meta.color }}>{u.industry || "—"}</span>
+            <span className="chip mono">{(TYPE_META[u.type] || {}).label}</span>
+            {u.alt && <span className="chip mono">{u.alt}</span>}
+            <span className="chip mono">{spanText(u)}</span>
           </div>
-          <h2 className="panel-name">{e.name}</h2>
-          {e.en && <div className="panel-en">{e.en}</div>}
-          <div className="panel-city mono">{e.city}{e.province && e.province !== e.city ? " · " + e.province : ""}</div>
+          <h2 className="panel-name">{u.name}</h2>
+          <div className="panel-city mono">
+            {u.address || "地址未著录"}
+            {u.district ? " · " + u.district + "区" : ""}
+            {cityLabel(u.city) ? " · " + cityLabel(u.city) : ""}
+          </div>
+          <div className="dimtext mono small">
+            落点:{PRECISION_LABEL[u.precision] || "表内给定坐标"}{u.locNote ? " · " + u.locNote : ""}
+          </div>
         </div>
         <button className="icobtn" onClick={onClose} aria-label="关闭"><X size={15} /></button>
       </div>
-      <p className="panel-intro">{e.intro || "(暂无简介)"}</p>
+
+      {u.product && (
+        <div className="panel-sec">
+          <div className="sec-t mono">产品方向 SCOPE</div>
+          <div className="panel-intro">{u.product}</div>
+        </div>
+      )}
+
+      {u.chain.length > 0 && (
+        <div className="panel-sec">
+          <div className="sec-t mono">前身沿革 PREDECESSORS</div>
+          <ol className="chain">
+            {u.chain.map((step, i) => <li key={i}>{step}</li>)}
+          </ol>
+        </div>
+      )}
 
       <div className="panel-sec">
-        <div className="sec-t mono">沿革 LINEAGE</div>
-        {evs.length === 0 && <div className="dimtext">暂无沿革记录。</div>}
+        <div className="sec-t mono">沿革关系 LINKS</div>
+        {evs.length === 0 && <div className="dimtext">名录内暂无可连接的沿革关系。</div>}
         {evs.map((v) => {
-          const others = [...(v.from || []), ...(v.to || [])].filter((id) => id !== e.id);
-          const outgoing = (v.from || []).includes(e.id) && (v.to || []).length > 0;
-          const incoming = (v.to || []).includes(e.id);
-          const vm = EVENT_META[v.type] || EVENT_META["协作"];
+          const others = [...(v.from || []), ...(v.to || [])].filter((id) => id !== u.id);
+          const incoming = (v.to || []).includes(u.id);
+          const outgoing = (v.from || []).includes(u.id) && (v.to || []).length > 0;
+          const vm = eventMeta(v.type);
           return (
             <div key={v.id} className="evline">
-              <span className="mono evyear">{v.year}</span>
+              <span className="mono evyear">{v.year != null ? v.year : "年份待考"}</span>
               <span className="chip mono" style={{ borderColor: vm.color, color: vm.color }}>{v.type}</span>
-              {v.uncertain && <span className="chip mono red">待考</span>}
+              <span className="chip mono dimchip">推定</span>
               <span className="evdir">{incoming ? "由" : outgoing ? "→" : "与"}</span>
               <span className="evothers">
                 {others.map((oid) => (
-                  <button key={oid} className="linkbtn" onClick={() => gotoEntity(oid, v.year)}>
+                  <button key={oid} className="linkbtn" onClick={() => gotoUnit(oid, v.year)}>
                     {byId[oid] ? byId[oid].name : oid}
                   </button>
                 ))}
               </span>
               {v.note && <div className="evnote">{v.note}</div>}
+              <div className="evnote mono small">{v.basis}</div>
             </div>
           );
         })}
       </div>
 
-      <div className="panel-sec">
-        <div className="sec-t mono">引文 SOURCES</div>
-        {cites.length === 0 && <div className="dimtext">暂无引文 —— 欢迎在「贡献」页补充。</div>}
-        {cites.map(({ cid, c }, i) => (
-          <div key={cid} className="citline">
-            <button className="linkbtn mono" onClick={() => gotoCitation(cid)}>[{cid}]</button>
-            <span>{c ? fmtCite(c) : "(引文表中未收录)"}</span>
-          </div>
-        ))}
+      {(u.semi.length > 0 || u.comp.length > 0) && (
+        <div className="panel-sec">
+          <div className="sec-t mono">产品记录 PRODUCTS</div>
+          {u.semi.map((p, i) => (
+            <div key={"s" + i} className="prodline">
+              <span className="mono evyear">{p.date ? p.date.y : "—"}</span>
+              <span>{p.product || "(未著录)"}</span>
+              {p.remark && <div className="evnote">{p.remark}</div>}
+            </div>
+          ))}
+          {u.comp.map((p, i) => (
+            <div key={"c" + i} className="prodline">
+              <span className="mono evyear">{p.date ? p.date.y : "—"}</span>
+              <span>{p.product}</span>
+              <span className="chip mono">{p.unitIds.length > 1 ? "协作" : "自研"}</span>
+              {(p.speed || p.word) && (
+                <div className="evnote mono small">
+                  {p.word ? "字长 " + p.word + " " : ""}{p.memory ? "内存 " + p.memory + " " : ""}{p.speed ? "速度 " + p.speed : ""}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {stats.length > 0 && (
+        <div className="panel-sec">
+          <div className="sec-t mono">{statsYear || ""} 年概况 STATISTICS</div>
+          <table className="ministat">
+            <tbody>
+              {stats.map((f) => (
+                <tr key={f.key}><td>{f.label}</td><td className="mono">{fmtNum(u.stats[f.key])}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="dimtext mono small">数值与量纲悉依原表。</div>
+        </div>
+      )}
+
+      {(u.remark || u.source) && (
+        <div className="panel-sec">
+          <div className="sec-t mono">备注与出处 NOTES</div>
+          {u.remark && <div className="panel-intro">{u.remark}</div>}
+          {u.source && <div className="dimtext small" style={{ marginTop: 6 }}>出处:{u.source}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================ PRODUCTS ============================================================ */
+function ProductsView({ data, gotoUnit, byId }) {
+  const [kind, setKind] = useState("semi");
+  const [q, setQ] = useState("");
+  const rows = kind === "semi" ? data.semi : data.comp;
+  const list = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter((r) =>
+      [r.product, r.factoryText, r.instText, r.personnel, r.remark, r.timeRaw]
+        .filter(Boolean).join(" ").toLowerCase().includes(s));
+  }, [rows, q]);
+
+  const unitChips = (r) => r.unitIds.map((id) => (
+    <button key={id} className="chipbtn mono" onClick={() => gotoUnit(id, r.date ? r.date.y : null)}>
+      {byId[id] ? byId[id].alt || byId[id].name : id}
+    </button>
+  ));
+
+  return (
+    <div className="pagepad">
+      <div className="toolbar">
+        <div className="segmented">
+          <button className={"seg" + (kind === "semi" ? " on" : "")} onClick={() => setKind("semi")}>半导体器件 · {data.semi.length}</button>
+          <button className={"seg" + (kind === "comp" ? " on" : "")} onClick={() => setKind("comp")}>计算机整机 · {data.comp.length}</button>
+        </div>
+        <div className="searchbox">
+          <Search size={13} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="检索产品、单位、人员…" aria-label="检索产品" />
+        </div>
+        <span className="dimtext mono">{list.length} / {rows.length} 条</span>
+      </div>
+      <div className="notebar">
+        本页直录 <b>{SOURCE_FILE}</b> 的 {kind === "semi" ? "「Semi-Product」" : "「Comp-Product」"} 表。
+        单位名称按别名对照连回名录(如「上无十三」即上海电子计算机厂);未收入名录的协作单位以原文呈现,不作链接。
+      </div>
+      <div className="tablewrap">
+        {kind === "semi" ? (
+          <table>
+            <thead>
+              <tr><th className="mono">年份</th><th>产品</th><th>生产单位</th><th>名录内</th><th>人员</th><th>备注</th></tr>
+            </thead>
+            <tbody>
+              {list.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono">{r.date ? fmtDate(r.date) : r.timeRaw || "—"}</td>
+                  <td>{r.product || "—"}</td>
+                  <td>{r.factoryText}</td>
+                  <td>{unitChips(r)}</td>
+                  <td className="small">{r.personnel}</td>
+                  <td className="small">{r.remark}</td>
+                </tr>
+              ))}
+              {!list.length && <tr><td colSpan={6} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的记录。</td></tr>}
+            </tbody>
+          </table>
+        ) : (
+          <table>
+            <thead>
+              <tr><th className="mono">时间</th><th>机型</th><th className="mono">字长</th><th className="mono">内存</th>
+                <th className="mono">速度</th><th>研制单位</th><th>生产单位</th><th>名录内</th><th>人员</th><th>备注</th></tr>
+            </thead>
+            <tbody>
+              {list.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono small">{r.timeRaw || "—"}</td>
+                  <td>{r.product}</td>
+                  <td className="mono">{r.word || "—"}</td>
+                  <td className="mono">{r.memory || "—"}</td>
+                  <td className="mono">{r.speed || "—"}</td>
+                  <td className="small">{r.instText}</td>
+                  <td className="small">{r.factoryText}</td>
+                  <td>{unitChips(r)}</td>
+                  <td className="small">{r.personnel}</td>
+                  <td className="small">{r.remark}</td>
+                </tr>
+              ))}
+              {!list.length && <tr><td colSpan={10} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的记录。</td></tr>}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
-/* ============================================================ CITATIONS ============================================================ */
-function CitationsView({ data, usedBy, citeFocus, gotoEntity, onImportFile, onExport }) {
+/* ============================================================ DIRECTORY ============================================================ */
+function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
   const [q, setQ] = useState("");
-  const [kind, setKind] = useState("全部");
-  const rowRefs = useRef({});
-  const kinds = useMemo(() => ["全部", ...Array.from(new Set(data.citations.map((c) => c.kind).filter(Boolean)))], [data.citations]);
-  const list = useMemo(() => data.citations.filter((c) => {
-    if (kind !== "全部" && c.kind !== kind) return false;
-    if (!q.trim()) return true;
-    const hay = [c.id, c.author, c.title, c.source, c.locator, c.year, c.note, c.contributor].join(" ").toLowerCase();
-    return hay.includes(q.trim().toLowerCase());
-  }), [data.citations, q, kind]);
+  const [sort, setSort] = useState({ key: "start", dir: 1 });
+  const list = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const filtered = data.units.filter((u) =>
+      !s || [u.name, u.alt, u.industry, u.address, u.district, u.product, u.founder, u.remark, u.source]
+        .filter(Boolean).join(" ").toLowerCase().includes(s));
+    const val = (u) => {
+      if (sort.key === "start") return u.start ? u.start.y * 10000 + (u.start.m || 0) * 100 + (u.start.d || 0) : Infinity;
+      if (sort.key === "name") return u.name;
+      if (sort.key === "industry") return u.industry;
+      const v = u.stats[sort.key];
+      return v == null ? -Infinity : v;
+    };
+    return filtered.slice().sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (typeof va === "string" || typeof vb === "string") return String(va).localeCompare(String(vb)) * sort.dir;
+      return (va - vb) * sort.dir;
+    });
+  }, [data.units, q, sort]);
 
-  useEffect(() => {
-    if (citeFocus && rowRefs.current[citeFocus.id]) {
-      rowRefs.current[citeFocus.id].scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }, [citeFocus]);
+  const th = (key, label, mono) => (
+    <th className={(mono ? "mono " : "") + "sortable" + (sort.key === key ? " on" : "")}
+      onClick={() => setSort((s) => ({ key, dir: s.key === key ? -s.dir : 1 }))}>
+      {label}{sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}
+    </th>
+  );
 
   return (
     <div className="pagepad">
       <div className="toolbar">
         <div className="searchbox">
           <Search size={13} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="检索作者、题名、档号…" aria-label="检索引文" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="检索单位、地址、沿革…" aria-label="检索名录" />
         </div>
-        <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="按类别筛选">
-          {kinds.map((kk) => <option key={kk}>{kk}</option>)}
-        </select>
-        <span className="dimtext mono">{list.length} / {data.citations.length} 条</span>
+        <span className="dimtext mono">{list.length} / {data.units.length} 家</span>
         <span className="spacer" />
         <label className="btn btn-ghost">
           <Upload size={13} /> 导入 Excel
@@ -636,38 +988,42 @@ function CitationsView({ data, usedBy, citeFocus, gotoEntity, onImportFile, onEx
         <button className="btn btn-y" onClick={onExport}><Download size={13} /> 导出 Excel</button>
       </div>
       <div className="notebar">
-        全站数据来自仓库中的 <b>public/data.xlsx</b>(节点 / 沿革事件 / 引文三表),站点启动时读取。
-        更新流程:「导出 Excel」取回当前数据 → 在 Excel 中编辑 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的 public/data.xlsx 并 push。
-        导入只影响你自己这一次浏览,不会改变线上内容。
+        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product 三表),构建时编入产物。
+        更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。
+        {data.statsYear ? " 统计列为 " + data.statsYear + " 年数值,量纲悉依原表。" : ""}
       </div>
       <div className="tablewrap">
         <table>
           <thead>
             <tr>
-              <th className="mono">编号</th><th>类别</th><th>作者 / 机构</th><th>题名</th><th>出处</th>
-              <th>卷期·档号·页码</th><th className="mono">年份</th><th>被引用</th><th>贡献者</th>
+              {th("name", "单位")}
+              {th("industry", "行业")}
+              <th>类型</th>
+              {th("start", "起讫", true)}
+              <th>地址</th>
+              {STAT_FIELDS.map((f) => th(f.key, f.label, true))}
+              <th>备注 / 出处</th>
             </tr>
           </thead>
           <tbody>
-            {list.map((c) => (
-              <tr key={c.id} ref={(el) => { rowRefs.current[c.id] = el; }}
-                className={citeFocus && citeFocus.id === c.id ? "hl" : ""}>
-                <td className="mono">{c.id}</td>
-                <td><span className="chip mono">{c.kind || "—"}</span></td>
-                <td>{c.author}</td>
-                <td>{c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="a">{c.title}</a> : c.title}</td>
-                <td>{c.source}</td>
-                <td className="mono small">{c.locator}</td>
-                <td className="mono">{c.year}</td>
+            {list.map((u) => (
+              <tr key={u.id}>
                 <td>
-                  {(usedBy[c.id] || []).map((u, i) => (
-                    <button key={i} className="chipbtn mono" onClick={() => u.go()}>{u.label}</button>
-                  ))}
+                  <button className="linkbtn" onClick={() => gotoUnit(u.id, u.start ? u.start.y : null)}>{u.name}</button>
+                  {u.alt && <div className="dimtext mono small">{u.alt}</div>}
                 </td>
-                <td className="small">{c.contributor}<div className="dimtext mono small">{c.added}</div></td>
+                <td><span className="chip mono" style={{ borderColor: industryMeta(u.industry).color, color: industryMeta(u.industry).color }}>{u.industry || "—"}</span></td>
+                <td className="small">{(TYPE_META[u.type] || {}).label}</td>
+                <td className="mono small">{spanText(u)}</td>
+                <td className="small">
+                  {u.address || <span className="dimtext">未著录</span>}
+                  {u.precision === "city" && <div className="dimtext mono small">坐标待定位</div>}
+                </td>
+                {STAT_FIELDS.map((f) => <td key={f.key} className="mono">{fmtNum(u.stats[f.key])}</td>)}
+                <td className="small">{u.remark}{u.source ? <div className="dimtext small">出处:{u.source}</div> : null}</td>
               </tr>
             ))}
-            {list.length === 0 && <tr><td colSpan={9} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的引文。清空检索词,或点右上「导入 Excel」载入你的引文表。</td></tr>}
+            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 1} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
           </tbody>
         </table>
       </div>
@@ -677,39 +1033,32 @@ function CitationsView({ data, usedBy, citeFocus, gotoEntity, onImportFile, onEx
 
 /* ============================================================ APP ============================================================ */
 export default function App() {
-  const [data, setData] = useState(() => clone(SEED));
-  const [boot, setBoot] = useState("loading");
+  const boot = useMemo(() => {
+    try { return { data: loadBundledWorkbook(), error: null }; }
+    catch (e) { return { data: EMPTY_DATA, error: (e && e.message) || String(e) }; }
+  }, []);
+
+  const [override, setOverride] = useState(null);
+  const data = override || boot.data;
+
   const [preview, setPreview] = useState(null);
   const [tab, setTab] = useState("map");
-  const [year, setYear] = useState(1958);
+  const [year, setYear] = useState(() => boot.data.statsYear || Math.round((boot.data.yearMin + boot.data.yearMax) / 2));
   const [playing, setPlaying] = useState(false);
   const [sel, setSel] = useState(null);
-  const [citeFocus, setCiteFocus] = useState(null);
   const [toast, setToast] = useState(null);
   const [introOpen, setIntroOpen] = useState(true);
   const [flyReq, setFlyReq] = useState(null);
+  const [shown, setShown] = useState(() => new Set(boot.data.units.map((u) => u.industry).filter(Boolean)));
 
-  const byId = useMemo(() => Object.fromEntries(data.entities.map((e) => [e.id, e])), [data.entities]);
+  const byId = useMemo(() => Object.fromEntries(data.units.map((u) => [u.id, u])), [data.units]);
 
-  /* ----- boot: load published data.xlsx ----- */
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(import.meta.env.BASE_URL + "data.xlsx", { cache: "no-store" });
-        if (res.ok) {
-          const published = parseWorkbookBuffer(await res.arrayBuffer(), EMPTY_DATA).next;
-          if (published.entities.length) { setData(published); setBoot("done"); return; }
-        }
-      } catch (e) { /* fall through to bundled seed */ }
-      setToast({ msg: "未能载入 data.xlsx,当前显示内置示例数据", n: Date.now() });
-      setBoot("done");
-    })();
-  }, []);
+  useEffect(() => { setYear((y) => clampYear(y, data.yearMin, data.yearMax)); }, [data.yearMin, data.yearMax]);
 
   const showToast = useCallback((msg) => setToast({ msg, n: Date.now() }), []);
   useEffect(() => {
     if (!toast) return;
-    const h = setTimeout(() => setToast(null), 3200);
+    const h = setTimeout(() => setToast(null), 4200);
     return () => clearTimeout(h);
   }, [toast]);
 
@@ -717,67 +1066,63 @@ export default function App() {
   useEffect(() => {
     if (!playing) return;
     const iv = setInterval(() => {
-      setYear((y) => { if (y >= YEAR_MAX) { setPlaying(false); return y; } return y + 1; });
-    }, 640);
+      setYear((y) => { if (y >= data.yearMax) { setPlaying(false); return y; } return y + 1; });
+    }, 560);
     return () => clearInterval(iv);
-  }, [playing]);
+  }, [playing, data.yearMax]);
 
-  /* ----- navigation helpers ----- */
-  const gotoEntity = useCallback((id, y) => {
+  const togglePlay = useCallback((v) => {
+    if (v && year >= data.yearMax) setYear(data.yearMin);
+    setPlaying(v);
+  }, [year, data.yearMax, data.yearMin]);
+
+  /* ----- navigation ----- */
+  const gotoUnit = useCallback((id, y) => {
     setTab("map");
     setSel(id);
-    if (y != null) setYear(clampYear(y));
+    if (y != null) setYear(clampYear(y, data.yearMin, data.yearMax));
     setFlyReq({ id, n: Date.now() });
     setIntroOpen(false);
-  }, []);
-  const gotoCitation = useCallback((cid) => { setTab("citations"); setCiteFocus({ id: cid, n: Date.now() }); }, []);
-
-  const usedBy = useMemo(() => {
-    const m = {};
-    data.entities.forEach((e) => (e.cites || []).forEach((c) => {
-      (m[c] = m[c] || []).push({ label: e.code && e.code !== "—" ? e.code : e.name.slice(0, 5), go: () => gotoEntity(e.id) });
-    }));
-    data.events.forEach((v) => (v.cites || []).forEach((c) => {
-      (m[c] = m[c] || []).push({ label: v.year + v.type, go: () => { if (v.from && v.from[0]) gotoEntity(v.from[0], v.year); } });
-    }));
-    return m;
-  }, [data, gotoEntity]);
+  }, [data.yearMin, data.yearMax]);
 
   /* ----- Excel import (local preview only) / export ----- */
   const onImportFile = (file) => {
     const rd = new FileReader();
     rd.onload = (ev) => {
       try {
-        const { next, counts } = parseWorkbookBuffer(ev.target.result, data);
-        if (!counts.any) { showToast("导入失败:未找到「节点 / 沿革事件 / 引文」任一工作表"); return; }
+        const next = parseWorkbook(new Uint8Array(ev.target.result));
         setSel(null);
-        setData(next);
+        setOverride(next);
+        setShown(new Set(next.units.map((u) => u.industry).filter(Boolean)));
         setPreview(file.name || "本地文件");
-        showToast("已载入本地预览:节点 " + counts.ne + " · 事件 " + counts.nv + " · 引文 " + counts.nc +
-          (counts.skipped ? " · 跳过 " + counts.skipped + " 行(缺 id/名称/年份)" : "") + "。仅本次浏览可见。");
+        showToast("已载入本地预览:厂所 " + next.counts.units + " · 半导体产品 " + next.counts.semi +
+          " · 整机 " + next.counts.comp + " · 推定沿革 " + next.counts.events + "。仅本次浏览可见。");
       } catch (err) {
-        showToast("导入失败:无法解析该文件(" + (err && err.message) + ")");
+        showToast("导入失败:" + ((err && err.message) || "无法解析该文件"));
       }
     };
     rd.readAsArrayBuffer(file);
   };
 
   const onExport = () => {
-    try { exportWorkbook(data, "data.xlsx"); }
+    try { exportWorkbook(data, SOURCE_FILE); }
     catch (err) { showToast("导出失败:" + (err && err.message)); }
   };
 
-  const selE = sel ? byId[sel] : null;
+  const selU = sel ? byId[sel] : null;
+  const TABS = [["map", "地图"], ["lineage", "谱系"], ["products", "产品"], ["directory", "名录"]];
 
-  const TABS = [["map", "地图"], ["lineage", "谱系"], ["citations", "引文"]];
-
-  if (boot === "loading") {
+  if (boot.error) {
     return (
       <div className="ec-root">
         <style>{CSS_TEXT}</style>
         <div className="bootbox">
-          <div style={{ fontFamily: "var(--serif)", fontSize: 20, letterSpacing: 3 }}>中国电子工业历史地图</div>
-          <div className="mono dim" style={{ marginTop: 8, fontSize: 11, letterSpacing: 2 }}>正在载入 data.xlsx …</div>
+          <div style={{ fontFamily: "var(--serif)", fontSize: 20, letterSpacing: 3 }}>数据表读取失败</div>
+          <div className="mono dim" style={{ marginTop: 10, fontSize: 12 }}>{SOURCE_FILE} · {boot.error}</div>
+          <div className="dimtext small" style={{ marginTop: 10, maxWidth: 420 }}>
+            请检查仓库根目录下的 {SOURCE_FILE} 是否仍含
+            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表。
+          </div>
         </div>
       </div>
     );
@@ -789,7 +1134,7 @@ export default function App() {
       <header className="hdr">
         <div className="ttl">
           <div className="ttl-zh">中国电子工业历史地图</div>
-          <div className="ttl-en mono">HISTORICAL ATLAS OF CHINA'S ELECTRONICS INDUSTRY · {YEAR_MIN}–{YEAR_MAX}</div>
+          <div className="ttl-en mono">HISTORICAL ATLAS OF CHINA'S ELECTRONICS INDUSTRY · {data.yearMin}–{data.yearMax}</div>
         </div>
         <nav className="tabs" aria-label="页面切换">
           {TABS.map(([k, lab]) => (
@@ -797,9 +1142,10 @@ export default function App() {
           ))}
         </nav>
         <div className="hdr-right">
+          <span className="chip mono dimchip">现有数据:上海 · {data.counts.units} 家厂所</span>
           {preview && (
-            <button className="chip mono storchip" onClick={() => window.location.reload()}
-              title="当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览、重新载入线上 data.xlsx。">
+            <button className="chip mono storchip" onClick={() => { setOverride(null); setPreview(null); }}
+              title="当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览。">
               ● 本地预览:{preview} ✕
             </button>
           )}
@@ -809,35 +1155,47 @@ export default function App() {
       <main className="content">
         {tab === "map" && (
           <>
-            <MapView data={data} byId={byId} year={year} sel={sel} setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} />
-            {!selE && introOpen && (
+            <MapView data={data} byId={byId} year={year} sel={sel}
+              setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown} />
+            <Legend data={data} shown={shown} setShown={setShown} />
+            {!selU && introOpen && (
               <div className="panel introcard">
                 <div className="panel-h">
                   <h2 className="panel-name">使用说明</h2>
                   <button className="icobtn" onClick={() => setIntroOpen(false)} aria-label="关闭"><X size={15} /></button>
                 </div>
-                <p className="panel-intro">拖动下方<b>年份标尺</b>或按 ▶ 播放,观察工厂的兴建、分立与合并;滚轮缩放、点击节点查看厂史气泡;酒仙桥等同址厂区在放大后会自动散开。</p>
-                <p className="panel-intro">「谱系」页以年表形式呈现全部沿革关系,「引文」页可检索全部史料出处并回溯到对应条目。</p>
-                <button className="btn btn-ghost small" onClick={() => { setTab("lineage"); }}>查看「谱系」年表 →</button>
+                <p className="panel-intro">
+                  拖动下方<b>年份标尺</b>或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。
+                  首屏已自动套合到现有数据的范围(上海),缩小即可回到全国视野。
+                </p>
+                <p className="panel-intro">
+                  节点颜色代表行业,形状区分工厂 / 研究所 / 合资企业。<b>经纬度不在原表之中</b>,
+                  是按门牌地址人工推定的近似落点(误差数百米至数公里);带红点者原表未著录地址,暂落在市中心。
+                </p>
+                <p className="panel-intro">
+                  连线是据原表「Founder」列与整机研制记录<b>推定</b>的沿革与协作关系,详情页均注明依据。
+                </p>
+                <button className="btn btn-ghost small" onClick={() => setTab("lineage")}>查看「谱系」年表 →</button>
               </div>
             )}
-            {selE && <DetailPanel e={selE} data={data} byId={byId} onClose={() => setSel(null)}
-              gotoEntity={gotoEntity} gotoCitation={gotoCitation} />}
-            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={setPlaying} />
+            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear}
+              onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
+            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} />
           </>
         )}
 
         {tab === "lineage" && (
           <>
-            <LineageView data={data} byId={byId} year={year} setYear={setYear} sel={sel} setSel={setSel} />
-            {selE && <DetailPanel e={selE} data={data} byId={byId} onClose={() => setSel(null)}
-              gotoEntity={gotoEntity} gotoCitation={gotoCitation} />}
+            <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} />
+            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear}
+              onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
           </>
         )}
 
-        {tab === "citations" && (
-          <CitationsView data={data} usedBy={usedBy} citeFocus={citeFocus}
-            gotoEntity={gotoEntity} onImportFile={onImportFile} onExport={onExport} />
+        {tab === "products" && <ProductsView data={data} byId={byId} gotoUnit={gotoUnit} />}
+
+        {tab === "directory" && (
+          <DirectoryView data={data} gotoUnit={gotoUnit} onImportFile={onImportFile} onExport={onExport} />
         )}
       </main>
 
@@ -851,7 +1209,7 @@ const CSS_TEXT = `
 :root{
   --bg:#0F2743; --bg2:#132E4F; --panel:#16345A; --line:rgba(216,231,246,.24);
   --paper:#EAF2FB; --paper2:#BBD3EC; --dim:#7E9BBD;
-  --yellow:#F2C14E; --cyan:#7ED8E8; --violet:#C9B8FF; --red:#E4573D;
+  --yellow:#F2C14E; --cyan:#7ED8E8; --violet:#C9B8FF; --green:#8FD9A8; --red:#E4573D;
   --serif:"Noto Serif SC","Songti SC","STSongti-SC-Regular","SimSun",Georgia,serif;
   --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
   --mono:"SF Mono",SFMono-Regular,ui-monospace,Consolas,"Liberation Mono",Menlo,monospace;
@@ -865,7 +1223,6 @@ const CSS_TEXT = `
 .dim,.dimtext{color:var(--dim)}
 .small{font-size:11.5px}
 .spacer{flex:1}
-.a{color:var(--cyan)}
 b{color:var(--paper)}
 button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
 :focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
@@ -881,6 +1238,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .tab.on{background:var(--yellow);border-color:var(--yellow);color:#0E2440;font-weight:600}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .storchip{cursor:pointer;color:var(--yellow);border-color:var(--yellow)}
+.dimchip{color:var(--dim)}
 
 /* layout */
 .content{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
@@ -892,72 +1250,86 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .mapsvg{display:block;width:100%;height:100%}
 .prov{fill:rgba(216,231,246,.05);stroke:rgba(216,231,246,.4)}
 .prov:hover{fill:rgba(216,231,246,.09)}
+.city{fill:rgba(216,231,246,.045);stroke:rgba(216,231,246,.33)}
+.city:hover{fill:rgba(216,231,246,.1)}
+.attrib{position:absolute;right:14px;bottom:38px;z-index:10;font-size:9.5px;color:var(--dim);
+  background:rgba(10,24,43,.7);padding:2px 7px;border-radius:2px;max-width:56%}
 .node{cursor:pointer}
-.maplabel{fill:#EAF2FB;paint-order:stroke;stroke:#0E2440;stroke-width:2.6px;stroke-linejoin:round;font-family:var(--sans)}
+/* 描边宽度在 <g> 的缩放里会被一起放大,故由各处按 1/k 显式给出,不写在这里 */
+.maplabel{fill:#EAF2FB;paint-order:stroke;stroke:#0E2440;stroke-linejoin:round;font-family:var(--sans)}
 .maplabel.strong{font-weight:600}
 .maplabel.dim{fill:#9FB8D4}
 .maplabel.mono{font-family:var(--mono)}
 .hubbadge{cursor:pointer}
 .tooltip{position:absolute;pointer-events:none;background:rgba(10,24,43,.94);border:1px solid var(--line);
-  padding:6px 9px;border-radius:2px;max-width:230px;z-index:15}
+  padding:6px 9px;border-radius:2px;max-width:250px;z-index:15}
 .tt-name{font-family:var(--serif);font-size:13px}
 .tt-meta{font-size:10px;color:var(--dim);margin-top:1px}
 .mapcontrols{position:absolute;top:12px;left:12px;display:flex;flex-direction:column;gap:5px;z-index:10}
 .icobtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
   border:1px solid var(--line);border-radius:2px;background:rgba(13,29,51,.85);color:var(--paper2)}
 .icobtn:hover{border-color:var(--yellow);color:var(--yellow)}
-.legend{position:absolute;bottom:12px;left:12px;background:rgba(10,24,43,.88);border:1px solid var(--line);
-  padding:8px 11px;border-radius:2px;z-index:10;max-width:78%}
+.scalebar{position:absolute;right:14px;bottom:14px;z-index:10;display:flex;align-items:center;gap:7px;
+  font-size:10.5px;color:var(--paper2);background:rgba(10,24,43,.8);padding:4px 9px;border:1px solid var(--line);border-radius:2px}
+.legend{position:absolute;bottom:76px;left:12px;background:rgba(10,24,43,.88);border:1px solid var(--line);
+  padding:8px 11px;border-radius:2px;z-index:13;max-width:min(70%,560px)}
 .lg-title{font-size:9px;letter-spacing:.18em;color:var(--dim);margin-bottom:5px}
 .lg-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:11px;color:var(--paper2)}
-.lg-row+.lg-row{margin-top:4px}
+.lg-row+.lg-row{margin-top:5px;padding-top:5px;border-top:1px dashed rgba(216,231,246,.14)}
 .lg-item{display:inline-flex;align-items:center;gap:5px}
+.lg-btn{border:1px solid transparent;border-radius:2px;padding:1px 5px;font-size:11px}
+.lg-btn:hover{border-color:var(--paper2)}
+.lg-btn.off{opacity:.35;text-decoration:line-through}
 .sw{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid #0E2440}
-.sw-institute{border-radius:1.5px}
-.sw-group{box-shadow:0 0 0 2.5px rgba(201,184,255,.45)}
+.sw-square{border-radius:1.5px}
+.sw-ring{box-shadow:0 0 0 2.5px rgba(187,211,236,.4)}
 .sw-uncertain{background:var(--red);width:7px;height:7px;border:none}
 
 /* ruler */
 .ruler-row{flex:none;display:flex;align-items:center;gap:7px;padding:7px 14px 9px;border-top:1px solid var(--line);
-  background:rgba(10,24,43,.8);z-index:12}
+  background:rgba(10,24,43,.8);z-index:14}
 .rulersvg{flex:1;min-width:0;touch-action:none;cursor:ew-resize;display:block}
 .yeardisp{font-size:25px;color:var(--yellow);letter-spacing:2px;width:76px;text-align:right}
 .icobtn.play{border-color:var(--yellow);color:var(--yellow)}
 .evdiamond{cursor:pointer}
 
 /* panel */
-.panel{position:absolute;top:14px;right:14px;bottom:76px;width:330px;overflow-y:auto;z-index:14;
+.panel{position:absolute;top:14px;right:14px;bottom:76px;width:350px;overflow-y:auto;z-index:16;
   background:rgba(17,36,62,.96);border:1px solid var(--line);border-radius:2px;padding:15px 16px;
   box-shadow:0 8px 30px rgba(0,0,0,.35)}
 .introcard{bottom:auto;max-height:calc(100% - 96px)}
 .panel-h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
 .panel-name{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:1px;margin-top:6px;line-height:1.4}
-.panel-en{font-size:10.5px;color:var(--dim);letter-spacing:.06em;margin-top:1px}
-.panel-city{font-size:11px;color:var(--paper2);margin-top:4px}
-.panel-intro{margin-top:10px;font-size:13px;color:var(--paper2);text-align:justify}
+.panel-city{font-size:11.5px;color:var(--paper2);margin-top:4px}
+.panel-intro{margin-top:6px;font-size:13px;color:var(--paper2);text-align:justify}
 .panel-sec{margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}
 .sec-t{font-size:9.5px;letter-spacing:.2em;color:var(--dim);margin-bottom:7px}
 .chiprow{display:flex;flex-wrap:wrap;gap:5px}
 .chip{display:inline-block;border:1px solid var(--line);color:var(--paper2);font-size:10px;
   padding:1.5px 7px;border-radius:2px;letter-spacing:.06em;white-space:nowrap}
-.chip.red{border-color:var(--red);color:var(--red)}
-.pendchip{border-color:var(--yellow);color:var(--yellow)}
-.okchip{border-color:var(--cyan);color:var(--cyan)}
-.redchip{border-color:var(--red);color:var(--red)}
-.evline{margin-bottom:9px;font-size:12.5px}
+.chain{list-style:none;counter-reset:step;font-size:12.5px;color:var(--paper2)}
+.chain li{position:relative;padding-left:18px;margin-bottom:5px}
+.chain li:before{counter-increment:step;content:counter(step);position:absolute;left:0;top:1px;
+  font-family:var(--mono);font-size:9.5px;color:var(--yellow);border:1px solid var(--line);
+  width:13px;height:13px;line-height:11px;text-align:center;border-radius:2px}
+.evline,.prodline{margin-bottom:9px;font-size:12.5px}
 .evyear{color:var(--yellow);margin-right:6px}
 .evdir{color:var(--dim);margin:0 5px}
 .evothers{display:inline}
 .evnote{color:var(--dim);font-size:11.5px;margin-top:2px;padding-left:2px}
-.citline{display:flex;gap:7px;font-size:12px;color:var(--paper2);margin-bottom:7px;align-items:baseline}
-.linkbtn{color:var(--cyan);text-decoration:underline dotted;text-underline-offset:3px;padding:0 1px;font-size:inherit}
+.linkbtn{color:var(--cyan);text-decoration:underline dotted;text-underline-offset:3px;padding:0 1px;font-size:inherit;text-align:left}
 .linkbtn:hover{color:var(--yellow)}
 .evothers .linkbtn{margin-right:8px}
-.stamp{position:absolute;top:13px;right:44px;border:2px solid var(--red);color:var(--red);
-  font-family:var(--serif);font-size:13px;letter-spacing:4px;padding:2px 8px 2px 11px;transform:rotate(-8deg);opacity:.9}
+.ministat{width:100%;border-collapse:collapse;font-size:12px}
+.ministat td{padding:3px 0;border-bottom:1px solid rgba(216,231,246,.1);color:var(--paper2)}
+.ministat td:last-child{text-align:right;color:var(--paper)}
 
-/* citations table */
+/* tables */
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.segmented{display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+.seg{padding:5px 12px;font-size:12.5px;color:var(--paper2);letter-spacing:1px}
+.seg+.seg{border-left:1px solid var(--line)}
+.seg.on{background:var(--yellow);color:#0E2440;font-weight:600}
 .searchbox{display:flex;align-items:center;gap:6px;border:1px solid var(--line);padding:5px 9px;border-radius:2px;
   background:rgba(13,29,51,.7);color:var(--dim);min-width:220px}
 .searchbox input{background:none;border:none;color:var(--paper);width:100%;font-size:12.5px}
@@ -969,10 +1341,12 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--yellow)}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:2px}
 table{width:100%;border-collapse:collapse;font-size:12px;min-width:920px}
 th{font-family:var(--serif);font-weight:600;text-align:left;letter-spacing:1px;font-size:12px;
-  padding:8px 10px;border-bottom:1px solid var(--line);background:rgba(13,29,51,.92);position:sticky;top:0}
+  padding:8px 10px;border-bottom:1px solid var(--line);background:rgba(13,29,51,.92);position:sticky;top:0;white-space:nowrap}
+th.sortable{cursor:pointer}
+th.sortable:hover{color:var(--yellow)}
+th.sortable.on{color:var(--yellow)}
 td{padding:7px 10px;border-bottom:1px solid rgba(216,231,246,.1);vertical-align:top;color:var(--paper2)}
-tr.hl td{background:rgba(242,193,78,.14);color:var(--paper)}
-.chipbtn{border:1px solid var(--line);color:var(--cyan);font-size:10px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:2px}
+.chipbtn{border:1px solid var(--line);color:var(--cyan);font-size:10px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:2px;white-space:nowrap}
 .chipbtn:hover{border-color:var(--cyan)}
 
 /* buttons */
@@ -981,9 +1355,7 @@ tr.hl td{background:rgba(242,193,78,.14);color:var(--paper)}
 .btn:hover{border-color:var(--paper2);color:var(--paper)}
 .btn-y{background:var(--yellow);border-color:var(--yellow);color:#0E2440;font-weight:600}
 .btn-y:hover{background:#f7d075;color:#0E2440}
-.btn-ghost{background:none}
-.btn-red{border-color:var(--red);color:var(--red);background:none}
-.btn-red:hover{background:rgba(228,87,61,.12);color:var(--red)}
+.btn-ghost{background:none;cursor:pointer}
 .btn.small{padding:4px 9px;font-size:11.5px}
 
 /* lineage */
@@ -996,8 +1368,7 @@ tr.hl td{background:rgba(242,193,78,.14);color:var(--paper)}
 .lbl{fill:#D5E4F4;font-family:var(--sans)}
 .lbl.on{fill:#fff;font-weight:600}
 
-.bootbox{margin:auto;text-align:center;color:var(--paper2)}
-a.btn{text-decoration:none}
+.bootbox{margin:auto;text-align:center;color:var(--paper2);padding:24px}
 
 /* toast */
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:60;
@@ -1018,8 +1389,10 @@ a.btn{text-decoration:none}
   .ttl-en{display:none}
   .ttl-zh{font-size:15px}
   .tab{padding:4px 9px;font-size:12px;letter-spacing:1px}
+  .hdr-right .dimchip{display:none}
   .panel{left:10px;right:10px;top:auto;bottom:74px;width:auto;max-height:46%}
   .introcard{bottom:74px;max-height:52%}
+  .legend{display:none}
   .yeardisp{font-size:19px;width:52px}
 }
 @media (prefers-reduced-motion:reduce){
