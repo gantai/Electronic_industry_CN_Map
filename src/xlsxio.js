@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, DEFAULT_FALLBACK } from "./geocode.js";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
-import { parseCNDate, baseName, parenAlias, splitChain } from "./utils.js";
+import { parseCNDate, baseName, parenAlias, splitChain, stripLeadingDate } from "./utils.js";
 
 /* ============================================================
    CN_Electronic_Industry.xlsx 解析器
@@ -129,6 +129,46 @@ function founderEventType(text) {
   return "更名";
 }
 
+/* ---------- 名称沿革 ----------
+   「Founder」列的链条里,一部分步骤是这家单位历年的名字,另一部分是划归、
+   并入一类的机构变动。把前者按日期排成一条名称时间线,地图上便能按年显示
+   当年的名号 —— 譬如冶金所 1928 年时还叫中央研究院工学研究所。
+   只认原表写明的改名;拿不准的一律回落到表内 A 列的名称。 */
+const NAME_VERB = /^(?:改名为|更名为|改称为|改名|更名|改称|易名|定名)/;
+const EVENT_VERB = /划归|划入|划出|归属|并入|合并|抽调|投资|组建|合资|\+/;
+
+function chainStepName(text) {
+  const rest = stripLeadingDate(text).trim();
+  if (!rest) return null;
+  const m = rest.match(NAME_VERB);
+  if (m) return rest.slice(m[0].length).trim() || null;
+  return EVENT_VERB.test(rest) ? null : rest;
+}
+
+function buildNames(chain, start, tableName) {
+  const only = [{ from: start, name: tableName, basis: "表内名称" }];
+  if (!start) return only;
+  const steps = chain.map((c) => ({ ...c, nm: chainStepName(c.text) }))
+    .filter((c) => !c.date || c.date.y >= start.y);
+  const firstDated = steps.findIndex((c) => c.date);
+  if (firstDated < 0 || !steps.some((c) => c.date && c.nm)) return only;
+
+  /* 首段:第一个纪年步骤之前、最后一个像名称的无日期步骤 */
+  let head = tableName, headBasis = "表内名称";
+  for (let i = firstDated - 1; i >= 0; i--) {
+    if (steps[i].nm) { head = steps[i].nm; headBasis = "原表沿革链"; break; }
+  }
+  const segs = [{ from: start, name: head, basis: headBasis }];
+  steps.forEach((c, i) => {
+    if (!c.date) return;
+    const isLast = !steps.slice(i + 1).some((t) => t.date);
+    if (c.nm) segs.push({ from: c.date, name: c.nm, basis: "原表沿革链" });
+    /* 末尾若是一次机构变动,此后便以表内名称相称 */
+    else if (isLast) segs.push({ from: c.date, name: tableName, basis: "表内名称" });
+  });
+  return segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
+}
+
 /* ---------- 厂所名录 ---------- */
 function parseUnits(ws) {
   const rows = rowsOf(ws);
@@ -198,7 +238,8 @@ function parseUnits(ws) {
       start: parseCNDate(cell(r, cStart)),
       end: parseCNDate(cell(r, cEnd)),
       founder,
-      chain: splitChain(founder),
+      /* 沿革链的每一步都可能自带日期(更名 / 划归多写在步骤开头) */
+      chain: splitChain(founder).map((t) => ({ text: t, date: parseCNDate(t) })),
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
       lat: hasOwn ? latOverride : hasPlace ? place.lat : DEFAULT_FALLBACK.lat,
@@ -213,6 +254,8 @@ function parseUnits(ws) {
       semi: [],
       comp: [],
     });
+    const u = units[units.length - 1];
+    u.names = buildNames(u.chain, u.start, u.name);
   });
   return { units, statsYear };
 }
@@ -316,6 +359,14 @@ function deriveEvents(units, comp, match) {
   });
 
   return events.filter((e) => e.from.every((id) => byId[id]) && e.to.every((id) => byId[id]));
+}
+
+/** 某一年该以什么名字称呼这家单位 */
+export function nameAt(u, year) {
+  if (!u.names || !u.names.length) return { name: u.name, historical: false };
+  let seg = u.names[0];
+  u.names.forEach((s) => { if (s.from && s.from.y <= year) seg = s; });
+  return { name: seg.name, historical: seg.name !== u.name, seg };
 }
 
 /* ---------- 主入口 ---------- */
