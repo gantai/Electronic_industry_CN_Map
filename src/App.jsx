@@ -16,6 +16,9 @@ import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
    ============================================================ */
 
 const EXPAND_PX = 90;   // 同城单位散开所需的屏上跨度
+/* 放大上限:约当视野宽 7 km。再放大只会把「街段级近似」的落点显示得
+   像实测点位,超出数据本身的精度,故到此为止。 */
+const MAX_K = 1200;
 const FADE_FROM = 15, FADE_TO = 45;  // 省界底图在城市尺度上淡出
 
 /* ---------- geo: rewind polygons for d3's spherical winding ---------- */
@@ -95,7 +98,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     const svg = svgRef.current;
     if (!svg) return;
     const s = d3.select(svg);
-    const z = d3.zoom().scaleExtent([1, 4000]).on("zoom", (ev) => setT(ev.transform));
+    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => setT(ev.transform));
     zoomRef.current = z;
     s.call(z);
     return () => { s.on(".zoom", null); };
@@ -198,7 +201,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   const scaleBar = useMemo(() => {
     if (!kmPerPx) return null;
     const perPx = kmPerPx / k;
-    const nice = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000];
+    const nice = [0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000];
     const pick = nice.find((d) => d / perPx >= 60) || nice[nice.length - 1];
     return { km: pick, px: pick / perPx };
   }, [kmPerPx, k]);
@@ -260,7 +263,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
     const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     const spanX = Math.max(x1 - x0, 1e-6), spanY = Math.max(y1 - y0, 1e-6);
-    const kk = Math.max(1, Math.min(3000, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
+    const kk = Math.max(1, Math.min(MAX_K, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
     flyTo((x0 + x1) / 2, (y0 + y1) / 2, kk, dur);
   }, [projection, size, data.units, basePos, flyTo]);
 
@@ -274,7 +277,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   useEffect(() => {
     if (!flyReq || !projection) return;
     const p = basePos[flyReq.id];
-    if (p) flyTo(p[0], p[1], Math.max(k, 320));
+    if (p) flyTo(p[0], p[1], Math.min(MAX_K, Math.max(k, 320)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyReq, projection]);
 
@@ -463,7 +466,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
             <line x1="1" y1="3" x2="1" y2="11" stroke="#BBD3EC" strokeWidth="1.4" />
             <line x1={scaleBar.px + 1} y1="3" x2={scaleBar.px + 1} y2="11" stroke="#BBD3EC" strokeWidth="1.4" />
           </svg>
-          <span>{scaleBar.km < 1 ? scaleBar.km * 1000 + " m" : scaleBar.km + " km"}</span>
+          <span>{scaleBar.km < 1 ? Math.round(scaleBar.km * 1000) + " m" : scaleBar.km + " km"}</span>
         </div>
       )}
       {cityOpacity > 0.25 && CITY_ATTR && <div className="attrib mono">{CITY_ATTR}</div>}
