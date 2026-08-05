@@ -19,6 +19,7 @@ const SHEET_HINTS = {
   units: ["fact and comp-shanghai", "fact", "厂所", "units"],
   semi: ["semi-product", "semi", "半导体"],
   comp: ["comp-product", "comp", "整机", "计算机"],
+  names: ["name-history", "names", "名称沿革", "名称"],
 };
 
 const norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
@@ -146,7 +147,7 @@ function chainStepName(text) {
 }
 
 function buildNames(chain, start, tableName) {
-  const only = [{ from: start, name: tableName, basis: "表内名称" }];
+  const only = [{ from: start, name: tableName, basis: "表内名称", note: "" }];
   if (!start) return only;
   const steps = chain.map((c) => ({ ...c, nm: chainStepName(c.text) }))
     .filter((c) => !c.date || c.date.y >= start.y);
@@ -158,13 +159,14 @@ function buildNames(chain, start, tableName) {
   for (let i = firstDated - 1; i >= 0; i--) {
     if (steps[i].nm) { head = steps[i].nm; headBasis = "原表沿革链"; break; }
   }
-  const segs = [{ from: start, name: head, basis: headBasis }];
+  const segs = [{ from: start, name: head, basis: headBasis, note: "" }];
   steps.forEach((c, i) => {
     if (!c.date) return;
     const isLast = !steps.slice(i + 1).some((t) => t.date);
-    if (c.nm) segs.push({ from: c.date, name: c.nm, basis: "原表沿革链" });
+    const note = stripLeadingDate(c.text);
+    if (c.nm) segs.push({ from: c.date, name: c.nm, basis: "原表沿革链", note });
     /* 末尾若是一次机构变动,此后便以表内名称相称 */
-    else if (isLast) segs.push({ from: c.date, name: tableName, basis: "表内名称" });
+    else if (isLast) segs.push({ from: c.date, name: tableName, basis: "表内名称", note });
   });
   return segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
 }
@@ -315,6 +317,48 @@ function parseComp(ws, match) {
   }).filter((x) => x.product);
 }
 
+/* ---------- 名称沿革表(可选) ----------
+   有这张表就以它为准,没有才回落到从「Founder」列推定的那条线。
+   一行一段名称:Unit 对应名录里的单位,From 是这个名字启用的日期,
+   一直用到同一单位的下一行为止。只需登记改过名的单位。 */
+function parseNameHistory(ws, match, units) {
+  const rows = rowsOf(ws);
+  if (!rows.length) return {};
+  const hi = headerIndex(rows, "unit");
+  const col = colFinder(rows[hi] || []);
+  const cU = col("Unit", "单位"), cN = col("Name", "名称"), cF = col("From", "启用", "起始");
+  const cR = col("Remark", "备注"), cS = col("Source", "出处");
+  if (cU < 0 || cN < 0) return {};
+
+  const byUnit = {};
+  rows.slice(hi + 1).forEach((r) => {
+    const who = String(cell(r, cU) || "").trim();
+    const name = String(cell(r, cN) || "").trim();
+    const date = parseCNDate(cell(r, cF));
+    if (!who || !name || !date) return;
+    const ids = match(who);
+    if (!ids.length) return;
+    (byUnit[ids[0]] = byUnit[ids[0]] || []).push({
+      from: date, name, basis: "名称沿革表",
+      note: stripLeadingDate(String(cell(r, cR) || "").trim()),
+      source: String(cell(r, cS) || "").trim(),
+    });
+  });
+
+  const out = {};
+  const byId = Object.fromEntries(units.map((u) => [u.id, u]));
+  Object.entries(byUnit).forEach(([id, segs]) => {
+    segs.sort((a, b) => (a.from.y - b.from.y) || ((a.from.m || 0) - (b.from.m || 0)) || ((a.from.d || 0) - (b.from.d || 0)));
+    const u = byId[id];
+    /* 表里最早一行若晚于始建年,前面那段仍用表内名称 */
+    if (u && u.start && segs[0].from.y > u.start.y) {
+      segs.unshift({ from: u.start, name: u.name, basis: "表内名称", note: "", source: "" });
+    }
+    out[id] = segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
+  });
+  return out;
+}
+
 /* ---------- 事件推定 ---------- */
 function deriveEvents(units, comp, match) {
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
@@ -382,6 +426,8 @@ export function parseWorkbook(buf) {
   if (!units.length) throw new Error("未找到「Fact and Comp-Shanghai」厂所名录表");
 
   const match = buildMatcher(units);
+  const explicitNames = parseNameHistory(pickSheet(wb, "names"), match, units);
+  units.forEach((u) => { if (explicitNames[u.id]) u.names = explicitNames[u.id]; });
   const semi = parseSemi(pickSheet(wb, "semi"), match);
   const comp = parseComp(pickSheet(wb, "comp"), match);
   const events = deriveEvents(units, comp, match);
@@ -401,6 +447,7 @@ export function parseWorkbook(buf) {
 
   return {
     units, semi, comp, events, statsYear,
+    namedUnits: Object.keys(explicitNames).length,
     yearMin: Math.floor((lo - 3) / 5) * 5,
     yearMax: Math.ceil((hi + 3) / 5) * 5,
     counts: { units: units.length, semi: semi.length, comp: comp.length, events: events.length },
@@ -440,9 +487,22 @@ export function exportWorkbook(data, filename) {
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
+  const nameRows = [];
+  data.units.forEach((u) => {
+    if (!u.names || u.names.length < 2) return;
+    u.names.forEach((seg) => nameRows.push([
+      u.raw, seg.name,
+      String(seg.from.y * 10000 + (seg.from.m || 0) * 100 + (seg.from.d || 0)).padStart(8, "0"),
+      seg.note || "", seg.source || "",
+    ]));
+  });
+  const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Remark", "Source"], ...nameRows]);
+  ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 44 }, { wch: 22 }];
+
   XLSX.utils.book_append_sheet(wb, ws1, "Fact and Comp-Shanghai");
   XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
   XLSX.utils.book_append_sheet(wb, ws3, "Comp-Product");
+  XLSX.utils.book_append_sheet(wb, ws4, "Name-History");
   XLSX.writeFile(wb, filename || "CN_Electronic_Industry.xlsx");
 }
 

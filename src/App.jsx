@@ -215,14 +215,14 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   /* 当年「事件簿」:始建的、以及沿革链上注明当年更名 / 划归的单位。
      地图上给它们打一层黄光,播放时间轴时便能看见变动发生在哪一年。 */
   const glowMap = useMemo(() => {
+    const clip = (t) => (t.length > 16 ? t.slice(0, 16) + "…" : t);
     const m = new Map();
     data.units.forEach((u) => {
       if (u.start && u.start.y === year) { m.set(u.id, { kind: "born", caption: "始建" }); return; }
+      const seg = u.names.find((sg, i) => i > 0 && sg.from && sg.from.y === year);
+      if (seg) { m.set(u.id, { kind: "rename", caption: clip(seg.note || "改称") }); return; }
       const step = u.chain.find((c) => c.date && c.date.y === year);
-      if (step) {
-        const txt = stripLeadingDate(step.text);
-        m.set(u.id, { kind: "rename", caption: txt.length > 16 ? txt.slice(0, 16) + "…" : txt });
-      }
+      if (step) m.set(u.id, { kind: "event", caption: clip(stripLeadingDate(step.text)) });
     });
     return m;
   }, [data.units, year]);
@@ -823,7 +823,8 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
                   {fmtDate(seg.from)}{till ? "–" + fmtDate(till.from) : "–" + (u.end ? fmtDate(u.end) : "…")}
                 </span>
                 <span>{seg.name}</span>
-                {seg.basis === "表内名称" && <span className="chip mono dimchip">表内名称</span>}
+                <span className="chip mono dimchip">{seg.basis}</span>
+                {seg.note && <div className="evnote">{seg.note}</div>}
               </div>
             );
           })}
