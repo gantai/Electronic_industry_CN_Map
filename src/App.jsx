@@ -1056,7 +1056,7 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
         <button className="btn btn-y" onClick={onExport}><Download size={13} /> 导出 Excel</button>
       </div>
       <div className="notebar">
-        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product 三表),构建时编入产物。
+        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。
         更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。
         {data.statsYear ? " 统计列为 " + data.statsYear + " 年数值,量纲悉依原表。" : ""}
       </div>
@@ -1191,7 +1191,7 @@ export default function App() {
           <div className="mono dim" style={{ marginTop: 10, fontSize: 12 }}>{SOURCE_FILE} · {boot.error}</div>
           <div className="dimtext small" style={{ marginTop: 10, maxWidth: 420 }}>
             请检查仓库根目录下的 {SOURCE_FILE} 是否仍含
-            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表。
+            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表(Name-History 可有可无)。
           </div>
         </div>
       </div>

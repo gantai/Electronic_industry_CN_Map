@@ -6,7 +6,7 @@
 
 ## 数据源
 
-仓库根目录的 **`CN_Electronic_Industry.xlsx`** 是全站唯一数据源,三张表:
+仓库根目录的 **`CN_Electronic_Industry.xlsx`** 是全站唯一数据源,四张表(末一张可选):
 
 | 工作表 | 内容 | 关键列 |
 | --- | --- | --- |

@@ -6,10 +6,11 @@ import { parseCNDate, baseName, parenAlias, splitChain, stripLeadingDate } from 
 /* ============================================================
    CN_Electronic_Industry.xlsx 解析器
    ------------------------------------------------------------
-   工作簿即本站唯一数据源,三张表:
+   工作簿即本站唯一数据源,四张表:
      Fact and Comp-Shanghai  厂所名录(含 1990 年统计块,两行表头)
      Semi-Product            半导体器件投产记录
      Comp-Product            计算机整机研制记录
+     Name-History            名称沿革(可选,有则名称以此表为准)
    本文件只做「读取 + 归并」,不改写原表语义:地图上的经纬度来自
    geocode.js 的人工近似值,沿革连线由「Founder」列的措辞推定,
    两者在界面上都会显式标注出处,便于核对。
