@@ -4,8 +4,8 @@ import { Play, Pause, ChevronLeft, ChevronRight, X, Plus, Minus, Upload, Downloa
 import GEO_RAW from "./china.geo.json";
 import CITY_RAW from "./city.geo.json";
 import { INDUSTRY_META, industryMeta, TYPE_META, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
-import { clampYear, fmtDate, fmtNum } from "./utils.js";
-import { parseWorkbook, exportWorkbook, EMPTY_DATA } from "./xlsxio.js";
+import { clampYear, fmtDate, fmtNum, stripLeadingDate } from "./utils.js";
+import { parseWorkbook, exportWorkbook, nameAt, EMPTY_DATA } from "./xlsxio.js";
 import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
 
 /* ============================================================
@@ -161,6 +161,12 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     }).filter(Boolean);
   }, [clusters, basePos]);
 
+  /* 名字随年份走:1930 年的冶金所还叫中央研究院工学研究所 */
+  const labelOf = useCallback((u) => {
+    const nm = nameAt(u, year);
+    return nm.historical ? nm.name : (u.alt || u.name);
+  }, [year]);
+
   const k = t.k;
   const clusterOf = useMemo(() => {
     const m = {};
@@ -205,6 +211,21 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     const pick = nice.find((d) => d / perPx >= 60) || nice[nice.length - 1];
     return { km: pick, px: pick / perPx };
   }, [kmPerPx, k]);
+
+  /* 当年「事件簿」:始建的、以及沿革链上注明当年更名 / 划归的单位。
+     地图上给它们打一层黄光,播放时间轴时便能看见变动发生在哪一年。 */
+  const glowMap = useMemo(() => {
+    const clip = (t) => (t.length > 16 ? t.slice(0, 16) + "…" : t);
+    const m = new Map();
+    data.units.forEach((u) => {
+      if (u.start && u.start.y === year) { m.set(u.id, { kind: "born", caption: "始建" }); return; }
+      const seg = u.names.find((sg, i) => i > 0 && sg.from && sg.from.y === year);
+      if (seg) { m.set(u.id, { kind: "rename", caption: clip(seg.note || "改称") }); return; }
+      const step = u.chain.find((c) => c.date && c.date.y === year);
+      if (step) m.set(u.id, { kind: "event", caption: clip(stripLeadingDate(step.text)) });
+    });
+    return m;
+  }, [data.units, year]);
 
   const evNear = useMemo(
     () => data.events.filter((v) => v.year != null && Math.abs(v.year - year) <= 2),
@@ -297,25 +318,31 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
   const labelSet = useMemo(() => {
     const out = new Set();
-    if (k < 45 || !size.w) return out;
+    if (!size.w) return out;
     const FS = 10.5, boxes = [];
-    nodeList.slice().sort((a, b) => {
+    /* 当年有变动的先占位置,其余按产品记录多寡排队;缩得太小时只标高亮的那几家 */
+    const cand = nodeList.filter(({ u }) => k >= 45 || glowMap.has(u.id));
+    cand.sort((a, b) => {
+      const ga = glowMap.has(a.u.id) ? 1 : 0, gb = glowMap.has(b.u.id) ? 1 : 0;
+      if (ga !== gb) return gb - ga;
       const sa = a.u.semi.length + a.u.comp.length, sb = b.u.semi.length + b.u.comp.length;
       return sb - sa || (a.u.start ? a.u.start.y : 9999) - (b.u.start ? b.u.start.y : 9999);
     }).forEach(({ u }) => {
       const p = posOf(u.id);
       if (!p) return;
+      const glow = glowMap.get(u.id);
       const sx = t.x + k * p[0] + 9, sy = t.y + k * p[1];
-      const text = u.alt || u.name;
-      const w = text.length * FS * 1.02, h = FS + 5;
+      const text = labelOf(u);
+      const w = Math.max(text.length, glow ? glow.caption.length * 0.8 : 0) * FS * 1.02;
+      const h = FS + 5 + (glow ? 11 : 0);          // 高亮时下方还有一行小注
       if (sx > size.w || sx + w < 0 || sy < 0 || sy > size.h) return;
-      const box = [sx, sy - h / 2, sx + w, sy + h / 2];
+      const box = [sx, sy - (FS + 5) / 2, sx + w, sy - (FS + 5) / 2 + h];
       if (boxes.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) return;
       boxes.push(box);
       out.add(u.id);
     });
     return out;
-  }, [nodeList, posOf, t, k, size]);
+  }, [nodeList, posOf, t, k, size, labelOf, glowMap]);
 
   const baseOpacity = k <= FADE_FROM ? 1 : Math.max(0, 1 - (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const cityOpacity = k <= FADE_FROM ? 0 : Math.min(1, (k - FADE_FROM) / (FADE_TO - FADE_FROM));
@@ -366,7 +393,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
             if (isExpanded(ci)) return null;
             const members = c.ids.map((id) => byId[id]).filter((u) => u && shown.has(u.industry));
             const nAlive = members.filter((m) => isAlive(m, year)).length;
-            const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)));
+            const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)))
+              || c.ids.some((id) => glowMap.has(id));
             const holdsSel = sel && c.ids.includes(sel);
             if (!nAlive && !hasEvent && !holdsSel) return null;
             return (
@@ -406,6 +434,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
             const isSel = sel === u.id;
             const born = u.start && u.start.y === year && !ghost;
             const vague = u.precision === "city";
+            const glow = glowMap.get(u.id);
             const showLabel = isSel || labelSet.has(u.id) || (hover && hover.id === u.id);
             return (
               <g key={u.id} transform={"translate(" + p[0] + "," + p[1] + ")"}
@@ -413,6 +442,13 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
                 onClick={(ev) => { ev.stopPropagation(); setSel(u.id); }}
                 onMouseMove={(ev) => onNodeHover(ev, u.id)}
                 onMouseLeave={() => setHover(null)}>
+                {glow && (
+                  <g className="glow" pointerEvents="none">
+                    <circle r={11 / k} fill="#F2C14E" className="glowcore" />
+                    <circle r={11 / k} fill="none" stroke="#F2C14E" strokeWidth={1.5 / k} className="glowring" />
+                    <circle r={11 / k} fill="none" stroke="#F2C14E" strokeWidth={1.2 / k} className="glowring d2" />
+                  </g>
+                )}
                 {isSel && <circle r={10.5 / k} fill="none" stroke="#F2C14E" strokeWidth={1.6 / k} />}
                 {shape === "square" ? (
                   <rect x={-5.2 / k} y={-5.2 / k} width={10.4 / k} height={10.4 / k} rx={1.4 / k}
@@ -431,8 +467,12 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
                 {vague && <circle cx={5.4 / k} cy={-5.4 / k} r={1.8 / k} fill="#E4573D" />}
                 {showLabel && (
                   <text x={9 / k} dy={3.6 / k} fontSize={10.5 / k} strokeWidth={2.6 / k} className="maplabel strong">
-                    {u.alt || u.name}
+                    {labelOf(u)}
                   </text>
+                )}
+                {glow && showLabel && (
+                  <text x={9 / k} dy={15 / k} fontSize={8.6 / k} strokeWidth={2.4 / k}
+                    className="maplabel mono glowcap">{glow.caption}</text>
                 )}
               </g>
             );
@@ -443,11 +483,12 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
       {/* tooltip */}
       {hovU && hover && (
         <div className="tooltip" style={{ left: hover.x + 14, top: hover.y + 10 }}>
-          <div className="tt-name">{hovU.name}</div>
+          <div className="tt-name">{labelOf(hovU)}</div>
           <div className="tt-meta mono">
             {hovU.industry} · {spanText(hovU)}
             {hovU.precision === "city" ? " · 坐标待定位" : ""}
           </div>
+          {nameAt(hovU, year).historical && <div className="tt-meta">表内作「{hovU.name}」</div>}
         </div>
       )}
 
@@ -730,8 +771,9 @@ function LineageView({ data, year, setYear, sel, setSel }) {
 }
 
 /* ============================================================ DETAIL PANEL ============================================================ */
-function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear }) {
+function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
   if (!u) return null;
+  const nm = nameAt(u, year);
   const meta = industryMeta(u.industry);
   const evs = data.events
     .filter((v) => (v.from || []).includes(u.id) || (v.to || []).includes(u.id))
@@ -749,6 +791,7 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear }) {
             <span className="chip mono">{spanText(u)}</span>
           </div>
           <h2 className="panel-name">{u.name}</h2>
+          {nm.historical && <div className="panel-en">{year} 年时称「{nm.name}」</div>}
           <div className="panel-city mono">
             {u.address || "地址未著录"}
             {u.district ? " · " + u.district + "区" : ""}
@@ -768,11 +811,36 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear }) {
         </div>
       )}
 
+      {u.names.length > 1 && (
+        <div className="panel-sec">
+          <div className="sec-t mono">名称沿革 NAMES</div>
+          {u.names.map((seg, i) => {
+            const till = u.names[i + 1];
+            const on = seg === nm.seg;
+            return (
+              <div key={i} className={"nameline" + (on ? " on" : "")}>
+                <span className="mono evyear">
+                  {fmtDate(seg.from)}{till ? "–" + fmtDate(till.from) : "–" + (u.end ? fmtDate(u.end) : "…")}
+                </span>
+                <span>{seg.name}</span>
+                <span className="chip mono dimchip">{seg.basis}</span>
+                {seg.note && <div className="evnote">{seg.note}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {u.chain.length > 0 && (
         <div className="panel-sec">
           <div className="sec-t mono">前身沿革 PREDECESSORS</div>
           <ol className="chain">
-            {u.chain.map((step, i) => <li key={i}>{step}</li>)}
+            {u.chain.map((step, i) => (
+              <li key={i}>
+                {step.date && <span className="mono chaindate">{fmtDate(step.date)}</span>}
+                {step.date ? stripLeadingDate(step.text) : step.text}
+              </li>
+            ))}
           </ol>
         </div>
       )}
@@ -988,7 +1056,7 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
         <button className="btn btn-y" onClick={onExport}><Download size={13} /> 导出 Excel</button>
       </div>
       <div className="notebar">
-        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product 三表),构建时编入产物。
+        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。
         更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。
         {data.statsYear ? " 统计列为 " + data.statsYear + " 年数值,量纲悉依原表。" : ""}
       </div>
@@ -1002,7 +1070,8 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
               {th("start", "起讫", true)}
               <th>地址</th>
               {STAT_FIELDS.map((f) => th(f.key, f.label, true))}
-              <th>备注 / 出处</th>
+              <th>备注</th>
+              <th>出处</th>
             </tr>
           </thead>
           <tbody>
@@ -1020,10 +1089,11 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
                   {u.precision === "city" && <div className="dimtext mono small">坐标待定位</div>}
                 </td>
                 {STAT_FIELDS.map((f) => <td key={f.key} className="mono">{fmtNum(u.stats[f.key])}</td>)}
-                <td className="small">{u.remark}{u.source ? <div className="dimtext small">出处:{u.source}</div> : null}</td>
+                <td className="small">{u.remark}</td>
+                <td className="small">{u.source || <span className="dimtext">—</span>}</td>
               </tr>
             ))}
-            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 1} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
+            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1121,7 +1191,7 @@ export default function App() {
           <div className="mono dim" style={{ marginTop: 10, fontSize: 12 }}>{SOURCE_FILE} · {boot.error}</div>
           <div className="dimtext small" style={{ marginTop: 10, maxWidth: 420 }}>
             请检查仓库根目录下的 {SOURCE_FILE} 是否仍含
-            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表。
+            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表(Name-History 可有可无)。
           </div>
         </div>
       </div>
@@ -1178,7 +1248,7 @@ export default function App() {
                 <button className="btn btn-ghost small" onClick={() => setTab("lineage")}>查看「谱系」年表 →</button>
               </div>
             )}
-            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear}
+            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
               onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
             <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} />
           </>
@@ -1187,7 +1257,7 @@ export default function App() {
         {tab === "lineage" && (
           <>
             <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} />
-            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear}
+            {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
               onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
           </>
         )}
@@ -1374,6 +1444,19 @@ td{padding:7px 10px;border-bottom:1px solid rgba(216,231,246,.1);vertical-align:
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:60;
   background:rgba(10,24,43,.96);border:1px solid var(--yellow);color:var(--paper);
   padding:9px 16px;font-size:12.5px;border-radius:2px;max-width:82%;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+
+/* 当年始建 / 更名的高亮:一圈黄光加两道扩散环 */
+.glowcore,.glowring{transform-box:fill-box;transform-origin:center}
+.glowcore{animation:glowbreath 1.6s ease-in-out infinite;opacity:.18}
+@keyframes glowbreath{0%,100%{transform:scale(.8);opacity:.10}50%{transform:scale(1.18);opacity:.30}}
+.glowring{animation:glowout 1.6s ease-out infinite}
+.glowring.d2{animation-delay:.8s}
+@keyframes glowout{0%{transform:scale(.55);opacity:.95}100%{transform:scale(2.3);opacity:0}}
+.glowcap{fill:var(--yellow)}
+.chaindate{color:var(--yellow);margin-right:6px;font-size:10.5px}
+.nameline{font-size:12.5px;margin-bottom:5px;color:var(--paper2)}
+.nameline.on{color:var(--paper)}
+.nameline.on .evyear{background:rgba(242,193,78,.16);border-radius:2px;padding:0 3px}
 
 /* animations */
 .nb{animation:born .8s ease-out;transform-box:fill-box;transform-origin:center}

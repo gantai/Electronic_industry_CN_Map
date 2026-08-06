@@ -44,6 +44,10 @@ export const parenAlias = (s) => {
   return m ? m[1].trim() : "";
 };
 
+/** 去掉沿革步骤开头的日期,如「19750200改名上海新跃仪表厂」→「改名上海新跃仪表厂」 */
+export const stripLeadingDate = (s) =>
+  String(s || "").replace(/^\s*\d{4}(?:\d{2}(?:\d{2})?)?\s*年?\s*/, "");
+
 /** 把「甲->乙->丙」式的沿革链拆成有序步骤 */
 export const splitChain = (s) =>
   String(s || "")

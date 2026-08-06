@@ -1,15 +1,16 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, DEFAULT_FALLBACK } from "./geocode.js";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
-import { parseCNDate, baseName, parenAlias, splitChain } from "./utils.js";
+import { parseCNDate, baseName, parenAlias, splitChain, stripLeadingDate } from "./utils.js";
 
 /* ============================================================
    CN_Electronic_Industry.xlsx 解析器
    ------------------------------------------------------------
-   工作簿即本站唯一数据源,三张表:
+   工作簿即本站唯一数据源,四张表:
      Fact and Comp-Shanghai  厂所名录(含 1990 年统计块,两行表头)
      Semi-Product            半导体器件投产记录
      Comp-Product            计算机整机研制记录
+     Name-History            名称沿革(可选,有则名称以此表为准)
    本文件只做「读取 + 归并」,不改写原表语义:地图上的经纬度来自
    geocode.js 的人工近似值,沿革连线由「Founder」列的措辞推定,
    两者在界面上都会显式标注出处,便于核对。
@@ -19,6 +20,7 @@ const SHEET_HINTS = {
   units: ["fact and comp-shanghai", "fact", "厂所", "units"],
   semi: ["semi-product", "semi", "半导体"],
   comp: ["comp-product", "comp", "整机", "计算机"],
+  names: ["name-history", "names", "名称沿革", "名称"],
 };
 
 const norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
@@ -129,6 +131,47 @@ function founderEventType(text) {
   return "更名";
 }
 
+/* ---------- 名称沿革 ----------
+   「Founder」列的链条里,一部分步骤是这家单位历年的名字,另一部分是划归、
+   并入一类的机构变动。把前者按日期排成一条名称时间线,地图上便能按年显示
+   当年的名号 —— 譬如冶金所 1928 年时还叫中央研究院工学研究所。
+   只认原表写明的改名;拿不准的一律回落到表内 A 列的名称。 */
+const NAME_VERB = /^(?:改名为|更名为|改称为|改名|更名|改称|易名|定名)/;
+const EVENT_VERB = /划归|划入|划出|归属|并入|合并|抽调|投资|组建|合资|\+/;
+
+function chainStepName(text) {
+  const rest = stripLeadingDate(text).trim();
+  if (!rest) return null;
+  const m = rest.match(NAME_VERB);
+  if (m) return rest.slice(m[0].length).trim() || null;
+  return EVENT_VERB.test(rest) ? null : rest;
+}
+
+function buildNames(chain, start, tableName) {
+  const only = [{ from: start, name: tableName, basis: "表内名称", note: "" }];
+  if (!start) return only;
+  const steps = chain.map((c) => ({ ...c, nm: chainStepName(c.text) }))
+    .filter((c) => !c.date || c.date.y >= start.y);
+  const firstDated = steps.findIndex((c) => c.date);
+  if (firstDated < 0 || !steps.some((c) => c.date && c.nm)) return only;
+
+  /* 首段:第一个纪年步骤之前、最后一个像名称的无日期步骤 */
+  let head = tableName, headBasis = "表内名称";
+  for (let i = firstDated - 1; i >= 0; i--) {
+    if (steps[i].nm) { head = steps[i].nm; headBasis = "原表沿革链"; break; }
+  }
+  const segs = [{ from: start, name: head, basis: headBasis, note: "" }];
+  steps.forEach((c, i) => {
+    if (!c.date) return;
+    const isLast = !steps.slice(i + 1).some((t) => t.date);
+    const note = stripLeadingDate(c.text);
+    if (c.nm) segs.push({ from: c.date, name: c.nm, basis: "原表沿革链", note });
+    /* 末尾若是一次机构变动,此后便以表内名称相称 */
+    else if (isLast) segs.push({ from: c.date, name: tableName, basis: "表内名称", note });
+  });
+  return segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
+}
+
 /* ---------- 厂所名录 ---------- */
 function parseUnits(ws) {
   const rows = rowsOf(ws);
@@ -198,7 +241,8 @@ function parseUnits(ws) {
       start: parseCNDate(cell(r, cStart)),
       end: parseCNDate(cell(r, cEnd)),
       founder,
-      chain: splitChain(founder),
+      /* 沿革链的每一步都可能自带日期(更名 / 划归多写在步骤开头) */
+      chain: splitChain(founder).map((t) => ({ text: t, date: parseCNDate(t) })),
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
       lat: hasOwn ? latOverride : hasPlace ? place.lat : DEFAULT_FALLBACK.lat,
@@ -213,6 +257,8 @@ function parseUnits(ws) {
       semi: [],
       comp: [],
     });
+    const u = units[units.length - 1];
+    u.names = buildNames(u.chain, u.start, u.name);
   });
   return { units, statsYear };
 }
@@ -272,6 +318,48 @@ function parseComp(ws, match) {
   }).filter((x) => x.product);
 }
 
+/* ---------- 名称沿革表(可选) ----------
+   有这张表就以它为准,没有才回落到从「Founder」列推定的那条线。
+   一行一段名称:Unit 对应名录里的单位,From 是这个名字启用的日期,
+   一直用到同一单位的下一行为止。只需登记改过名的单位。 */
+function parseNameHistory(ws, match, units) {
+  const rows = rowsOf(ws);
+  if (!rows.length) return {};
+  const hi = headerIndex(rows, "unit");
+  const col = colFinder(rows[hi] || []);
+  const cU = col("Unit", "单位"), cN = col("Name", "名称"), cF = col("From", "启用", "起始");
+  const cR = col("Remark", "备注"), cS = col("Source", "出处");
+  if (cU < 0 || cN < 0) return {};
+
+  const byUnit = {};
+  rows.slice(hi + 1).forEach((r) => {
+    const who = String(cell(r, cU) || "").trim();
+    const name = String(cell(r, cN) || "").trim();
+    const date = parseCNDate(cell(r, cF));
+    if (!who || !name || !date) return;
+    const ids = match(who);
+    if (!ids.length) return;
+    (byUnit[ids[0]] = byUnit[ids[0]] || []).push({
+      from: date, name, basis: "名称沿革表",
+      note: stripLeadingDate(String(cell(r, cR) || "").trim()),
+      source: String(cell(r, cS) || "").trim(),
+    });
+  });
+
+  const out = {};
+  const byId = Object.fromEntries(units.map((u) => [u.id, u]));
+  Object.entries(byUnit).forEach(([id, segs]) => {
+    segs.sort((a, b) => (a.from.y - b.from.y) || ((a.from.m || 0) - (b.from.m || 0)) || ((a.from.d || 0) - (b.from.d || 0)));
+    const u = byId[id];
+    /* 表里最早一行若晚于始建年,前面那段仍用表内名称 */
+    if (u && u.start && segs[0].from.y > u.start.y) {
+      segs.unshift({ from: u.start, name: u.name, basis: "表内名称", note: "", source: "" });
+    }
+    out[id] = segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
+  });
+  return out;
+}
+
 /* ---------- 事件推定 ---------- */
 function deriveEvents(units, comp, match) {
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
@@ -318,6 +406,14 @@ function deriveEvents(units, comp, match) {
   return events.filter((e) => e.from.every((id) => byId[id]) && e.to.every((id) => byId[id]));
 }
 
+/** 某一年该以什么名字称呼这家单位 */
+export function nameAt(u, year) {
+  if (!u.names || !u.names.length) return { name: u.name, historical: false };
+  let seg = u.names[0];
+  u.names.forEach((s) => { if (s.from && s.from.y <= year) seg = s; });
+  return { name: seg.name, historical: seg.name !== u.name, seg };
+}
+
 /* ---------- 主入口 ---------- */
 export const EMPTY_DATA = {
   units: [], semi: [], comp: [], events: [],
@@ -331,6 +427,8 @@ export function parseWorkbook(buf) {
   if (!units.length) throw new Error("未找到「Fact and Comp-Shanghai」厂所名录表");
 
   const match = buildMatcher(units);
+  const explicitNames = parseNameHistory(pickSheet(wb, "names"), match, units);
+  units.forEach((u) => { if (explicitNames[u.id]) u.names = explicitNames[u.id]; });
   const semi = parseSemi(pickSheet(wb, "semi"), match);
   const comp = parseComp(pickSheet(wb, "comp"), match);
   const events = deriveEvents(units, comp, match);
@@ -350,6 +448,7 @@ export function parseWorkbook(buf) {
 
   return {
     units, semi, comp, events, statsYear,
+    namedUnits: Object.keys(explicitNames).length,
     yearMin: Math.floor((lo - 3) / 5) * 5,
     yearMax: Math.ceil((hi + 3) / 5) * 5,
     counts: { units: units.length, semi: semi.length, comp: comp.length, events: events.length },
@@ -389,9 +488,22 @@ export function exportWorkbook(data, filename) {
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
+  const nameRows = [];
+  data.units.forEach((u) => {
+    if (!u.names || u.names.length < 2) return;
+    u.names.forEach((seg) => nameRows.push([
+      u.raw, seg.name,
+      String(seg.from.y * 10000 + (seg.from.m || 0) * 100 + (seg.from.d || 0)).padStart(8, "0"),
+      seg.note || "", seg.source || "",
+    ]));
+  });
+  const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Remark", "Source"], ...nameRows]);
+  ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 44 }, { wch: 22 }];
+
   XLSX.utils.book_append_sheet(wb, ws1, "Fact and Comp-Shanghai");
   XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
   XLSX.utils.book_append_sheet(wb, ws3, "Comp-Product");
+  XLSX.utils.book_append_sheet(wb, ws4, "Name-History");
   XLSX.writeFile(wb, filename || "CN_Electronic_Industry.xlsx");
 }
 
