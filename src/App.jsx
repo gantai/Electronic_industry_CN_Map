@@ -466,7 +466,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
                 )}
                 {vague && <circle cx={5.4 / k} cy={-5.4 / k} r={1.8 / k} fill="#E4573D" />}
                 {showLabel && (
-                  <text x={9 / k} dy={3.6 / k} fontSize={10.5 / k} strokeWidth={2.6 / k} className="maplabel strong">
+                  <text x={9 / k} dy={3.6 / k} fontSize={10.5 / k} strokeWidth={3 / k}
+                    className={"maplabel strong" + (glow ? " glowname" : "")}>
                     {labelOf(u)}
                   </text>
                 )}
@@ -1453,6 +1454,10 @@ td{padding:7px 10px;border-bottom:1px solid rgba(216,231,246,.1);vertical-align:
 .glowring.d2{animation-delay:.8s}
 @keyframes glowout{0%{transform:scale(.55);opacity:.95}100%{transform:scale(2.3);opacity:0}}
 .glowcap{fill:var(--yellow)}
+/* 高亮当年,名字也一并转黄并随光晕明灭。不用 filter: drop-shadow —— SVG 滤镜
+   在 <g> 的缩放里会连模糊半径一起放大,城市尺度下糊成一团 */
+.glowname{fill:var(--yellow);animation:namepulse 1.6s ease-in-out infinite}
+@keyframes namepulse{0%,100%{opacity:.8}50%{opacity:1}}
 .chaindate{color:var(--yellow);margin-right:6px;font-size:10.5px}
 .nameline{font-size:12.5px;margin-bottom:5px;color:var(--paper2)}
 .nameline.on{color:var(--paper)}
