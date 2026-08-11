@@ -4,6 +4,8 @@ import { Play, Pause, ChevronLeft, ChevronRight, X, Plus, Minus, Upload, Downloa
 import GEO_RAW from "./china.geo.json";
 import CITY_RAW from "./city.geo.json";
 import { INDUSTRY_META, industryMeta, TYPE_META, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
+import { strings, detectLang, industryLabel, typeLabel, eventLabel, statLabel, basisLabel,
+  districtLabel, cityLabel, PRECISION_EN } from "./i18n.js";
 import { clampYear, fmtDate, fmtNum, stripLeadingDate } from "./utils.js";
 import { parseWorkbook, exportWorkbook, nameAt, EMPTY_DATA } from "./xlsxio.js";
 import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
@@ -41,13 +43,15 @@ const CITY_ATTR = CITY_RAW.attribution || "";
 
 /* ---------- helpers ---------- */
 const isAlive = (u, year) => !!u.start && u.start.y <= year && (u.end == null || u.end.y > year);
-const spanText = (u) =>
-  (u.start ? fmtDate(u.start) : "年份待考") + "–" + (u.end ? fmtDate(u.end) : "…");
-const cityLabel = (s) => ({ Shanghai: "上海", shanghai: "上海" }[s] || s);
+const spanText = (u, t) =>
+  (u.start ? fmtDate(u.start) : t.undatedSpan) + "–" + (u.end ? fmtDate(u.end) : "…");
+/** 英文界面下,表内若给了 `Name EN` 就用英文名 */
+const unitName = (u, lang) => (lang === "en" && u.nameEn ? u.nameEn : u.name);
+const precisionLabel = (k, lang) => (lang === "en" ? PRECISION_EN[k] : PRECISION_LABEL[k]);
 
 /** 单链聚类:把彼此在 ~60km 内的单位归为一「城」,低倍下折叠成一个徽标。
     用地理距离而非 City 列,新增其他城市的数据时无需另行配置。 */
-function clusterUnits(units, thresholdDeg = 0.6) {
+function clusterUnits(units, lang, thresholdDeg = 0.6) {
   const parent = units.map((_, i) => i);
   const find = (a) => (parent[a] === a ? a : (parent[a] = find(parent[a])));
   for (let i = 0; i < units.length; i++) {
@@ -63,24 +67,24 @@ function clusterUnits(units, thresholdDeg = 0.6) {
   const g = {};
   units.forEach((u, i) => { const r = find(i); (g[r] = g[r] || []).push(u); });
   return Object.values(g).map((members) => {
-    const names = members.map((m) => cityLabel(m.city)).filter(Boolean);
+    const names = members.map((m) => cityLabel(m.city, lang)).filter(Boolean);
     const tally = {};
     names.forEach((n) => { tally[n] = (tally[n] || 0) + 1; });
     const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
-    const dists = Array.from(new Set(members.map((m) => m.district).filter(Boolean)));
-    return { ids: members.map((m) => m.id), label: top ? top[0] : dists[0] || "未定位" };
+    const dists = Array.from(new Set(members.map((m) => districtLabel(m.district, lang)).filter(Boolean)));
+    return { ids: members.map((m) => m.id), label: top ? top[0] : dists[0] || "—" };
   });
 }
 
 /* ============================================================ MAP ============================================================ */
-function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
+function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const zoomRef = useRef(null);
   const didFit = useRef(false);
   const lastData = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [t, setT] = useState(() => d3.zoomIdentity);
+  const [zt, setZt] = useState(() => d3.zoomIdentity);
   const [hover, setHover] = useState(null);
 
   useEffect(() => {
@@ -98,7 +102,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     const svg = svgRef.current;
     if (!svg) return;
     const s = d3.select(svg);
-    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => setT(ev.transform));
+    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => setZt(ev.transform));
     zoomRef.current = z;
     s.call(z);
     return () => { s.on(".zoom", null); };
@@ -117,9 +121,10 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   );
   const cityPaths = useMemo(
     () => (geoPath ? CITY.features.map((f, i) => ({
-      d: geoPath(f), key: i, name: f.properties.name, c: geoPath.centroid(f),
+      d: geoPath(f), key: i, c: geoPath.centroid(f),
+      name: districtLabel(f.properties.name, lang),
     })) : []),
-    [geoPath]
+    [geoPath, lang]
   );
 
   /* 每个单位的地理落点 */
@@ -148,7 +153,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     return m;
   }, [data.units]);
 
-  const clusters = useMemo(() => clusterUnits(data.units), [data.units]);
+  const clusters = useMemo(() => clusterUnits(data.units, lang), [data.units, lang]);
   const clusterInfo = useMemo(() => {
     return clusters.map((c) => {
       const pts = c.ids.map((id) => basePos[id]).filter(Boolean);
@@ -163,11 +168,11 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
 
   /* 名字随年份走:1930 年的冶金所还叫中央研究院工学研究所 */
   const labelOf = useCallback((u) => {
-    const nm = nameAt(u, year);
-    return nm.historical ? nm.name : (u.alt || u.name);
-  }, [year]);
+    const nm = nameAt(u, year, lang);
+    return nm.historical ? nm.name : (u.alt || unitName(u, lang));
+  }, [year, lang]);
 
-  const k = t.k;
+  const k = zt.k;
   const clusterOf = useMemo(() => {
     const m = {};
     clusterInfo.forEach((c, ci) => c.ids.forEach((id) => { m[id] = ci; }));
@@ -218,14 +223,14 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
     const clip = (t) => (t.length > 16 ? t.slice(0, 16) + "…" : t);
     const m = new Map();
     data.units.forEach((u) => {
-      if (u.start && u.start.y === year) { m.set(u.id, { kind: "born", caption: "始建" }); return; }
+      if (u.start && u.start.y === year) { m.set(u.id, { kind: "born", caption: t.born }); return; }
       const seg = u.names.find((sg, i) => i > 0 && sg.from && sg.from.y === year);
-      if (seg) { m.set(u.id, { kind: "rename", caption: clip(seg.note || "改称") }); return; }
+      if (seg) { m.set(u.id, { kind: "rename", caption: clip(seg.note || t.renamed) }); return; }
       const step = u.chain.find((c) => c.date && c.date.y === year);
       if (step) m.set(u.id, { kind: "event", caption: clip(stripLeadingDate(step.text)) });
     });
     return m;
-  }, [data.units, year]);
+  }, [data.units, year, t]);
 
   const evNear = useMemo(
     () => data.events.filter((v) => v.year != null && Math.abs(v.year - year) <= 2),
@@ -331,7 +336,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
       const p = posOf(u.id);
       if (!p) return;
       const glow = glowMap.get(u.id);
-      const sx = t.x + k * p[0] + 9, sy = t.y + k * p[1];
+      const sx = zt.x + k * p[0] + 9, sy = zt.y + k * p[1];
       const text = labelOf(u);
       const w = Math.max(text.length, glow ? glow.caption.length * 0.8 : 0) * FS * 1.02;
       const h = FS + 5 + (glow ? 11 : 0);          // 高亮时下方还有一行小注
@@ -342,7 +347,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
       out.add(u.id);
     });
     return out;
-  }, [nodeList, posOf, t, k, size, labelOf, glowMap]);
+  }, [nodeList, posOf, zt, k, size, labelOf, glowMap]);
 
   const baseOpacity = k <= FADE_FROM ? 1 : Math.max(0, 1 - (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const cityOpacity = k <= FADE_FROM ? 0 : Math.min(1, (k - FADE_FROM) / (FADE_TO - FADE_FROM));
@@ -351,7 +356,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
   return (
     <div className="maparea" ref={wrapRef}>
       <svg ref={svgRef} className="mapsvg" width={size.w || 1} height={size.h || 1}
-        onClick={() => setSel(null)} role="img" aria-label="中国电子工业历史地图">
+        onClick={() => setSel(null)} role="img" aria-label={t.mapLabel}>
         <defs>
           {Object.values(EVENT_META).map((m) => (
             <marker key={m.slug} id={"arr-" + m.slug} viewBox="0 0 10 10" refX="8" refY="5"
@@ -360,7 +365,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
             </marker>
           ))}
         </defs>
-        <g transform={"translate(" + t.x + "," + t.y + ") scale(" + t.k + ")"}>
+        <g transform={"translate(" + zt.x + "," + zt.y + ") scale(" + zt.k + ")"}>
           {baseOpacity > 0 && (
             <g opacity={baseOpacity}>
               {provPaths.map((p) => (
@@ -376,7 +381,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
             <g opacity={cityOpacity}>
               {cityPaths.map((p) => (
                 <path key={p.key} d={p.d} className="city" strokeWidth={0.9 / k}>
-                  <title>{p.name}区</title>
+                  <title>{t.districtSuffix(p.name)}</title>
                 </path>
               ))}
               {cityOpacity > 0.25 && cityPaths.map((p) => (
@@ -404,7 +409,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
                 <circle r={10 / k} fill="#16345A" stroke={hasEvent ? "#F2C14E" : "#D8E7F6"} strokeWidth={(hasEvent ? 1.8 : 1.2) / k} />
                 <text textAnchor="middle" dy={3.4 / k} fontSize={9.5 / k} fill="#EAF2FB" className="mono">{nAlive}</text>
                 <text x={13 / k} dy={3.4 / k} fontSize={10 / k} strokeWidth={2.6 / k} className="maplabel">{c.label}</text>
-                <title>{c.label + " · 当前存续 " + nAlive + " 个单位,点击放大"}</title>
+                <title>{t.clusterTitle(c.label, nAlive)}</title>
               </g>
             );
           })}
@@ -420,7 +425,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
               {a.v.uncertain && <circle cx={a.mid[0]} cy={a.mid[1]} r={2.4 / k} fill="#E4573D" />}
               <text x={a.mid[0]} y={a.mid[1] - 5 / k} textAnchor="middle" fontSize={9.5 / k}
                 fill={a.meta.color} strokeWidth={2.6 / k} className="maplabel mono">
-                {a.v.year} {a.v.type}
+                {a.v.year} {eventLabel(a.v.type, lang)}
               </text>
             </g>
           ))}
@@ -486,18 +491,18 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
         <div className="tooltip" style={{ left: hover.x + 14, top: hover.y + 10 }}>
           <div className="tt-name">{labelOf(hovU)}</div>
           <div className="tt-meta mono">
-            {hovU.industry} · {spanText(hovU)}
-            {hovU.precision === "city" ? " · 坐标待定位" : ""}
+            {industryLabel(hovU.industry, lang)} · {spanText(hovU, t)}
+            {hovU.precision === "city" ? t.locVague : ""}
           </div>
-          {nameAt(hovU, year).historical && <div className="tt-meta">表内作「{hovU.name}」</div>}
+          {nameAt(hovU, year, lang).historical && <div className="tt-meta">{t.listedAs(unitName(hovU, lang))}</div>}
         </div>
       )}
 
       {/* zoom controls */}
       <div className="mapcontrols">
-        <button className="icobtn" onClick={() => zoomBy(1.6)} aria-label="放大"><Plus size={15} /></button>
-        <button className="icobtn" onClick={() => zoomBy(1 / 1.6)} aria-label="缩小"><Minus size={15} /></button>
-        <button className="icobtn" onClick={() => fitData(420)} aria-label="回到数据范围"><Crosshair size={15} /></button>
+        <button className="icobtn" onClick={() => zoomBy(1.6)} aria-label={t.zoomIn}><Plus size={15} /></button>
+        <button className="icobtn" onClick={() => zoomBy(1 / 1.6)} aria-label={t.zoomOut}><Minus size={15} /></button>
+        <button className="icobtn" onClick={() => fitData(420)} aria-label={t.fitData}><Crosshair size={15} /></button>
       </div>
 
       {/* scale bar */}
@@ -511,13 +516,13 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown }) {
           <span>{scaleBar.km < 1 ? Math.round(scaleBar.km * 1000) + " m" : scaleBar.km + " km"}</span>
         </div>
       )}
-      {cityOpacity > 0.25 && CITY_ATTR && <div className="attrib mono">{CITY_ATTR}</div>}
+      {cityOpacity > 0.25 && <div className="attrib mono">{t.attribution}</div>}
     </div>
   );
 }
 
 /* ============================================================ LEGEND + FILTER ============================================================ */
-function Legend({ data, shown, setShown }) {
+function Legend({ data, shown, setShown, t, lang }) {
   const industries = useMemo(
     () => Array.from(new Set(data.units.map((u) => u.industry).filter(Boolean))),
     [data.units]
@@ -529,25 +534,25 @@ function Legend({ data, shown, setShown }) {
   };
   return (
     <div className="legend">
-      <div className="lg-title mono">行业 INDUSTRY(点击筛选)</div>
+      <div className="lg-title mono">{t.legendIndustry}</div>
       <div className="lg-row">
         {industries.map((ind) => (
           <button key={ind} className={"lg-item lg-btn" + (shown.has(ind) ? "" : " off")} onClick={() => toggle(ind)}>
-            <i className="sw" style={{ backgroundColor: industryMeta(ind).color }} />{ind}
+            <i className="sw" style={{ backgroundColor: industryMeta(ind).color }} />{industryLabel(ind, lang)}
           </button>
         ))}
       </div>
       <div className="lg-row">
-        <span className="lg-item"><i className="sw" style={{ background: "#BBD3EC" }} />工厂</span>
-        <span className="lg-item"><i className="sw sw-square" style={{ background: "#BBD3EC" }} />研究所</span>
-        <span className="lg-item"><i className="sw sw-ring" style={{ background: "#BBD3EC" }} />合资</span>
-        <span className="lg-item"><i className="sw sw-uncertain" />坐标待定位</span>
+        <span className="lg-item"><i className="sw" style={{ background: "#BBD3EC" }} />{t.legendFactory}</span>
+        <span className="lg-item"><i className="sw sw-square" style={{ background: "#BBD3EC" }} />{t.legendInstitute}</span>
+        <span className="lg-item"><i className="sw sw-ring" style={{ background: "#BBD3EC" }} />{t.legendJv}</span>
+        <span className="lg-item"><i className="sw sw-uncertain" />{t.legendVague}</span>
       </div>
       <div className="lg-row">
         {Object.entries(EVENT_META).map(([kk, m]) => (
           <span key={kk} className="lg-item">
             <svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke={m.color} strokeWidth="1.8"
-              strokeDasharray={m.dash ? m.dash.join(" ") : undefined} /></svg>{kk}
+              strokeDasharray={m.dash ? m.dash.join(" ") : undefined} /></svg>{eventLabel(kk, lang)}
           </span>
         ))}
       </div>
@@ -556,7 +561,7 @@ function Legend({ data, shown, setShown }) {
 }
 
 /* ============================================================ TIMELINE RULER ============================================================ */
-function Ruler({ data, year, setYear, playing, setPlaying }) {
+function Ruler({ data, year, setYear, playing, setPlaying, t, lang }) {
   const ref = useRef(null);
   const [w, setW] = useState(0);
   const { yearMin, yearMax } = data;
@@ -594,17 +599,17 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
   for (let y = yearMin; y <= yearMax; y++) years.push(y);
 
   return (
-    <div className="ruler-row" tabIndex={0} aria-label={"年份标尺,当前 " + year + " 年,左右方向键调整"}
+    <div className="ruler-row" tabIndex={0} aria-label={t.rulerLabel(year)}
       onKeyDown={(e) => {
         if (e.key === "ArrowLeft") { setYear(clampYear(year - (e.shiftKey ? 5 : 1), yearMin, yearMax)); e.preventDefault(); }
         else if (e.key === "ArrowRight") { setYear(clampYear(year + (e.shiftKey ? 5 : 1), yearMin, yearMax)); e.preventDefault(); }
         else if (e.key === " ") { setPlaying(!playing); e.preventDefault(); }
       }}>
-      <button className="icobtn play" onClick={() => setPlaying(!playing)} aria-label={playing ? "暂停" : "播放"}>
+      <button className="icobtn play" onClick={() => setPlaying(!playing)} aria-label={playing ? t.pause : t.play}>
         {playing ? <Pause size={15} /> : <Play size={15} />}
       </button>
-      <button className="icobtn" onClick={() => setYear(clampYear(year - 1, yearMin, yearMax))} aria-label="上一年"><ChevronLeft size={15} /></button>
-      <button className="icobtn" onClick={() => setYear(clampYear(year + 1, yearMin, yearMax))} aria-label="下一年"><ChevronRight size={15} /></button>
+      <button className="icobtn" onClick={() => setYear(clampYear(year - 1, yearMin, yearMax))} aria-label={t.prevYear}><ChevronLeft size={15} /></button>
+      <button className="icobtn" onClick={() => setYear(clampYear(year + 1, yearMin, yearMax))} aria-label={t.nextYear}><ChevronRight size={15} /></button>
       <svg ref={ref} className="rulersvg" height="48"
         onPointerDown={onPD} onPointerMove={onPM} onPointerUp={onPU} onPointerCancel={onPU}>
         {w > 0 && (
@@ -629,7 +634,7 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
                     d="M-3.2,-3.2h6.4v6.4h-6.4z" fill={eventMeta(v.type).color}
                     stroke="#0E2440" strokeWidth=".7" />
                 ))}
-                <title>{vs.map((v) => v.year + " " + v.type).join(" / ")}</title>
+                <title>{vs.map((v) => v.year + " " + eventLabel(v.type, lang)).join(" / ")}</title>
               </g>
             ))}
             <g pointerEvents="none">
@@ -645,7 +650,7 @@ function Ruler({ data, year, setYear, playing, setPlaying }) {
 }
 
 /* ============================================================ LINEAGE ============================================================ */
-function LineageView({ data, year, setYear, sel, setSel }) {
+function LineageView({ data, year, setYear, sel, setSel, t, lang }) {
   const { yearMin, yearMax } = data;
   const dated = useMemo(() => data.units.filter((u) => u.start), [data.units]);
 
@@ -671,27 +676,27 @@ function LineageView({ data, year, setYear, sel, setSel }) {
     const multi = famList.filter((f) => f.members.length > 1).sort((a, b) => (b.members.length - a.members.length) || (a.start - b.start));
     const singles = famList.filter((f) => f.members.length === 1).flatMap((f) => f.members).sort((a, b) => a.start.y - b.start.y);
     const families = [...multi];
-    if (singles.length) families.push({ members: singles, label: "其他 · 未见沿革关联", isOther: true });
+    if (singles.length) families.push({ members: singles, label: t.famOther, isOther: true });
 
     const PXY = 15, LEFT = 18, TOP = 34, ROW = 34;
     const x = (yy) => LEFT + (yy - yearMin) * PXY;
     let cy = TOP;
     const rowsY = {}, headers = [];
     families.forEach((f) => {
-      headers.push({ label: f.isOther ? f.label : f.label + (f.hasLineage ? " 系" : " 群 · 仅协作关联"), y: cy + 6 });
+      headers.push({ label: f.isOther ? f.label : f.label + (f.hasLineage ? t.famLineage : t.famGroup), y: cy + 6 });
       cy += 22;
       f.members.forEach((m) => { rowsY[m.id] = cy + 10; cy += ROW; });
       cy += 16;
     });
     return { x, rowsY, headers, W: LEFT + (yearMax - yearMin + 1) * PXY + 170, H: cy + 8 };
-  }, [data.events, dated, yearMin, yearMax]);
+  }, [data.events, dated, yearMin, yearMax, t]);
 
   const { x, rowsY, headers, W, H } = layout;
 
   return (
     <div className="lineage-wrap">
       <div className="lineage-cap mono">
-        横条 = 存续区间 · 竖线 = 沿革事件(据原表「Founder」列与整机研制记录推定) · 绿点 = 产品投产/研制年 · 点击横条查看详情,点击空白处改变年份
+        {t.lineageCap}
       </div>
       <div className="lineage-scroll">
         <svg width={W} height={H} className="lineagesvg"
@@ -733,9 +738,9 @@ function LineageView({ data, year, setYear, sel, setSel }) {
                 ))}
                 <text x={bw >= 150 ? x1 + 7 : x2 + 12} y={ry + 4} fontSize="11"
                   className={"lbl" + (isSel ? " on" : "")}>
-                  {u.name}{u.alt ? "(" + u.alt + ")" : ""}
+                  {unitName(u, lang)}{u.alt ? "(" + u.alt + ")" : ""}
                 </text>
-                <title>{u.name + " " + spanText(u)}</title>
+                <title>{unitName(u, lang) + " " + spanText(u, t)}</title>
               </g>
             );
           })}
@@ -752,7 +757,7 @@ function LineageView({ data, year, setYear, sel, setSel }) {
                 <line x1={xe} y1={y1} x2={xe} y2={y2} stroke={meta.color} strokeWidth="1.7"
                   strokeDasharray={meta.dash ? meta.dash.join(" ") : undefined} />
                 {ids.map((id) => <circle key={id} cx={xe} cy={rowsY[id]} r="3" fill={meta.color} stroke="#0E2440" strokeWidth=".8" />)}
-                <text x={xe + 6} y={y1 - 6} fontSize="10" className="mono" fill={meta.color}>{v.year} {v.type}</text>
+                <text x={xe + 6} y={y1 - 6} fontSize="10" className="mono" fill={meta.color}>{v.year} {eventLabel(v.type, lang)}</text>
               </g>
             );
           })}
@@ -764,7 +769,7 @@ function LineageView({ data, year, setYear, sel, setSel }) {
       </div>
       {dated.length < data.units.length && (
         <div className="dimtext small" style={{ marginTop: 6 }}>
-          另有 {data.units.length - dated.length} 家未标年份的单位未列入本表,见「名录」页。
+          {t.undatedNote(data.units.length - dated.length)}
         </div>
       )}
     </div>
@@ -772,9 +777,9 @@ function LineageView({ data, year, setYear, sel, setSel }) {
 }
 
 /* ============================================================ DETAIL PANEL ============================================================ */
-function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
+function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lang }) {
   if (!u) return null;
-  const nm = nameAt(u, year);
+  const nm = nameAt(u, year, lang);
   const meta = industryMeta(u.industry);
   const evs = data.events
     .filter((v) => (v.from || []).includes(u.id) || (v.to || []).includes(u.id))
@@ -786,35 +791,35 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
       <div className="panel-h">
         <div>
           <div className="chiprow">
-            <span className="chip mono" style={{ borderColor: meta.color, color: meta.color }}>{u.industry || "—"}</span>
-            <span className="chip mono">{(TYPE_META[u.type] || {}).label}</span>
+            <span className="chip mono" style={{ borderColor: meta.color, color: meta.color }}>{industryLabel(u.industry, lang) || "—"}</span>
+            <span className="chip mono">{typeLabel(u.type, lang, (TYPE_META[u.type] || {}).label)}</span>
             {u.alt && <span className="chip mono">{u.alt}</span>}
-            <span className="chip mono">{spanText(u)}</span>
+            <span className="chip mono">{spanText(u, t)}</span>
           </div>
-          <h2 className="panel-name">{u.name}</h2>
-          {nm.historical && <div className="panel-en">{year} 年时称「{nm.name}」</div>}
+          <h2 className="panel-name">{unitName(u, lang)}</h2>
+          {nm.historical && <div className="panel-en">{t.nameThatYear(year, nm.name)}</div>}
           <div className="panel-city mono">
-            {u.address || "地址未著录"}
-            {u.district ? " · " + u.district + "区" : ""}
-            {cityLabel(u.city) ? " · " + cityLabel(u.city) : ""}
+            {u.address || t.noAddress}
+            {u.district ? " · " + t.districtSuffix(districtLabel(u.district, lang)) : ""}
+            {cityLabel(u.city, lang) ? " · " + cityLabel(u.city, lang) : ""}
           </div>
           <div className="dimtext mono small">
-            落点:{PRECISION_LABEL[u.precision] || "表内给定坐标"}{u.locNote ? " · " + u.locNote : ""}
+            {t.placedAs}{precisionLabel(u.precision, lang) || t.placedGiven}{u.locNote ? " · " + u.locNote : ""}
           </div>
         </div>
-        <button className="icobtn" onClick={onClose} aria-label="关闭"><X size={15} /></button>
+        <button className="icobtn" onClick={onClose} aria-label={t.close}><X size={15} /></button>
       </div>
 
       {u.product && (
         <div className="panel-sec">
-          <div className="sec-t mono">产品方向 SCOPE</div>
+          <div className="sec-t mono">{t.secScope}</div>
           <div className="panel-intro">{u.product}</div>
         </div>
       )}
 
       {u.names.length > 1 && (
         <div className="panel-sec">
-          <div className="sec-t mono">名称沿革 NAMES</div>
+          <div className="sec-t mono">{t.secNames}</div>
           {u.names.map((seg, i) => {
             const till = u.names[i + 1];
             const on = seg === nm.seg;
@@ -824,7 +829,7 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
                   {fmtDate(seg.from)}{till ? "–" + fmtDate(till.from) : "–" + (u.end ? fmtDate(u.end) : "…")}
                 </span>
                 <span>{seg.name}</span>
-                <span className="chip mono dimchip">{seg.basis}</span>
+                <span className="chip mono dimchip">{basisLabel(seg.basis, lang)}</span>
                 {seg.note && <div className="evnote">{seg.note}</div>}
               </div>
             );
@@ -834,7 +839,7 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
 
       {u.chain.length > 0 && (
         <div className="panel-sec">
-          <div className="sec-t mono">前身沿革 PREDECESSORS</div>
+          <div className="sec-t mono">{t.secPredecessors}</div>
           <ol className="chain">
             {u.chain.map((step, i) => (
               <li key={i}>
@@ -847,8 +852,8 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
       )}
 
       <div className="panel-sec">
-        <div className="sec-t mono">沿革关系 LINKS</div>
-        {evs.length === 0 && <div className="dimtext">名录内暂无可连接的沿革关系。</div>}
+        <div className="sec-t mono">{t.secLinks}</div>
+        {evs.length === 0 && <div className="dimtext">{t.noLinks}</div>}
         {evs.map((v) => {
           const others = [...(v.from || []), ...(v.to || [])].filter((id) => id !== u.id);
           const incoming = (v.to || []).includes(u.id);
@@ -856,14 +861,14 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
           const vm = eventMeta(v.type);
           return (
             <div key={v.id} className="evline">
-              <span className="mono evyear">{v.year != null ? v.year : "年份待考"}</span>
-              <span className="chip mono" style={{ borderColor: vm.color, color: vm.color }}>{v.type}</span>
-              <span className="chip mono dimchip">推定</span>
-              <span className="evdir">{incoming ? "由" : outgoing ? "→" : "与"}</span>
+              <span className="mono evyear">{v.year != null ? v.year : t.undatedSpan}</span>
+              <span className="chip mono" style={{ borderColor: vm.color, color: vm.color }}>{eventLabel(v.type, lang)}</span>
+              <span className="chip mono dimchip">{t.inferred}</span>
+              <span className="evdir">{incoming ? t.dirIn : outgoing ? t.dirOut : t.dirWith}</span>
               <span className="evothers">
                 {others.map((oid) => (
                   <button key={oid} className="linkbtn" onClick={() => gotoUnit(oid, v.year)}>
-                    {byId[oid] ? byId[oid].name : oid}
+                    {byId[oid] ? unitName(byId[oid], lang) : oid}
                   </button>
                 ))}
               </span>
@@ -876,11 +881,11 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
 
       {(u.semi.length > 0 || u.comp.length > 0) && (
         <div className="panel-sec">
-          <div className="sec-t mono">产品记录 PRODUCTS</div>
+          <div className="sec-t mono">{t.secProducts}</div>
           {u.semi.map((p, i) => (
             <div key={"s" + i} className="prodline">
               <span className="mono evyear">{p.date ? p.date.y : "—"}</span>
-              <span>{p.product || "(未著录)"}</span>
+              <span>{p.product || t.unrecorded}</span>
               {p.remark && <div className="evnote">{p.remark}</div>}
             </div>
           ))}
@@ -888,10 +893,10 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
             <div key={"c" + i} className="prodline">
               <span className="mono evyear">{p.date ? p.date.y : "—"}</span>
               <span>{p.product}</span>
-              <span className="chip mono">{p.unitIds.length > 1 ? "协作" : "自研"}</span>
+              <span className="chip mono">{p.unitIds.length > 1 ? t.collab : t.solo}</span>
               {(p.speed || p.word) && (
                 <div className="evnote mono small">
-                  {p.word ? "字长 " + p.word + " " : ""}{p.memory ? "内存 " + p.memory + " " : ""}{p.speed ? "速度 " + p.speed : ""}
+                  {p.word ? t.word + " " + p.word + " " : ""}{p.memory ? t.memory + " " + p.memory + " " : ""}{p.speed ? t.speed + " " + p.speed : ""}
                 </div>
               )}
             </div>
@@ -901,23 +906,23 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
 
       {stats.length > 0 && (
         <div className="panel-sec">
-          <div className="sec-t mono">{statsYear || ""} 年概况 STATISTICS</div>
+          <div className="sec-t mono">{t.secStats(statsYear)}</div>
           <table className="ministat">
             <tbody>
               {stats.map((f) => (
-                <tr key={f.key}><td>{f.label}</td><td className="mono">{fmtNum(u.stats[f.key])}</td></tr>
+                <tr key={f.key}><td>{statLabel(f.key, lang, f.label)}</td><td className="mono">{fmtNum(u.stats[f.key])}</td></tr>
               ))}
             </tbody>
           </table>
-          <div className="dimtext mono small">数值与量纲悉依原表。</div>
+          <div className="dimtext mono small">{t.statsNote}</div>
         </div>
       )}
 
       {(u.remark || u.source) && (
         <div className="panel-sec">
-          <div className="sec-t mono">备注与出处 NOTES</div>
+          <div className="sec-t mono">{t.secNotes}</div>
           {u.remark && <div className="panel-intro">{u.remark}</div>}
-          {u.source && <div className="dimtext small" style={{ marginTop: 6 }}>出处:{u.source}</div>}
+          {u.source && <div className="dimtext small" style={{ marginTop: 6 }}>{t.sourcePrefix}{u.source}</div>}
         </div>
       )}
     </div>
@@ -925,7 +930,7 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year }) {
 }
 
 /* ============================================================ PRODUCTS ============================================================ */
-function ProductsView({ data, gotoUnit, byId }) {
+function ProductsView({ data, gotoUnit, byId, t, lang }) {
   const [kind, setKind] = useState("semi");
   const [q, setQ] = useState("");
   const rows = kind === "semi" ? data.semi : data.comp;
@@ -939,7 +944,7 @@ function ProductsView({ data, gotoUnit, byId }) {
 
   const unitChips = (r) => r.unitIds.map((id) => (
     <button key={id} className="chipbtn mono" onClick={() => gotoUnit(id, r.date ? r.date.y : null)}>
-      {byId[id] ? byId[id].alt || byId[id].name : id}
+      {byId[id] ? byId[id].alt || unitName(byId[id], lang) : id}
     </button>
   ));
 
@@ -947,24 +952,24 @@ function ProductsView({ data, gotoUnit, byId }) {
     <div className="pagepad">
       <div className="toolbar">
         <div className="segmented">
-          <button className={"seg" + (kind === "semi" ? " on" : "")} onClick={() => setKind("semi")}>半导体器件 · {data.semi.length}</button>
-          <button className={"seg" + (kind === "comp" ? " on" : "")} onClick={() => setKind("comp")}>计算机整机 · {data.comp.length}</button>
+          <button className={"seg" + (kind === "semi" ? " on" : "")} onClick={() => setKind("semi")}>{t.segSemi} · {data.semi.length}</button>
+          <button className={"seg" + (kind === "comp" ? " on" : "")} onClick={() => setKind("comp")}>{t.segComp} · {data.comp.length}</button>
         </div>
         <div className="searchbox">
           <Search size={13} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="检索产品、单位、人员…" aria-label="检索产品" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t.searchProducts} aria-label={t.searchProductsLabel} />
         </div>
-        <span className="dimtext mono">{list.length} / {rows.length} 条</span>
+        <span className="dimtext mono">{t.countItems(list.length, rows.length)}</span>
       </div>
       <div className="notebar">
-        本页直录 <b>{SOURCE_FILE}</b> 的 {kind === "semi" ? "「Semi-Product」" : "「Comp-Product」"} 表。
-        单位名称按别名对照连回名录(如「上无十三」即上海电子计算机厂);未收入名录的协作单位以原文呈现,不作链接。
+        {t.productsNote(SOURCE_FILE, kind === "semi" ? "Semi-Product" : "Comp-Product")}
       </div>
       <div className="tablewrap">
         {kind === "semi" ? (
           <table>
             <thead>
-              <tr><th className="mono">年份</th><th>产品</th><th>生产单位</th><th>名录内</th><th>人员</th><th>备注</th></tr>
+              <tr><th className="mono">{t.thYear}</th><th>{t.thProduct}</th><th>{t.thMaker}</th>
+                <th>{t.thListed}</th><th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
             <tbody>
               {list.map((r) => (
@@ -977,14 +982,15 @@ function ProductsView({ data, gotoUnit, byId }) {
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={6} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的记录。</td></tr>}
+              {!list.length && <tr><td colSpan={6} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         ) : (
           <table>
             <thead>
-              <tr><th className="mono">时间</th><th>机型</th><th className="mono">字长</th><th className="mono">内存</th>
-                <th className="mono">速度</th><th>研制单位</th><th>生产单位</th><th>名录内</th><th>人员</th><th>备注</th></tr>
+              <tr><th className="mono">{t.thTime}</th><th>{t.thModel}</th><th className="mono">{t.word}</th>
+                <th className="mono">{t.memory}</th><th className="mono">{t.speed}</th><th>{t.thResearch}</th>
+                <th>{t.thMaker}</th><th>{t.thListed}</th><th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
             <tbody>
               {list.map((r) => (
@@ -1001,7 +1007,7 @@ function ProductsView({ data, gotoUnit, byId }) {
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={10} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的记录。</td></tr>}
+              {!list.length && <tr><td colSpan={10} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         )}
@@ -1011,7 +1017,7 @@ function ProductsView({ data, gotoUnit, byId }) {
 }
 
 /* ============================================================ DIRECTORY ============================================================ */
-function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
+function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState({ key: "start", dir: 1 });
   const list = useMemo(() => {
@@ -1045,56 +1051,55 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport }) {
       <div className="toolbar">
         <div className="searchbox">
           <Search size={13} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="检索单位、地址、沿革…" aria-label="检索名录" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t.searchUnits} aria-label={t.searchUnitsLabel} />
         </div>
-        <span className="dimtext mono">{list.length} / {data.units.length} 家</span>
+        <span className="dimtext mono">{t.countUnits(list.length, data.units.length)}</span>
         <span className="spacer" />
         <label className="btn btn-ghost">
-          <Upload size={13} /> 导入 Excel
+          <Upload size={13} /> {t.importExcel}
           <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
             onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onImportFile(f); e.target.value = ""; }} />
         </label>
-        <button className="btn btn-y" onClick={onExport}><Download size={13} /> 导出 Excel</button>
+        <button className="btn btn-y" onClick={onExport}><Download size={13} /> {t.exportExcel}</button>
       </div>
       <div className="notebar">
-        全站数据来自仓库根目录的 <b>{SOURCE_FILE}</b>(Fact and Comp-Shanghai / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。
-        更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。
-        {data.statsYear ? " 统计列为 " + data.statsYear + " 年数值,量纲悉依原表。" : ""}
+        {t.directoryNote(SOURCE_FILE)}
+        {data.statsYear ? t.statsNoteYear(data.statsYear) : ""}
       </div>
       <div className="tablewrap">
-        <table>
+        <table className="dirtable">
           <thead>
             <tr>
-              {th("name", "单位")}
-              {th("industry", "行业")}
-              <th>类型</th>
-              {th("start", "起讫", true)}
-              <th>地址</th>
-              {STAT_FIELDS.map((f) => th(f.key, f.label, true))}
-              <th>备注</th>
-              <th>出处</th>
+              {th("name", t.thUnit)}
+              {th("industry", t.thIndustry)}
+              <th>{t.thType}</th>
+              {th("start", t.thSpan, true)}
+              <th>{t.thAddress}</th>
+              {STAT_FIELDS.map((f) => th(f.key, statLabel(f.key, lang, f.label), true))}
+              <th>{t.thRemark}</th>
+              <th>{t.thSource}</th>
             </tr>
           </thead>
           <tbody>
             {list.map((u) => (
               <tr key={u.id}>
                 <td>
-                  <button className="linkbtn" onClick={() => gotoUnit(u.id, u.start ? u.start.y : null)}>{u.name}</button>
+                  <button className="linkbtn" onClick={() => gotoUnit(u.id, u.start ? u.start.y : null)}>{unitName(u, lang)}</button>
                   {u.alt && <div className="dimtext mono small">{u.alt}</div>}
                 </td>
-                <td><span className="chip mono" style={{ borderColor: industryMeta(u.industry).color, color: industryMeta(u.industry).color }}>{u.industry || "—"}</span></td>
-                <td className="small">{(TYPE_META[u.type] || {}).label}</td>
-                <td className="mono small">{spanText(u)}</td>
+                <td><span className="chip mono" style={{ borderColor: industryMeta(u.industry).color, color: industryMeta(u.industry).color }}>{industryLabel(u.industry, lang) || "—"}</span></td>
+                <td className="small">{typeLabel(u.type, lang, (TYPE_META[u.type] || {}).label)}</td>
+                <td className="mono small">{spanText(u, t)}</td>
                 <td className="small">
-                  {u.address || <span className="dimtext">未著录</span>}
-                  {u.precision === "city" && <div className="dimtext mono small">坐标待定位</div>}
+                  {u.address || <span className="dimtext">{t.noAddressShort}</span>}
+                  {u.precision === "city" && <div className="dimtext mono small">{t.vagueShort}</div>}
                 </td>
                 {STAT_FIELDS.map((f) => <td key={f.key} className="mono">{fmtNum(u.stats[f.key])}</td>)}
                 <td className="small">{u.remark}</td>
                 <td className="small">{u.source || <span className="dimtext">—</span>}</td>
               </tr>
             ))}
-            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>没有匹配的单位。</td></tr>}
+            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noUnits}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1111,6 +1116,19 @@ export default function App() {
 
   const [override, setOverride] = useState(null);
   const data = override || boot.data;
+
+  /* 语言:记住选择,首次按浏览器语言猜 */
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("atlas-lang") || detectLang(); } catch (e) { return detectLang(); }
+  });
+  const t = useMemo(() => strings(lang), [lang]);
+  useEffect(() => {
+    try { localStorage.setItem("atlas-lang", lang); } catch (e) { /* 隐私模式下写不进,无妨 */ }
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.title = t.docTitle;
+    }
+  }, [lang, t]);
 
   const [preview, setPreview] = useState(null);
   const [tab, setTab] = useState("map");
@@ -1165,11 +1183,10 @@ export default function App() {
         setSel(null);
         setOverride(next);
         setShown(new Set(next.units.map((u) => u.industry).filter(Boolean)));
-        setPreview(file.name || "本地文件");
-        showToast("已载入本地预览:厂所 " + next.counts.units + " · 半导体产品 " + next.counts.semi +
-          " · 整机 " + next.counts.comp + " · 推定沿革 " + next.counts.events + "。仅本次浏览可见。");
+        setPreview(file.name || t.localFile);
+        showToast(t.importOk(next.counts));
       } catch (err) {
-        showToast("导入失败:" + ((err && err.message) || "无法解析该文件"));
+        showToast(t.importFail((err && err.message) || t.cannotParse));
       }
     };
     rd.readAsArrayBuffer(file);
@@ -1177,22 +1194,21 @@ export default function App() {
 
   const onExport = () => {
     try { exportWorkbook(data, SOURCE_FILE); }
-    catch (err) { showToast("导出失败:" + (err && err.message)); }
+    catch (err) { showToast(t.exportFail(err && err.message)); }
   };
 
   const selU = sel ? byId[sel] : null;
-  const TABS = [["map", "地图"], ["lineage", "谱系"], ["products", "产品"], ["directory", "名录"]];
+  const TABS = ["map", "lineage", "products", "directory"];
 
   if (boot.error) {
     return (
       <div className="ec-root">
         <style>{CSS_TEXT}</style>
         <div className="bootbox">
-          <div style={{ fontFamily: "var(--serif)", fontSize: 20, letterSpacing: 3 }}>数据表读取失败</div>
+          <div style={{ fontFamily: "var(--serif)", fontSize: 20, letterSpacing: 3 }}>{t.bootFail}</div>
           <div className="mono dim" style={{ marginTop: 10, fontSize: 12 }}>{SOURCE_FILE} · {boot.error}</div>
           <div className="dimtext small" style={{ marginTop: 10, maxWidth: 420 }}>
-            请检查仓库根目录下的 {SOURCE_FILE} 是否仍含
-            「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表(Name-History 可有可无)。
+            {t.bootHint(SOURCE_FILE)}
           </div>
         </div>
       </div>
@@ -1204,22 +1220,26 @@ export default function App() {
       <style>{CSS_TEXT}</style>
       <header className="hdr">
         <div className="ttl">
-          <div className="ttl-zh">中国电子工业历史地图</div>
-          <div className="ttl-en mono">HISTORICAL ATLAS OF CHINA'S ELECTRONICS INDUSTRY · {data.yearMin}–{data.yearMax}</div>
+          <div className={"ttl-zh" + (lang === "en" ? " lat" : "")}>{t.title}</div>
+          <div className="ttl-en mono">{t.otherTitle} · {data.yearMin}–{data.yearMax}</div>
         </div>
-        <nav className="tabs" aria-label="页面切换">
-          {TABS.map(([k, lab]) => (
-            <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{lab}</button>
+        <nav className="tabs" aria-label={t.navLabel}>
+          {TABS.map((k) => (
+            <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{t.tabs[k]}</button>
           ))}
         </nav>
         <div className="hdr-right">
-          <span className="chip mono dimchip">现有数据:上海 · {data.counts.units} 家厂所</span>
+          <span className="chip mono dimchip">{t.coverage(data.counts.units)}</span>
           {preview && (
             <button className="chip mono storchip" onClick={() => { setOverride(null); setPreview(null); }}
-              title="当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览。">
-              ● 本地预览:{preview} ✕
+              title={t.previewTitle}>
+              {t.previewChip(preview)}
             </button>
           )}
+          <button className="chip mono langbtn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+            title={t.langLabel} aria-label={t.langLabel}>
+            {lang === "zh" ? "EN" : "中文"}
+          </button>
         </div>
       </header>
 
@@ -1227,46 +1247,40 @@ export default function App() {
         {tab === "map" && (
           <>
             <MapView data={data} byId={byId} year={year} sel={sel}
-              setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown} />
-            <Legend data={data} shown={shown} setShown={setShown} />
+              setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown}
+              t={t} lang={lang} />
+            <Legend data={data} shown={shown} setShown={setShown} t={t} lang={lang} />
             {!selU && introOpen && (
               <div className="panel introcard">
                 <div className="panel-h">
-                  <h2 className="panel-name">使用说明</h2>
-                  <button className="icobtn" onClick={() => setIntroOpen(false)} aria-label="关闭"><X size={15} /></button>
+                  <h2 className="panel-name">{t.introTitle}</h2>
+                  <button className="icobtn" onClick={() => setIntroOpen(false)} aria-label={t.close}><X size={15} /></button>
                 </div>
-                <p className="panel-intro">
-                  拖动下方<b>年份标尺</b>或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。
-                  首屏已自动套合到现有数据的范围(上海),缩小即可回到全国视野。
-                </p>
-                <p className="panel-intro">
-                  节点颜色代表行业,形状区分工厂 / 研究所 / 合资企业。<b>经纬度不在原表之中</b>,
-                  是按门牌地址人工推定的近似落点(误差数百米至数公里);带红点者原表未著录地址,暂落在市中心。
-                </p>
-                <p className="panel-intro">
-                  连线是据原表「Founder」列与整机研制记录<b>推定</b>的沿革与协作关系,详情页均注明依据。
-                </p>
-                <button className="btn btn-ghost small" onClick={() => setTab("lineage")}>查看「谱系」年表 →</button>
+                <p className="panel-intro">{t.intro1}</p>
+                <p className="panel-intro">{t.intro2a}<b>{t.intro2b}</b>{t.intro2c}</p>
+                <p className="panel-intro">{t.intro3a}<b>{t.intro3b}</b>{t.intro3c}</p>
+                <button className="btn btn-ghost small" onClick={() => setTab("lineage")}>{t.introBtn}</button>
               </div>
             )}
             {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
-              onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
-            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} />
+              t={t} lang={lang} onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
+            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} t={t} lang={lang} />
           </>
         )}
 
         {tab === "lineage" && (
           <>
-            <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} />
+            <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} t={t} lang={lang} />
             {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
-              onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
+              t={t} lang={lang} onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
           </>
         )}
 
-        {tab === "products" && <ProductsView data={data} byId={byId} gotoUnit={gotoUnit} />}
+        {tab === "products" && <ProductsView data={data} byId={byId} gotoUnit={gotoUnit} t={t} lang={lang} />}
 
         {tab === "directory" && (
-          <DirectoryView data={data} gotoUnit={gotoUnit} onImportFile={onImportFile} onExport={onExport} />
+          <DirectoryView data={data} gotoUnit={gotoUnit} onImportFile={onImportFile} onExport={onExport}
+            t={t} lang={lang} />
         )}
       </main>
 
@@ -1302,6 +1316,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:56px;flex:none;
   border-bottom:1px solid var(--line);background:rgba(10,24,43,.75);backdrop-filter:blur(5px);z-index:20}
 .ttl-zh{font-family:var(--serif);font-size:17.5px;letter-spacing:2.5px;font-weight:600}
+.ttl-zh.lat{letter-spacing:.6px;font-size:16.5px}
 .ttl-en{font-size:8px;letter-spacing:.24em;color:var(--dim);margin-top:1px;white-space:nowrap}
 .tabs{display:flex;gap:6px;margin-left:8px}
 .tab{position:relative;padding:5px 13px;border:1px solid var(--line);border-radius:2px;font-size:13px;letter-spacing:2px;color:var(--paper2)}
@@ -1309,6 +1324,8 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .tab.on{background:var(--yellow);border-color:var(--yellow);color:#0E2440;font-weight:600}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .storchip{cursor:pointer;color:var(--yellow);border-color:var(--yellow)}
+.langbtn{cursor:pointer;color:var(--paper);border-color:var(--paper2);letter-spacing:.1em;padding:3px 9px}
+.langbtn:hover{border-color:var(--yellow);color:var(--yellow)}
 .dimchip{color:var(--dim)}
 
 /* layout */
@@ -1402,7 +1419,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .seg+.seg{border-left:1px solid var(--line)}
 .seg.on{background:var(--yellow);color:#0E2440;font-weight:600}
 .searchbox{display:flex;align-items:center;gap:6px;border:1px solid var(--line);padding:5px 9px;border-radius:2px;
-  background:rgba(13,29,51,.7);color:var(--dim);min-width:220px}
+  background:rgba(13,29,51,.7);color:var(--dim);min-width:270px}
 .searchbox input{background:none;border:none;color:var(--paper);width:100%;font-size:12.5px}
 .searchbox input:focus{outline:none}
 select,input,textarea{background:rgba(13,29,51,.8);border:1px solid var(--line);color:var(--paper);
@@ -1411,6 +1428,10 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--yellow)}
 .notebar{margin:10px 0 12px;font-size:11.5px;color:var(--dim);border-left:2px solid var(--yellow);padding-left:9px}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:2px}
 table{width:100%;border-collapse:collapse;font-size:12px;min-width:920px}
+/* 名录列多,英文表头又长,首列若不给下限会被挤成一字一行 */
+.dirtable{min-width:1240px}
+.dirtable th:first-child,.dirtable td:first-child{min-width:11em}
+.dirtable th:nth-child(5),.dirtable td:nth-child(5){min-width:8em}
 th{font-family:var(--serif);font-weight:600;text-align:left;letter-spacing:1px;font-size:12px;
   padding:8px 10px;border-bottom:1px solid var(--line);background:rgba(13,29,51,.92);position:sticky;top:0;white-space:nowrap}
 th.sortable{cursor:pointer}

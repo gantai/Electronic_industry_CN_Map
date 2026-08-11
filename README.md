@@ -10,10 +10,10 @@
 
 | 工作表 | 内容 | 关键列 |
 | --- | --- | --- |
-| `Fact and Comp-Shanghai` | 厂所名录 | A 列单位名称、`Industry`(电子计算机 / 半导体 / 外围设备 / 研究所)、`Product`、`Start Date`、`End Date`、`Founder`、`City`、`Add.`、1990 年统计块(职工总数…实现利润)、`Remark`、`Source` |
+| `Fact and Comp-Shanghai` | 厂所名录 | A 列单位名称、`Industry`(电子计算机 / 半导体 / 外围设备 / 研究所)、`Product`、`Start Date`、`End Date`、`Founder`、`City`、`Add.`、1990 年统计块(职工总数…实现利润)、`Remark`、`Source`;可选 `Name EN`、`Lat` / `Lng` |
 | `Semi-Product` | 半导体器件投产记录 | `Product`、`Factory`、`Time`、`Personnel`、`Remark` |
 | `Comp-Product` | 计算机整机研制记录 | `Product`、`字长`、`内存`、`Speed（次秒）`、`Research Insti`、`Factory`、`Time`、`Personnel`、`Remark` |
-| `Name-History` | 名称沿革(可选) | `Unit`、`Name`、`From`、`Remark`、`Source` |
+| `Name-History` | 名称沿革(可选) | `Unit`、`Name`、`From`、`Remark`、`Source`;可选 `Name EN` |
 
 约定与容错:
 
@@ -22,6 +22,14 @@
 - 单位名称的**括号别名**(如「上海电子计算机厂（上无十三）」)自动生效;其余简称与手民之误在 `src/geocode.js` 的 `ALIASES` 里对照(如「上五十三」当为「上无十三」)。只收录能确证同一性的写法。
 - 表内新增行无需改代码:未在对照表中的单位会落在市中心并标为「坐标待定位」。
 - **`Name-History` 表**登记改过名的单位:一行一段名称,`Unit` 写名录里的单位名(简称亦可),`From` 是这个名字启用的日期,一直用到同一单位的下一行为止。没改过名的不必登记。这张表一旦有某家单位的记录,该单位的名称便以它为准,不再从 `Founder` 列推定。
+
+## 界面语言
+
+右上角有中英切换按钮,四个页面共用同一个页眉,哪一页都能切。选择记在浏览器里,下次进来照旧;首次访问按浏览器语言猜(`zh*` 进中文,其余进英文)。
+
+翻译的是**界面**:栏目名、表头、图例、说明文字,以及站点自己的分类词表(行业 / 类型 / 沿革事件 / 统计项 / 坐标精度 / 依据)。**数据本身照录原文不译** —— 厂所名、地址、产品名、人员、备注与出处都是史料,擅自英译等于替史料作主。
+
+要英文厂名,在 `Fact and Comp-Shanghai` 表加一列 **`Name EN`** 填上即可,英文界面自会取用,空着就仍显示中文;`Name-History` 表同样支持 `Name EN`,可逐段给出历年名称的英译。这两列都是可选的,不填不影响任何功能。
 
 ## 站点上的三类推定
 
@@ -54,6 +62,7 @@ src/
   xlsxio.js          工作簿解析、事件推定与导出
   geocode.js         地址→坐标的人工对照表、别名表
   data.js            载入内联的工作簿      consts.js / utils.js
+  i18n.js            中英对照(界面文字与分类词表)
   china.geo.json     省界底图(全国尺度)
   city.geo.json      上海区界底图(城市尺度)
 .github/workflows/deploy.yml   push 即自动构建并发布到 GitHub Pages
@@ -87,4 +96,5 @@ npm run build     # 产物在 dist/
 - 首屏 JS 约 850 KB(gzip 约 290 KB),主要来自 d3 与 SheetJS。
 - `npm audit` 会提示 SheetJS(`xlsx@0.18.5`)的原型污染通告;该风险针对解析不可信工作簿,本站只解析你自己仓库中的数据表与你本人选择的文件。
 - 原表中有 1 家单位(上海光学仪器研究所)未著录年份,不进入地图与谱系,只列在「名录」页。
+- 界面语言只影响界面;地图上的厂所名、地址与备注始终是原文。补 `Name EN` 列即可让英文界面显示英文厂名。
 - 时间轴走到某家单位的始建年或改名年时,地图上会给它罩一层黄光、名字一并转黄,并在名字下注明变动;「导出 Excel」四张表一并回写,可直接当作下一轮编辑的底本。

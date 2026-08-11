@@ -191,6 +191,7 @@ function parseUnits(ws) {
   const cAddr = col("Add.", "Address", "地址");
   const cRemark = col("Remark", "备注");
   const cSource = col("Source", "出处", "资料来源");
+  const cNameEn = col("Name EN", "英文名", "English Name");
   const cLat = col("Lat", "Latitude", "纬度");
   const cLng = col("Lng", "Lon", "Longitude", "经度");
   /* A 列无表头,即单位名称 */
@@ -234,6 +235,8 @@ function parseUnits(ws) {
       id: "u" + (units.length + 1),
       raw,
       name,
+      /* 可选:表内若有 `Name EN` 一列,英文界面便用它称呼这家单位 */
+      nameEn: String(cell(r, cNameEn) || "").trim(),
       alt,
       industry,
       type: industry === "研究所" ? "institute" : /合资/.test(founder) ? "jv" : "factory",
@@ -328,6 +331,7 @@ function parseNameHistory(ws, match, units) {
   const hi = headerIndex(rows, "unit");
   const col = colFinder(rows[hi] || []);
   const cU = col("Unit", "单位"), cN = col("Name", "名称"), cF = col("From", "启用", "起始");
+  const cNe = col("Name EN", "英文名");
   const cR = col("Remark", "备注"), cS = col("Source", "出处");
   if (cU < 0 || cN < 0) return {};
 
@@ -340,7 +344,7 @@ function parseNameHistory(ws, match, units) {
     const ids = match(who);
     if (!ids.length) return;
     (byUnit[ids[0]] = byUnit[ids[0]] || []).push({
-      from: date, name, basis: "名称沿革表",
+      from: date, name, nameEn: String(cell(r, cNe) || "").trim(), basis: "名称沿革表",
       note: stripLeadingDate(String(cell(r, cR) || "").trim()),
       source: String(cell(r, cS) || "").trim(),
     });
@@ -353,7 +357,7 @@ function parseNameHistory(ws, match, units) {
     const u = byId[id];
     /* 表里最早一行若晚于始建年,前面那段仍用表内名称 */
     if (u && u.start && segs[0].from.y > u.start.y) {
-      segs.unshift({ from: u.start, name: u.name, basis: "表内名称", note: "", source: "" });
+      segs.unshift({ from: u.start, name: u.name, nameEn: u.nameEn, basis: "表内名称", note: "", source: "" });
     }
     out[id] = segs.filter((seg, i) => i === 0 || seg.name !== segs[i - 1].name);
   });
@@ -406,12 +410,13 @@ function deriveEvents(units, comp, match) {
   return events.filter((e) => e.from.every((id) => byId[id]) && e.to.every((id) => byId[id]));
 }
 
-/** 某一年该以什么名字称呼这家单位 */
-export function nameAt(u, year) {
-  if (!u.names || !u.names.length) return { name: u.name, historical: false };
+/** 某一年该以什么名字称呼这家单位。lang="en" 时,若表里给了英文名便用英文名。 */
+export function nameAt(u, year, lang) {
+  const pick = (zh, en) => (lang === "en" && en ? en : zh);
+  if (!u.names || !u.names.length) return { name: pick(u.name, u.nameEn), historical: false };
   let seg = u.names[0];
   u.names.forEach((s) => { if (s.from && s.from.y <= year) seg = s; });
-  return { name: seg.name, historical: seg.name !== u.name, seg };
+  return { name: pick(seg.name, seg.nameEn), historical: seg.name !== u.name, seg };
 }
 
 /* ---------- 主入口 ---------- */
@@ -463,18 +468,18 @@ export function exportWorkbook(data, filename) {
   const y = data.statsYear || "";
 
   const head1 = ["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.", y,
-    ...Array(STAT_LABELS.length - 1).fill(""), "Remark", "Source", "Lat", "Lng"];
-  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", ""];
+    ...Array(STAT_LABELS.length - 1).fill(""), "Remark", "Source", "Name EN", "Lat", "Lng"];
+  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", "", ""];
   const body = data.units.map((u) => [
     u.raw, u.industry, u.product,
     u.start ? u.start.raw : "", u.end ? u.end.raw : "",
     u.founder, u.city, u.address,
     ...STAT_COLS.map(([k]) => (u.stats[k] == null ? "" : u.stats[k])),
-    u.remark, u.source, u.lat, u.lng,
+    u.remark, u.source, u.nameEn || "", u.lat, u.lng,
   ]);
   const ws1 = XLSX.utils.aoa_to_sheet([head1, head2, ...body]);
   ws1["!cols"] = [{ wch: 26 }, { wch: 10 }, { wch: 20 }, { wch: 11 }, { wch: 11 }, { wch: 40 }, { wch: 9 }, { wch: 26 },
-    ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 9 }, { wch: 9 }];
+    ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 }, { wch: 9 }, { wch: 9 }];
 
   const ws2 = XLSX.utils.aoa_to_sheet([
     ["Product", "Factory", "Time", "Personnel", "Remark"],
@@ -494,11 +499,11 @@ export function exportWorkbook(data, filename) {
     u.names.forEach((seg) => nameRows.push([
       u.raw, seg.name,
       String(seg.from.y * 10000 + (seg.from.m || 0) * 100 + (seg.from.d || 0)).padStart(8, "0"),
-      seg.note || "", seg.source || "",
+      seg.nameEn || "", seg.note || "", seg.source || "",
     ]));
   });
-  const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Remark", "Source"], ...nameRows]);
-  ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 44 }, { wch: 22 }];
+  const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Name EN", "Remark", "Source"], ...nameRows]);
+  ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 30 }, { wch: 44 }, { wch: 22 }];
 
   XLSX.utils.book_append_sheet(wb, ws1, "Fact and Comp-Shanghai");
   XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
