@@ -169,8 +169,34 @@ def test_pipeline():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_pdf():
+    """PDF 那一段的管子:翻页、取文本层、断点续跑、空页示警。
+
+    样张 text-layer-probe.pdf 是拉丁字母的,不是志书 —— 这里验的是管子通不通
+    (页数、每页取字、已识别的页不重做),中文识别的成色只能在你自己的机器上看。
+    OCR 引擎本身(PaddleOCR / tesseract)这里跑不到,装了引擎再跑真书为准。"""
+    print("PDF 管路")
+    pdf = os.path.join(HERE, "fixture", "text-layer-probe.pdf")
+    if not (ocr._import("fitz") or ocr._has("pdftotext")):
+        print("  — 本机既无 PyMuPDF 也无 poppler,跳过")
+        return
+    tmp = tempfile.mkdtemp(prefix="gaz-pdf-")
+    try:
+        meta = ocr.run(pdf, tmp, engine="text", log=lambda *a: None)
+        pages = ocr.load_pages(tmp)
+        eq(len(pages), 3, "读到 3 页")
+        eq([p for p, _ in pages], [1, 2, 3], "页码顺序")
+        check(all(t.strip() for _, t in pages), "文本层原样收下,没写成空页")
+        check("Shanghai" in pages[0][1], "取到了正文")
+        eq(meta["pages"]["1"]["how"], "text-layer", "记下取字的来路")
+        again = ocr.run(pdf, tmp, engine="text", log=lambda *a: None)
+        eq(len(again["pages"]), 3, "重跑不重做,页数不变")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for fn in (test_dates, test_names, test_pipeline):
+    for fn in (test_dates, test_names, test_pdf, test_pipeline):
         fn()
     print()
     if FAILED:

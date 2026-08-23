@@ -246,12 +246,20 @@ def main(argv=None):
     ap.add_argument("--work", default="gaz-work", help="工作目录(默认 gaz-work/)")
     ap.add_argument("--slug", help="这本志的代号,各步骤据以找文件")
     ap.add_argument("--xlsx", default=DEFAULT_XLSX, help="目标工作簿")
+
+    # 这三个放在子命令前后都认。SUPPRESS 是关键:子命令没写的话不留属性,
+    # 免得用一个 None 把命令前写好的值盖掉。
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--work", default=argparse.SUPPRESS)
+    common.add_argument("--slug", default=argparse.SUPPRESS)
+    common.add_argument("--xlsx", default=argparse.SUPPRESS)
+
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("check", help="看看本机装了什么")
+    p = sub.add_parser("check", help="看看本机装了什么", parents=[common])
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("ocr", help="扫描件 → 逐页文本")
+    p = sub.add_parser("ocr", help="扫描件 → 逐页文本", parents=[common])
     p.add_argument("src", help="PDF 文件,或装着页图的目录")
     p.add_argument("--engine", default="auto",
                    choices=["auto", "text", "paddle", "tesseract"],
@@ -264,7 +272,7 @@ def main(argv=None):
     p.add_argument("--lang", default="ch", help="PaddleOCR 语种(ch/chinese_cht)")
     p.set_defaults(func=cmd_ocr)
 
-    p = sub.add_parser("md", help="逐页文本 → Markdown")
+    p = sub.add_parser("md", help="逐页文本 → Markdown", parents=[common])
     p.add_argument("--out")
     p.add_argument("--title")
     p.add_argument("--fixes", help="自备字形订正表(TSV:错<TAB>对)")
@@ -272,7 +280,7 @@ def main(argv=None):
     p.add_argument("--show-furniture", action="store_true", help="只列出将被删的版式行")
     p.set_defaults(func=cmd_md)
 
-    p = sub.add_parser("extract", help="Markdown → 待核 TSV")
+    p = sub.add_parser("extract", help="Markdown → 待核 TSV", parents=[common])
     p.add_argument("--md")
     p.add_argument("--book", help="出处里写的书名(默认用 slug)")
     p.add_argument("--city", default="Shanghai")
@@ -282,24 +290,24 @@ def main(argv=None):
                    help="置信高于此值的行直接置 y(不填则一律待核)")
     p.set_defaults(func=cmd_extract)
 
-    p = sub.add_parser("notes", help="→ Obsidian 笔记")
+    p = sub.add_parser("notes", help="→ Obsidian 笔记", parents=[common])
     p.add_argument("--out")
     p.add_argument("--book")
     p.add_argument("--book-note", help="库中原书笔记的文件名,供 wikilink")
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
 
-    p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿")
+    p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿", parents=[common])
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")
     p.set_defaults(func=cmd_geocode)
 
-    p = sub.add_parser("xlsx", help="keep=y 的行 → 追加进工作簿")
+    p = sub.add_parser("xlsx", help="keep=y 的行 → 追加进工作簿", parents=[common])
     p.add_argument("--allow-dup", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--book")
     p.set_defaults(func=cmd_xlsx)
 
-    p = sub.add_parser("run", help="ocr → md → extract → notes 一气跑完")
+    p = sub.add_parser("run", help="ocr → md → extract → notes 一气跑完", parents=[common])
     p.add_argument("src")
     p.add_argument("--engine", default="auto", choices=["auto", "text", "paddle", "tesseract"])
     p.add_argument("--dpi", type=int, default=300)

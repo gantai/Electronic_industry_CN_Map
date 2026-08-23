@@ -194,8 +194,15 @@ def run(src, outdir, engine="auto", dpi=300, first=1, last=None, force=False,
             text, how = "", ""
             if pdf is not None and engine in ("auto", "text"):
                 text = pdf.text(i)
-                if len(re.findall(r"[一-鿿]", text)) >= TEXT_LAYER_MIN_CHARS:
+                if engine == "text":
+                    # 明说了只走文本层,就照单全收 —— 汉字多寡不该由我来判
+                    how = "text-layer" if text.strip() else ""
+                elif len(re.findall(r"[一-鿿]", text)) >= TEXT_LAYER_MIN_CHARS:
                     how = "text-layer"
+                elif text.strip() and not (_import("paddleocr") or _has("tesseract")):
+                    # 汉字不够本该改走 OCR,可本机一个引擎都没有 ——
+                    # 与其写出一页空白,不如把文本层原样留下,并注明成色存疑
+                    how = "text-layer-thin"
                 else:
                     text = ""
 
@@ -231,7 +238,17 @@ def run(src, outdir, engine="auto", dpi=300, first=1, last=None, force=False,
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=1)
 
+    empty = [k for k, v in meta["pages"].items() if not v.get("chars")]
     log("完成:新识别 %d 页,沿用 %d 页,页文本在 %s" % (done, skipped, pages_dir))
+    if empty:
+        log("注意:%d 页没取到任何文字(%s%s)。"
+            % (len(empty), "、".join("p." + k for k in empty[:8]),
+               " 等" if len(empty) > 8 else ""))
+        log("     多半是插图页或空白页;若整本都是空的,八成是没装 OCR 引擎 ——"
+            " 跑一遍 `gaz check`。")
+    thin = sum(1 for v in meta["pages"].values() if v.get("how") == "text-layer-thin")
+    if thin:
+        log("注意:%d 页的文本层汉字偏少,本机又无 OCR 引擎,已照原样留下,成色待查。" % thin)
     return meta
 
 
