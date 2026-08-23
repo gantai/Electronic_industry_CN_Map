@@ -53,6 +53,14 @@
 
 Git 的提交历史顺带成了数据的修订史,任何一次改动都能回溯或还原。
 
+### 从地方志里补录
+
+手边有志书扫描件的话,`tools/gazetteer/` 是一套把它转成上表各列的工具:
+OCR → 带页码的 Markdown → 待核记录 → 追加进工作簿,顺带生成 Obsidian 笔记
+与 `geocode.js` 的落点草稿。誊录的活儿它包了,判断的活儿仍归你 —— 抽出来的
+每一条都附着原书页码与原文,`keep` 一栏不写 `y` 就进不了表。用法见
+[`tools/gazetteer/README.md`](tools/gazetteer/README.md)。
+
 ## 结构
 
 ```
@@ -65,6 +73,7 @@ src/
   i18n.js            中英对照(界面文字与分类词表)
   china.geo.json     省界底图(全国尺度)
   city.geo.json      上海区界底图(城市尺度)
+tools/gazetteer/     地方志 OCR → Markdown → 待核记录 → 工作簿(见其 README)
 .github/workflows/deploy.yml   push 即自动构建并发布到 GitHub Pages
 ```
 
