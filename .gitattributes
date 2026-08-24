@@ -1,0 +1,9 @@
+# 数据表与测试样张一律按字节看待,git 不得替我们改换行。
+#
+# 样张里有 GB18030 存的转换稿,专为验编码识别而设。若在 Windows 上被
+# autocrlf 改成 CRLF,字节就变了 —— GB18030 的后字节都在 0x40 以上,这次
+# 侥幸无碍,但换成 UTF-16 的样张便会当场解错。索性钉死,不留这份运气。
+tools/gazetteer/tests/fixture/** -text
+
+*.xlsx binary
+*.pdf  binary
