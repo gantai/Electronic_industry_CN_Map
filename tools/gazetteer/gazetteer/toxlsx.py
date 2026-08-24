@@ -193,3 +193,130 @@ def read_places(geocode_js):
         src = f.read()
     m = re.search(r"export\s+const\s+PLACES\s*=\s*\{(.*?)\n\};", src, re.S)
     return set(re.findall(r'^\s*"([^"]+)"\s*:', m.group(1), re.M)) if m else set()
+
+
+# ============================================================
+#  以下供 vault.py 用:整本读出、按行改回
+#  ------------------------------------------------------------
+#  append() 只管往表尾添行;库里改过的字段要写回**原来那一行**,
+#  故另备一套按表头认列、按行号定位的读写。
+# ============================================================
+
+UNIT_LABELS = ["Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
+               "Remark", "Source", "Name EN", "Lat", "Lng"]
+
+
+def read_units_full(xlsx_path):
+    """厂所名录整本读出,每行带着它在表里的行号,回写时据以定位。"""
+    wb = _open(xlsx_path)
+    ws = wb[SHEET_UNITS]
+    h = _headers(ws, 2)
+    out = []
+    for r in range(3, ws.max_row + 1):
+        raw = ws.cell(row=r, column=1).value
+        if raw is None or not str(raw).strip():
+            continue
+        rec = {"_row": r, "raw": str(raw).strip()}
+        for label in UNIT_LABELS:
+            rec[label] = ws.cell(row=r, column=h[label]).value if label in h else None
+        for key, label in STAT_LABELS:
+            rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
+        out.append(rec)
+    return out
+
+
+def read_flat(xlsx_path, sheet, cols):
+    wb = _open(xlsx_path)
+    if sheet not in wb.sheetnames:
+        return []
+    ws = wb[sheet]
+    h = _headers(ws, 1)
+    out = []
+    for r in range(2, ws.max_row + 1):
+        rec = {"_row": r}
+        got = False
+        for label in cols:
+            v = ws.cell(row=r, column=h[label]).value if label in h else None
+            rec[label] = v
+            if v not in (None, ""):
+                got = True
+        if got:
+            out.append(rec)
+    return out
+
+
+def read_name_history(xlsx_path):
+    return read_flat(xlsx_path, SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"])
+
+
+def read_semi(xlsx_path):
+    return read_flat(xlsx_path, SHEET_SEMI, ["Product", "Factory", "Time", "Personnel", "Remark"])
+
+
+def read_comp(xlsx_path):
+    return read_flat(xlsx_path, SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）",
+                                             "Research Insti", "Factory", "Time",
+                                             "Personnel", "Remark"])
+
+
+def _ensure_column(ws, label, header_row=1):
+    """表尾按需添一列(Name EN / Lat / Lng 原表没有,库里填了才添)。"""
+    h = _headers(ws, 2)
+    if label in h:
+        return h[label]
+    col = ws.max_column + 1
+    ws.cell(row=header_row, column=col, value=label)
+    return col
+
+
+def update_units(xlsx_path, changes, backup=True, log=print):
+    """把库里改动的字段写回原行。
+
+    changes: [{"_row": 3, "名称": "...", "fields": {"Industry": "半导体", ...}}]
+    只动列出来的格子,别的一律不碰。"""
+    wb = _open(xlsx_path)
+    ws = wb[SHEET_UNITS]
+    bak = ""
+    if backup:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        bak = "%s.backup-%s.xlsx" % (os.path.splitext(xlsx_path)[0], stamp)
+        shutil.copy2(xlsx_path, bak)
+        log("原表已备份到 %s" % os.path.basename(bak))
+
+    n = 0
+    for ch in changes:
+        row = ch["_row"]
+        if "名称" in ch:
+            ws.cell(row=row, column=1, value=ch["名称"])
+            n += 1
+        for label, val in (ch.get("fields") or {}).items():
+            col = _ensure_column(ws, label)
+            ws.cell(row=row, column=col, value=(None if val in ("", None) else _num(val)))
+            n += 1
+    wb.save(xlsx_path)
+    return {"cells": n, "backup": bak}
+
+
+def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
+    """名称沿革整表重写 —— 库里改的是「某单位的全部段落」,逐格补丁反而易错。"""
+    wb = _open(xlsx_path)
+    if SHEET_NAMES not in wb.sheetnames:
+        ws = wb.create_sheet(SHEET_NAMES)
+        ws.append(["Unit", "Name", "From", "Name EN", "Remark", "Source"])
+    ws = wb[SHEET_NAMES]
+    # 原表没有 Name EN 一列;库里填了英文名就把这一列添上,不能悄悄丢掉
+    if any(str(r.get("Name EN") or "").strip() for r in rows):
+        _ensure_column(ws, "Name EN")
+    h = _headers(ws, 1)
+    order = sorted(h, key=lambda k: h[k])
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)
+    for i, r in enumerate(rows, start=2):
+        for label in order:
+            if label not in h:
+                continue
+            v = r.get(label, "")
+            ws.cell(row=i, column=h[label],
+                    value=(None if v in ("", None) else (str(v) if label == "From" else _num(v))))
+    wb.save(xlsx_path)
+    return len(rows)

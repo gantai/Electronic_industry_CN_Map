@@ -7,6 +7,8 @@
     gaz md     --slug 上海电子工业志 逐页文本 → 带页码锚点的 Markdown
     gaz extract --slug ...         Markdown → 四张待核 TSV
     gaz notes  --slug ...          待核记录 → Obsidian 笔记
+    gaz push   --vault ~/库/地图    工作簿 → 库,全部厂所各一则,字段在 frontmatter
+    gaz pull   --vault ~/库/地图    库 → 工作簿,把你改过的字段写回原行
     gaz geocode --slug ...         新单位 → src/geocode.js 的落点条目草稿
     gaz xlsx   --slug ...          核过的行 → 追加进 CN_Electronic_Industry.xlsx
     gaz run    上海电子工业志.pdf   前四步一气跑完,停在待核这一步
@@ -26,7 +28,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gazetteer import cndate, extract as EX, notes as NOTES, ocr as OCR, tomd, toxlsx, tsvio  # noqa: E402
+from gazetteer import (cndate, extract as EX, notes as NOTES, ocr as OCR,  # noqa: E402
+                       tomd, toxlsx, tsvio, vault as VAULT)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -154,6 +157,29 @@ def cmd_notes(args):
     NOTES.write_vault(rows, args.out or os.path.join(wd, "vault"),
                       book=args.book or args.slug,
                       book_note=args.book_note or args.slug)
+    return 0
+
+
+def _vault_dir(args):
+    """--vault,或环境变量 GAZ_VAULT。库在你自己的机器上,路径只有你知道。"""
+    v = getattr(args, "vault", None) or os.environ.get("GAZ_VAULT")
+    if not v:
+        sys.exit("要指出库在哪:--vault ~/Obsidian/电子工业/地图,或设个 GAZ_VAULT 环境变量")
+    return os.path.expanduser(v)
+
+
+def cmd_push(args):
+    """工作簿 → 库。全部厂所各写一则笔记,字段摆在 frontmatter 里等你改。"""
+    VAULT.push(args.xlsx, _vault_dir(args), geocode_js=DEFAULT_GEOCODE, force=args.force)
+    print("改完哪则,`gaz pull` 推回工作簿(先 --dry-run 看清单)。")
+    return 0
+
+
+def cmd_pull(args):
+    """库 → 工作簿。只改动过的格子,写前先列清单。"""
+    rep = VAULT.pull(args.xlsx, _vault_dir(args), dry_run=args.dry_run)
+    if rep["units"] and not args.dry_run:
+        print("核对无误后:git add -A && git commit -m \"据库中校订更新数据\" && git push")
     return 0
 
 
@@ -296,6 +322,16 @@ def main(argv=None):
     p.add_argument("--book-note", help="库中原书笔记的文件名,供 wikilink")
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser("push", help="工作簿 → Obsidian 库(全部厂所各一则笔记)", parents=[common])
+    p.add_argument("--vault", help="库里放笔记的目录(也可用 GAZ_VAULT 环境变量)")
+    p.add_argument("--force", action="store_true", help="库里改过也照盖不误")
+    p.set_defaults(func=cmd_push)
+
+    p = sub.add_parser("pull", help="Obsidian 库 → 工作簿(把改过的字段写回)", parents=[common])
+    p.add_argument("--vault", help="库里放笔记的目录(也可用 GAZ_VAULT 环境变量)")
+    p.add_argument("--dry-run", action="store_true", help="只列清单,不落笔")
+    p.set_defaults(func=cmd_pull)
 
     p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿", parents=[common])
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")

@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
-from gazetteer import cndate, extract as EX, notes, ocr, tomd, toxlsx, tsvio  # noqa: E402
+from gazetteer import cndate, extract as EX, notes, ocr, tomd, toxlsx, tsvio, vault  # noqa: E402
 
 FAILED = []
 
@@ -195,8 +195,109 @@ def test_pdf():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _read(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+def _write(p, s):
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s)
+
+
+def test_vault():
+    """库 ←→ 工作簿的来回:改在 Obsidian 里,推回工作簿,再推回来不打架。"""
+    print("库与工作簿的来回")
+    import openpyxl
+    tmp = tempfile.mkdtemp(prefix="gaz-vault-")
+    try:
+        xlsx = os.path.join(tmp, "wb.xlsx")
+        shutil.copy2(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), xlsx)
+        geo = os.path.join(REPO, "src", "geocode.js")
+        vdir = os.path.join(tmp, "vault")
+        quiet = lambda *a: None
+
+        rep = vault.push(xlsx, vdir, geocode_js=geo, log=quiet)
+        eq(rep["wrote"], 29, "29 家各写一则")
+        check(os.path.exists(os.path.join(vdir, "_厂所索引.md")), "索引也写了")
+
+        note = os.path.join(vdir, "上海微波设备研究所.md")
+        fm = vault.parse_fm(vault.split_note(_read(note))[0])
+        eq(fm["key"], "上海微波设备研究所", "key 是匹配用的钥匙")
+        eq(fm["行业"], "研究所", "字段照工作簿")
+        check(fm.get("推定坐标", "").startswith("31.27"), "geocode.js 的推定坐标只作参考")
+        eq(fm["纬度"], "", "推定坐标不冒充数据,纬度仍空着")
+
+        nh_before = len(toxlsx.read_name_history(xlsx))
+        got = vault.collect(xlsx, vdir)
+        eq(len(got["changes"]), 0, "刚推出来,没有该改的")
+        eq(got["name_history"], None, "名称沿革也没动")
+
+        # 产品表混进名称沿革 —— 曾经真出过这个岔子
+        big = os.path.join(vdir, "上海电子计算机厂.md")
+        managed, _ = vault.split_managed(vault.split_note(_read(big))[1])
+        check("整机" in managed, "整机表在 managed 段里")
+        segs = vault.parse_nh_table(managed)
+        check(all("计算机" not in s["Name"] for s in segs),
+              "只读的产品表没被当成名称沿革(DJS-130 不是厂名)")
+
+        # 改三样:普通字段、宽写的日期、自填坐标;再改一行沿革的出处
+        s0 = _read(note)
+        s0 = s0.replace('城市: ""', "城市: Shanghai")
+        s0 = s0.replace("始建: 19501100", "始建: 1950年11月")
+        s0 = s0.replace('纬度: ""', "纬度: 31.2701").replace('经度: ""', "经度: 121.3481")
+        s0 = s0.replace("| 上海仪表铜厂 | 19610000 |  |  | 据 Founder 列推定,待核 |",
+                        "| 上海仪表铜厂 | 19610000 | Copper Works | 1961年改称 | 仪表工业志 p.412 |")
+        s0 = s0.replace("（这一段归你", "我的札记在此。（这一段归你")
+        _write(note, s0)
+
+        got = vault.collect(xlsx, vdir)
+        eq(len(got["changes"]), 1, "认出一则改动")
+        keys = {k for k, _o, _n in got["changes"][0]["shown"]}
+        eq(keys, {"城市", "纬度", "经度"}, "只认出真改过的三样")
+        check(got["name_history"] is not None, "沿革表也改了")
+
+        rep = vault.pull(xlsx, vdir, log=quiet)
+        eq(rep["units"], 1, "写回一家")
+        eq(len(toxlsx.read_name_history(xlsx)), nh_before, "沿革行数不该无故增减")
+
+        wb = openpyxl.load_workbook(xlsx)
+        heads = [c.value for c in wb["Fact and Comp-Shanghai"][1]]
+        check("Lat" in heads and "Lng" in heads, "Lat / Lng 两列按需添上")
+        nh = [r for r in toxlsx.read_name_history(xlsx)
+              if r["Unit"] == "上海微波设备研究所" and r["Name"] == "上海仪表铜厂"]
+        eq(len(nh), 1, "改过的那一段还在")
+        eq(nh[0]["Source"], "仪表工业志 p.412", "核实过的出处写回去了")
+        eq(nh[0]["Name EN"], "Copper Works", "英文名不会因原表没这一列就丢掉")
+
+        wb2 = openpyxl.load_workbook(xlsx)["Fact and Comp-Shanghai"]
+        h = {c.value: i + 1 for i, c in enumerate(wb2[1]) if c.value}
+        vals = [wb2.cell(row=r, column=h["Lat"]).value for r in range(3, wb2.max_row + 1)
+                if wb2.cell(row=r, column=1).value == "上海元件五厂"]
+        eq(vals, [None], "别家的推定坐标没被顺手写进表里")
+
+        # pull 之后重新盖戳:再 push 不该把它当成未推的改动
+        rep = vault.push(xlsx, vdir, geocode_js=geo, log=quiet)
+        eq(rep["skipped"], [], "刚 pull 过,不该跳过")
+        check("我的札记在此。" in _read(note), "自己写的札记,push 不动它")
+        fm = vault.parse_fm(vault.split_note(_read(note))[0])
+        eq(fm["城市"], "Shanghai", "改动已在工作簿里,推回来还是它")
+
+        # 真有未推的改动时,push 要拦住
+        other = os.path.join(vdir, "上海元件五厂.md")
+        _write(other, _read(other).replace("行业: 半导体", "行业: 电子计算机"))
+        rep = vault.push(xlsx, vdir, geocode_js=geo, log=quiet)
+        eq(rep["skipped"], ["上海元件五厂"], "未推的改动,push 拦住不盖")
+        check("行业: 电子计算机" in _read(other), "拦住之后,库里的改动还在")
+        rep = vault.push(xlsx, vdir, geocode_js=geo, force=True, log=quiet)
+        eq(rep["skipped"], [], "--force 才照盖")
+        check("行业: 半导体" in _read(other), "--force 之后以工作簿为准")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for fn in (test_dates, test_names, test_pdf, test_pipeline):
+    for fn in (test_dates, test_names, test_pdf, test_pipeline, test_vault):
         fn()
     print()
     if FAILED:
