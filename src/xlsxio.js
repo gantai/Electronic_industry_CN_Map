@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { PLACES, ALIASES, DEFAULT_FALLBACK } from "./geocode.js";
+import { PLACES, ALIASES, cityAt } from "./geocode.js";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
 import { parseCNDate, baseName, parenAlias, splitChain, stripLeadingDate } from "./utils.js";
 
@@ -226,6 +226,8 @@ function parseUnits(ws) {
     });
 
     const place = PLACES[name] || {};
+    /* 兜底落点按 City 列分城,免得外地厂所一律落在上海 */
+    const fallback = cityAt(cell(r, cCity));
     const latOverride = cLat >= 0 ? numCell(r, cLat) : null;
     const lngOverride = cLng >= 0 ? numCell(r, cLng) : null;
     const hasOwn = latOverride != null && lngOverride != null;
@@ -248,8 +250,8 @@ function parseUnits(ws) {
       chain: splitChain(founder).map((t) => ({ text: t, date: parseCNDate(t) })),
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
-      lat: hasOwn ? latOverride : hasPlace ? place.lat : DEFAULT_FALLBACK.lat,
-      lng: hasOwn ? lngOverride : hasPlace ? place.lng : DEFAULT_FALLBACK.lng,
+      lat: hasOwn ? latOverride : hasPlace ? place.lat : fallback.lat,
+      lng: hasOwn ? lngOverride : hasPlace ? place.lng : fallback.lng,
       precision: hasOwn ? "given" : hasPlace ? place.precision || "district" : "city",
       district: hasPlace || hasOwn ? place.district || "" : "",
       locNote: place.note || "",

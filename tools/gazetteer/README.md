@@ -30,7 +30,58 @@ pip install paddleocr paddlepaddle           # 中文 OCR 首选
 **PDF 本身带字的话,一样 OCR 引擎都不用装。** 书同文、超星、国图数字方志的
 PDF 多半带文本层,`gaz` 会逐页检查,有字就直接取,又快又准。
 
-## 跑
+## 手里已经有转好的 .md
+
+`ocr` / `md` 两步是给扫描件预备的。稿子若已经转成 Markdown —— 别处转的、自己
+抄的、从数字方志库拷出来的 —— 直接从 `book` 进,一步出一份本地 Excel:
+
+```bat
+cd /d D:\path\to\Electronic_industry_CN_Map
+
+REM 先看一眼这份稿子:标题层级、页码写法、志书套语的多寡
+python tools\gazetteer\gaz.py inspect "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.md"
+
+REM 抽,并在同一个目录下落一份 Excel
+python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.md" ^
+       --city Beijing --book "北京工业志·电子志"
+```
+
+`--out` 可另指 Excel 的去处,不写就与 .md 同目录同名。出来的工作簿五张表:
+`Fact and Comp-<城>`、`Semi-Product`、`Comp-Product`、`Name-History`,版式与
+`CN_Electronic_Industry.xlsx` 一模一样;外加一张**「待核」** —— 每家一行,
+末一列是据以立论的那句原文,拿 Excel 打开逐条核对最省事。
+
+`book` 替你办的三件杂事:
+
+**认编码。** Windows 上存的稿子可能是 GB18030、可能带 BOM、也可能是 UTF-16,
+挨个试,试通了报给你,不让乱码悄悄流进表里。
+
+**接断行。** 转换稿常照原书行宽硬断:「北京市半导体 / 器件研究所」各占一行,
+厂名就断成两截,怎么认都认不出。看到三成以上的行不收在句读上便接回段落
+(`--reflow off` 可关掉)。
+
+**认页码。** `第123页`、`- 123 -`、`[123]`、`<a name="p123">` 之类都认,认出来
+归一成本工具的 `<!-- p.N -->`,出处便回注得到页。判据是**递增** —— 脚注号
+`[1][2][1]` 不递增,不会被当成页码。一处也认不出也不要紧:出处退到篇章节,
+「北京工业志·电子志·第三章 半导体器件工业」照样查得回去,决不写出 `p.0`
+这种假页码。
+
+### 换一座城
+
+`--city Beijing` 只管 `City` 一列。要让新城的厂所落对地方,还有两处得知道:
+
+- **站点只读一张厂所名录表。** `src/xlsxio.js` 的 `pickSheet` 取第一张匹配的,
+  所以北京的行要并进 `CN_Electronic_Industry.xlsx` **原来那张** `Fact and
+  Comp-Shanghai` 里,靠 `City` 列分辨,而不是另起一张表。`book` 出来的
+  `Fact and Comp-Beijing` 是给你单独看、单独存的。
+- **兜底落点按城分。** 没有地址、`geocode.js` 里也没有对照的单位,落在本市
+  市中心。`src/geocode.js` 的 `CITY_FALLBACK` 现收了上海、北京、天津、南京;
+  再添别的城,照样式加一行即可 —— **不加就一律落到上海去**。
+
+城市尺度的区界底图(`src/city.geo.json`)目前只有上海 16 区,放大到北京看不到
+区界,别的都照常。
+
+## 跑(扫描件)
 
 ```bash
 cd /path/to/Electronic_industry_CN_Map
@@ -175,6 +226,11 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 
 ```
 gaz check                     本机环境自检
+gaz inspect <某某志.md>        看一眼转换稿:标题、页码、套语、断行
+gaz book    <某某志.md>        转换稿 → 待核 TSV + 本地 Excel
+                                                    --out/--city/--book
+                                                    --reflow auto|on|off
+                                                    --page-pattern
 gaz ocr    <pdf|图目录>        扫描件 → 逐页文本      --engine auto|text|paddle|tesseract
                                                     --first/--last/--dpi/--force
 gaz md     --slug X           逐页文本 → Markdown    --fixes/--show-furniture/--keep-furniture

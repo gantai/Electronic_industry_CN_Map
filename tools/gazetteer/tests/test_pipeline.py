@@ -10,6 +10,7 @@
 """
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -18,7 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
-from gazetteer import cndate, extract as EX, notes, ocr, tomd, toxlsx, tsvio, vault  # noqa: E402
+from gazetteer import (bookmd, cndate, extract as EX, notes, ocr,  # noqa: E402
+                       tomd, toxlsx, tsvio, vault)
 
 FAILED = []
 
@@ -296,8 +298,83 @@ def test_vault():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_book():
+    """现成的转换稿:换个编码、换座城、没有页码锚点,照样走得通。"""
+    print("现成的转换稿")
+    import openpyxl
+    src = os.path.join(HERE, "fixture", "北京转换稿-gb18030.md")
+
+    text, enc = bookmd.read_text(src)
+    eq(enc, "gb18030", "认出 GB18030,不是硬按 UTF-8 读")
+    check("北京电子管厂" in text, "汉字没读成乱码")
+
+    wrapped, share = bookmd.hard_wrapped(text)
+    check(wrapped and share > 0.3, "认出照原书行宽硬断的稿子")
+    check("北京市半导体\n器件研究所" in text, "厂名确实被断成了两截")
+    flowed = bookmd.reflow_soft(text)
+    check("北京市半导体器件研究所" in flowed, "接回段落之后厂名完整")
+    got = EX.unit_names("北京市半导体\n器件研究所")
+    check("北京市半导体器件研究所" not in got, "不接回就认不出整个厂名(所以才要接)")
+    check(all("\n" not in n for n in got), "厂名里决不夹换行")
+
+    picks = bookmd.detect_page_marks(flowed)
+    eq(picks[0]["name"], "第N页", "认出「第N页」这种写法")
+    check(picks[0]["ok"], "页码递增,像页码")
+    normed, how, n = bookmd.normalize_page_marks(flowed)
+    eq(how, "第N页", "采用它")
+    eq(n, 3, "三处")
+    check("<!-- p.55 -->" in normed and "<!-- p.57 -->" in normed, "归一成本工具的写法")
+
+    # 脚注号不是页码 —— 这是「递增」这条判据要挡住的
+    foot = "\n".join(["正文一。", "[1]", "正文二。", "[2]", "正文三。", "[1]",
+                      "正文四。", "[3]", "正文五。", "[1]", "正文六。"])
+    cands = [c for c in bookmd.detect_page_marks(foot) if c["ok"]]
+    eq(cands, [], "[1][2][1] 这类脚注号没被当成页码")
+
+    known = toxlsx.merge_known(os.path.join(REPO, "CN_Electronic_Industry.xlsx"),
+                               os.path.join(REPO, "src", "geocode.js"))
+    res = EX.extract(normed, book="北京工业志·电子志", known=known, city="Beijing")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(sorted(by), sorted(["北京电子管厂", "北京半导体器件二厂", "北京市半导体器件研究所"]),
+       "三家专条单位")
+    eq(by["北京电子管厂"]["City"], "Beijing", "City 列跟着 --city 走")
+    eq(by["北京电子管厂"]["Add."], "酒仙桥路2号", "门牌")
+    eq(by["北京电子管厂"]["staff"], 10286.0, "职工总数")
+    eq(by["北京电子管厂"]["Source"], "北京工业志·电子志·p.55", "出处回注到页")
+    eq(by["北京市半导体器件研究所"]["district"], "西城", "北京的区名也认得")
+    # 动词照原文录:「划出组建」是分立,写成「合并」就成了另一回事
+    check("划出组建" in by["北京半导体器件二厂"]["Founder"], "沿革里的动词照原文,不改字")
+
+    # 没有页码时,出处退到篇章节
+    nopage = re.sub(r"<!-- p\.\d+ -->", "", normed)
+    res2 = EX.extract(nopage, book="北京工业志·电子志", known=known, city="Beijing")
+    src2 = {r["Unit"]: r["Source"] for r in res2["units"]}
+    check(src2["北京电子管厂"].startswith("北京工业志·电子志·"), "退到篇章节仍带书名")
+    check("p.0" not in "".join(src2.values()), "决不写出 p.0 这种假页码")
+
+    tmp = tempfile.mkdtemp(prefix="gaz-book-")
+    try:
+        out = os.path.join(tmp, "北京.xlsx")
+        bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
+                          log=lambda *a: None)
+        wb = openpyxl.load_workbook(out)
+        eq(wb.sheetnames, ["Fact and Comp-Beijing", "Semi-Product", "Comp-Product",
+                           "Name-History", "待核"], "五张表")
+        ws = wb["Fact and Comp-Beijing"]
+        eq([c.value for c in ws[1]][:8],
+           [None, "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add."],
+           "第一行表头与原表一致(A1 照原表留空)")
+        eq(ws.cell(row=2, column=9).value, "职工总数", "第二行是统计块的表头")
+        eq(ws.cell(row=3, column=4).value, 19561000, "日期写成八位整数")
+        rv = wb["待核"]
+        eq(rv.cell(row=1, column=11).value, "据以立论的原文", "待核表最后一列是原文")
+        check(rv.max_row == len(res["units"]) + 1, "待核表一家一行")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
-    for fn in (test_dates, test_names, test_pdf, test_pipeline, test_vault):
+    for fn in (test_dates, test_names, test_pdf, test_pipeline, test_vault, test_book):
         fn()
     print()
     if FAILED:

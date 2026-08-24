@@ -46,7 +46,12 @@ export const DISTRICT_EN = {
   "青浦": "Qingpu", "金山": "Jinshan", "奉贤": "Fengxian", "崇明": "Chongming",
   "浦东新": "Pudong",
 };
-export const CITY_ZH = { Shanghai: "上海", shanghai: "上海" };
+export const CITY_ZH = {
+  Shanghai: "上海", shanghai: "上海", 上海: "上海",
+  Beijing: "北京", beijing: "北京", 北京: "北京",
+  Tianjin: "天津", tianjin: "天津", 天津: "天津",
+  Nanjing: "南京", nanjing: "南京", 南京: "南京",
+};
 
 /* ---------- 界面文字 ---------- */
 const zh = {

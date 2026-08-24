@@ -1,0 +1,315 @@
+# -*- coding: utf-8 -*-
+"""现成的 Markdown 转换稿 → 待核记录 + 一份本地 Excel。
+
+`gaz ocr` / `gaz md` 是给扫描件预备的。手里若已经有转好的 .md —— 别处转的、
+自己抄的、从数字方志库拷出来的 —— 那两步都不必走,直接从这里进。
+
+要紧的差别有两处:
+
+**一、编码。** Windows 上存下来的稿子可能是 GB18030、可能带 BOM、也可能是
+UTF-16。挨个试,试通了记下来告诉你,别让一堆乱码悄悄流进表里。
+
+**二、页码。** 转换稿多半不留页码。`gaz md` 会在每页正文前留 `<!-- p.123 -->`,
+抽取时据以回注出处;别处转来的没有这一手。所以先认一遍常见的页码写法
+(`第123页`、`- 123 -`、`[123]` 之类),认出来就归一成 `<!-- p.N -->`;
+认不出也不要紧 —— 出处退到篇章节,「北京工业志·电子志·第三章」仍查得回去。
+"""
+
+import os
+import re
+from collections import Counter
+
+from . import extract as EX
+
+ENCODINGS = ["utf-8-sig", "utf-8", "gb18030", "big5", "utf-16", "latin-1"]
+
+# 页码的常见写法。每条给出正则与取数的组号;认哪一条,看谁的数字最像页码。
+PAGE_PATTERNS = [
+    ("已是本工具的写法", re.compile(r"^[ \t]*<!--\s*p\.(\d{1,4})\s*-->[ \t]*$", re.M)),
+    ("HTML 注释", re.compile(r"^[ \t]*<!--\s*(\d{1,4})\s*-->[ \t]*$", re.M)),
+    ("第N页", re.compile(r"^[ \t]*第\s*(\d{1,4})\s*页[ \t]*$", re.M)),
+    ("方括号", re.compile(r"^[ \t]*\[\[?\s*(\d{1,4})\s*\]?\][ \t]*$", re.M)),
+    ("花括号", re.compile(r"^[ \t]*\{\{?\s*(\d{1,4})\s*\}?\}[ \t]*$", re.M)),
+    ("破折号夹注", re.compile(r"^[ \t]*[-—–·\*]{1,2}\s*(\d{1,4})\s*[-—–·\*]{1,2}[ \t]*$", re.M)),
+    ("锚点", re.compile(r'^[ \t]*<a\s+(?:id|name)="(?:page|p)?(\d{1,4})"\s*/?>(?:</a>)?[ \t]*$',
+                        re.M | re.I)),
+    ("P123", re.compile(r"^[ \t]*[Pp]\.?\s*(\d{1,4})[ \t]*$", re.M)),
+    ("孤零数字", re.compile(r"^[ \t]*(\d{1,4})[ \t]*$", re.M)),
+]
+
+
+def read_text(path):
+    """挨个试编码,返回 (正文, 用的哪一种)。"""
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ENCODINGS:
+        try:
+            text = raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        # 解出来若满是替换符或几乎没有汉字,多半是解错了,接着试
+        if "�" in text[:4000]:
+            continue
+        if enc == "latin-1" and len(re.findall(r"[一-鿿]", text[:4000])) < 5:
+            continue
+        return text.replace("\r\n", "\n").replace("\r", "\n"), enc
+    return raw.decode("utf-8", errors="replace").replace("\r\n", "\n"), "utf-8(有乱码)"
+
+
+def _monotonic(nums):
+    """页码该是大体递增的;脚注号 [1][2][1] 不是。返回递增的比例。"""
+    if len(nums) < 3:
+        return 0.0
+    ups = sum(1 for a, b in zip(nums, nums[1:]) if b >= a)
+    return ups / float(len(nums) - 1)
+
+
+def detect_page_marks(text):
+    """把各种页码写法都试一遍,按「像不像页码」排出来。"""
+    out = []
+    for name, pat in PAGE_PATTERNS:
+        nums = [int(m.group(1)) for m in pat.finditer(text)]
+        if len(nums) < 3:
+            continue
+        mono = _monotonic(nums)
+        out.append({"name": name, "pattern": pat, "count": len(nums),
+                    "monotonic": mono, "first": nums[0], "last": nums[-1],
+                    "ok": mono >= 0.9})
+    out.sort(key=lambda d: (d["ok"], d["count"]), reverse=True)
+    return out
+
+
+def normalize_page_marks(text, force=None):
+    """把认出来的页码写法归一成 `<!-- p.N -->`。返回 (正文, 用了哪条, 改了几处)。"""
+    cands = [c for c in detect_page_marks(text) if c["ok"]]
+    if force:
+        cands = [c for c in detect_page_marks(text) if c["name"] == force] or cands
+    if not cands:
+        return text, None, 0
+    pick = cands[0]
+    if pick["name"] == "已是本工具的写法":
+        return text, pick["name"], pick["count"]
+    new = pick["pattern"].sub(lambda m: "<!-- p.%s -->" % int(m.group(1)), text)
+    return new, pick["name"], pick["count"]
+
+
+# ---------------------------------------------------------------- 接断行
+
+SENT_END = "。！？；.!?;：:」』】》）)"
+_SKIP = re.compile(r"^\s*(?:#{1,6}\s|[-*+]\s|\d+[.、)]\s|>|\||```|<!--|---\s*$)")
+
+
+def hard_wrapped(text):
+    """看这份稿子是不是照原书的行宽硬断的。
+
+    转换稿常把版心一行原样存成一行:「北京市半导体」「器件研究所」各一行,
+    厂名就断成了两截,怎么认都认不出。判据是「多少行没收在句读上」。"""
+    body = [l.strip() for l in text.splitlines()
+            if l.strip() and not _SKIP.match(l)]
+    if len(body) < 8:
+        return False, 0.0
+    open_ended = sum(1 for l in body if l[-1] not in SENT_END)
+    share = open_ended / float(len(body))
+    return share >= 0.3, share
+
+
+def reflow_soft(text):
+    """把硬断的行接回段落:上一行没收在句读上,下一行又不是标题/表格/列表,就接上。
+
+    比 `gaz md` 的那一套轻:那边要对付 OCR 的碎行,这边只接明显断开的。
+    已经一段一行的稿子跑一遍也不会有事 —— 每行都收在句号上,一行也不会接。"""
+    out = []
+    for line in text.splitlines():
+        s = line.rstrip()
+        if not s.strip() or _SKIP.match(s) or not out or not out[-1].strip():
+            out.append(s)
+            continue
+        prev = out[-1].rstrip()
+        if _SKIP.match(prev) or not prev:
+            out.append(s)
+            continue
+        if prev[-1] in SENT_END:
+            out.append(s)
+        else:
+            out[-1] = prev + s.lstrip()
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------- 看一眼
+
+def inspect(text, path=""):
+    """先看看这份稿子长什么样 —— 抽取之前值得花十秒钟。"""
+    lines = text.splitlines()
+    heads = [l for l in lines if re.match(r"^#{1,6}\s+\S", l)]
+    levels = Counter(len(re.match(r"^(#+)", h).group(1)) for h in heads)
+    tables = sum(1 for l in lines if l.strip().startswith("|"))
+
+    wrapped, share = hard_wrapped(text)
+    scan = reflow_soft(text) if wrapped else text
+    units = Counter()
+    for l in scan.splitlines():
+        for nm in EX.unit_names(l):
+            units[nm] += 1
+
+    cues = {k: len(re.findall(v, text)) for k, v in [
+        ("前身 / 原名", r"前身|原名|原为|原系"),
+        ("改名 / 更名", EX.RENAME),
+        ("划归 / 隶属", EX.TRANSFER),
+        ("合并 / 并入", EX.MERGE),
+        ("始建 / 成立", EX.BIRTH),
+        ("撤销 / 停办", EX.DEATH),
+        ("试制 / 投产", EX.MADE),
+        ("职工 / 产值", r"职工|技术人员|总产值|销售收入|固定资产|利润"),
+    ]}
+
+    return {
+        "path": path, "chars": len(text), "lines": len(lines),
+        "headings": len(heads), "levels": dict(sorted(levels.items())),
+        "sample_headings": [h.strip() for h in heads[:12]],
+        "table_lines": tables, "wrapped": wrapped, "wrap_share": share,
+        "pages": detect_page_marks(text),
+        "units": units.most_common(15),
+        "unit_total": len(units),
+        "cues": cues,
+    }
+
+
+def report(info, log=print):
+    log("稿子:%s" % (info["path"] or "(未命名)"))
+    log("  %d 字,%d 行,%d 处标题%s" % (
+        info["chars"], info["lines"], info["headings"],
+        ("(层级 " + "、".join("%d 级×%d" % (k, v) for k, v in info["levels"].items()) + ")")
+        if info["levels"] else ""))
+    if info["sample_headings"]:
+        log("  头几处标题:")
+        for h in info["sample_headings"][:8]:
+            log("     " + h[:60])
+    if info["table_lines"]:
+        log("  %d 行像表格 —— 表里的数字本工具不还原,那部分仍要手录" % info["table_lines"])
+    if info["wrapped"]:
+        log("  %.0f%% 的行没收在句读上 —— 照原书行宽硬断的,抽取前会先接回段落"
+            % (info["wrap_share"] * 100))
+
+    if info["pages"]:
+        for c in info["pages"][:3]:
+            log("  页码写法「%s」%d 处,%d→%d,递增率 %.0f%%%s"
+                % (c["name"], c["count"], c["first"], c["last"], c["monotonic"] * 100,
+                   "  ← 采用" if c["ok"] and c is info["pages"][0] else ""))
+    else:
+        log("  没认出页码 —— 出处会退到篇章节(如「…·第三章」),仍查得回去")
+
+    log("  认出 %d 个单位名,最常出现的几个:" % info["unit_total"])
+    for nm, n in info["units"][:8]:
+        log("     %s ×%d" % (nm, n))
+
+    log("  志书套语的出现次数(抽取全靠这些词):")
+    for k, v in info["cues"].items():
+        log("     %-12s %d" % (k, v))
+    weak = [k for k, v in info["cues"].items() if v == 0]
+    if weak:
+        log("  注意:%s 一次都没出现 —— 这几类字段多半抽不到。" % "、".join(weak))
+
+
+# ---------------------------------------------------------------- 本地 Excel
+
+def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
+    """把抽出来的东西写成一份本地工作簿,版式与 CN_Electronic_Industry.xlsx 一致,
+    另附一张「待核」表,把出处、原文、置信一并摆上,好在 Excel 里逐条核对。"""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    stat_labels = [label for _k, label in [
+        ("staff", "职工总数"), ("tech", "技术人员"), ("plant", "厂房面积"),
+        ("floor", "建筑面积"), ("assets", "固定资产"), ("output", "工业总产值"),
+        ("sales", "销售收入"), ("profit", "实现利润")]]
+    stat_keys = [k for k, _ in EX.STAT_PATTERNS]
+
+    def num(v):
+        s = str(v if v is not None else "").strip()
+        if s == "":
+            return None
+        if re.fullmatch(r"\d{8}", s):
+            return int(s)
+        try:
+            f = float(s)
+            return int(f) if f == int(f) else f
+        except ValueError:
+            return s
+
+    # ---- 厂所名录:两行表头,与原表一模一样
+    sheet = "Fact and Comp-" + (city or "Local")
+    ws = wb.create_sheet(sheet)
+    ws.append(["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
+               stats_year] + [""] * 7 + ["Remark", "Source"])
+    ws.append([""] * 8 + stat_labels + ["", ""])
+    for r in res["units"]:
+        ws.append([r.get("Unit", ""), r.get("Industry", ""), r.get("Product", ""),
+                   num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
+                   r.get("City", city), r.get("Add.", "")]
+                  + [num(r.get(k)) for k in stat_keys]
+                  + [r.get("Remark", ""), r.get("Source", "")])
+    ws.merge_cells(start_row=1, start_column=9, end_row=1, end_column=16)
+    ws.cell(row=1, column=9).alignment = Alignment(horizontal="center")
+    for c in range(1, 19):
+        ws.cell(row=1, column=c).font = Font(bold=True)
+        ws.cell(row=2, column=c).font = Font(bold=True)
+    ws.freeze_panes = "A3"
+
+    def flat(name, cols, rows, keys=None):
+        w = wb.create_sheet(name)
+        w.append(cols)
+        for c in range(1, len(cols) + 1):
+            w.cell(row=1, column=c).font = Font(bold=True)
+        for r in rows:
+            w.append([num(r.get(k)) if k in ("Time", "From") else r.get(k, "")
+                      for k in (keys or cols)])
+        w.freeze_panes = "A2"
+        return w
+
+    flat("Semi-Product", ["Product", "Factory", "Time", "Personnel", "Remark"], res["semi"])
+    flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
+                          "Factory", "Time", "Personnel", "Remark"], res["comp"])
+    nh = wb.create_sheet("Name-History")
+    nh.append(["Unit", "Name", "From", "Remark", "Source"])
+    for c in range(1, 6):
+        nh.cell(row=1, column=c).font = Font(bold=True)
+    for r in res["names"]:
+        nh.append([r.get("Unit", ""), r.get("Name", ""), str(r.get("From", "")),
+                   r.get("Remark", ""), r.get("Source", "")])
+    nh.freeze_panes = "A2"
+
+    # ---- 待核:核对用的那一张,原文摆在最后一列
+    rv = wb.create_sheet("待核")
+    rv.append(["取否", "来路", "置信", "页", "单位", "行业", "始建", "终止", "地址",
+               "出处", "据以立论的原文"])
+    for c in range(1, 12):
+        rv.cell(row=1, column=c).font = Font(bold=True)
+    for r in res["units"]:
+        rv.append(["", r.get("role", ""), r.get("confidence", ""), r.get("page", ""),
+                   r.get("Unit", ""), r.get("Industry", ""), num(r.get("Start Date")),
+                   num(r.get("End Date")), r.get("Add.", ""), r.get("Source", ""),
+                   r.get("evidence", "")])
+    rv.freeze_panes = "E2"
+    for col, wid in zip("ABCDEFGHIJK", [6, 6, 6, 6, 26, 10, 11, 11, 20, 28, 90]):
+        rv.column_dimensions[col].width = wid
+    for row in rv.iter_rows(min_row=2, min_col=11, max_col=11):
+        row[0].alignment = Alignment(wrap_text=False, vertical="top")
+
+    widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
+              "Semi-Product": [28, 24, 11, 14, 30],
+              "Comp-Product": [30, 8, 12, 14, 30, 24, 14, 16, 34],
+              "Name-History": [26, 30, 11, 40, 26]}
+    for nm, ws_widths in widths.items():
+        w = wb[nm]
+        for i, wid in enumerate(ws_widths, start=1):
+            w.column_dimensions[get_column_letter(i)].width = wid
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    wb.save(path)
+    log("Excel 已写到 %s" % path)
+    log("  五张表:%s、Semi-Product、Comp-Product、Name-History、待核" % sheet)
+    return path

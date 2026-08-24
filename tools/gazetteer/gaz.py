@@ -3,6 +3,8 @@
 """gaz —— 把一本地方志变成这张地图上的数据。
 
     gaz check                     看看本机装了什么、缺什么
+    gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
+    gaz book    某某志.md          现成的转换稿 → 待核 TSV + 一份本地 Excel
     gaz ocr    上海电子工业志.pdf   扫描件 → 逐页文本(可断可续)
     gaz md     --slug 上海电子工业志 逐页文本 → 带页码锚点的 Markdown
     gaz extract --slug ...         Markdown → 四张待核 TSV
@@ -28,8 +30,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gazetteer import (cndate, extract as EX, notes as NOTES, ocr as OCR,  # noqa: E402
-                       tomd, toxlsx, tsvio, vault as VAULT)
+from gazetteer import (bookmd as BOOK, cndate, extract as EX,  # noqa: E402
+                       notes as NOTES, ocr as OCR, tomd, toxlsx, tsvio, vault as VAULT)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -157,6 +159,62 @@ def cmd_notes(args):
     NOTES.write_vault(rows, args.out or os.path.join(wd, "vault"),
                       book=args.book or args.slug,
                       book_note=args.book_note or args.slug)
+    return 0
+
+
+def cmd_inspect(args):
+    """先看看这份转换稿长什么样 —— 抽取之前值得花十秒钟。"""
+    text, enc = BOOK.read_text(args.md)
+    print("编码:%s" % enc)
+    BOOK.report(BOOK.inspect(text, args.md))
+    return 0
+
+
+def cmd_book(args):
+    """现成的 .md → 待核 TSV + 一份本地 Excel。扫描件请走 gaz ocr / gaz md。"""
+    text, enc = BOOK.read_text(args.md)
+    stem = os.path.splitext(os.path.basename(args.md))[0]
+    book = args.book or stem
+    slug = args.slug or stem
+    print("读入 %s（%s,%d 字）" % (os.path.basename(args.md), enc, len(text)))
+
+    wrapped, share = BOOK.hard_wrapped(text)
+    if args.reflow == "on" or (args.reflow == "auto" and wrapped):
+        text = BOOK.reflow_soft(text)
+        print("%.0f%% 的行没收在句读上,已接回段落(--reflow off 可关掉)" % (share * 100))
+
+    text, how, n = BOOK.normalize_page_marks(text, force=args.page_pattern)
+    if how:
+        print("页码写法「%s」%d 处,已归一成 <!-- p.N -->" % (how, n))
+    else:
+        print("没认出页码 —— 出处退到篇章节(如「%s·第三章」)" % book)
+
+    wd = workdir(args, slug)
+    os.makedirs(wd, exist_ok=True)
+    md_path = os.path.join(wd, slug + ".md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
+    res = EX.extract(text, book=book, known=known, stats_year=args.stats_year,
+                     city=args.city, min_mentions=args.min_mentions, auto_keep=args.auto_keep)
+
+    rd = review_dir(wd)
+    tsvio.write(os.path.join(rd, "units.tsv"), res["units"], UNIT_COLS)
+    tsvio.write(os.path.join(rd, "semi.tsv"), res["semi"], SEMI_COLS)
+    tsvio.write(os.path.join(rd, "comp.tsv"), res["comp"], COMP_COLS)
+    tsvio.write(os.path.join(rd, "names.tsv"), res["names"], NAME_COLS)
+
+    entries = sum(1 for r in res["units"] if r.get("role") == "专条")
+    print("抽出:%d 家单位(%d 家有专条)、%d 条器件、%d 条整机、%d 段名称沿革"
+          % (len(res["units"]), entries, len(res["semi"]), len(res["comp"]), len(res["names"])))
+
+    out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.md)), stem + ".xlsx")
+    BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year)
+    print("待核 TSV 另存一份在 %s" % rd)
+    print()
+    print("接下来:在 Excel 的「待核」表里逐行看最后一列的原文;")
+    print("要并进地图,就把 units.tsv 的 keep 改成 y,再 gaz xlsx --slug %s。" % slug)
     return 0
 
 
@@ -322,6 +380,23 @@ def main(argv=None):
     p.add_argument("--book-note", help="库中原书笔记的文件名,供 wikilink")
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser("inspect", help="看一眼现成的 .md 转换稿:标题、页码、套语", parents=[common])
+    p.add_argument("md", help="已转好的 Markdown 文件")
+    p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("book", help="现成的 .md → 待核 TSV + 一份本地 Excel", parents=[common])
+    p.add_argument("md", help="已转好的 Markdown 文件")
+    p.add_argument("--out", help="Excel 存到哪(默认与 .md 同目录同名)")
+    p.add_argument("--city", default="Shanghai", help="City 列的值,如 Beijing")
+    p.add_argument("--book", help="出处里写的书名(默认取文件名)")
+    p.add_argument("--stats-year", type=int, default=1990)
+    p.add_argument("--min-mentions", type=int, default=2)
+    p.add_argument("--auto-keep", type=float)
+    p.add_argument("--page-pattern", help="指定页码写法,不用自动认")
+    p.add_argument("--reflow", default="auto", choices=["auto", "on", "off"],
+                   help="接回硬断的行(默认 auto:看了再定)")
+    p.set_defaults(func=cmd_book)
 
     p = sub.add_parser("push", help="工作簿 → Obsidian 库(全部厂所各一则笔记)", parents=[common])
     p.add_argument("--vault", help="库里放笔记的目录(也可用 GAZ_VAULT 环境变量)")

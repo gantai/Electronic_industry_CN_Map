@@ -16,9 +16,31 @@
         会覆盖这里的推定值(见 xlsxio.js)。
    ============================================================ */
 
-/* 市级兜底落点:人民广场 */
-export const CITY_FALLBACK = { Shanghai: { lat: 31.2304, lng: 121.4737, label: "上海" } };
-export const DEFAULT_FALLBACK = { lat: 31.2304, lng: 121.4737, label: "上海" };
+/* 市级兜底落点 —— 表内没写地址、PLACES 里也没有对照的单位,落在本市市中心,
+   界面上标作「坐标待定位」。**按 City 列分城**:否则新添的北京厂所会一律
+   落到上海人民广场去。key 兼收中英两种写法,大小写不论(见 cityAt)。 */
+export const CITY_FALLBACK = {
+  Shanghai: { lat: 31.2304, lng: 121.4737, label: "上海" },   // 人民广场
+  Beijing: { lat: 39.9042, lng: 116.4074, label: "北京" },     // 天安门
+  Tianjin: { lat: 39.1088, lng: 117.2008, label: "天津" },
+  Nanjing: { lat: 32.0603, lng: 118.7969, label: "南京" },
+};
+/* 中文写法一并挂上,表里写「北京」或「Beijing」都认 */
+CITY_FALLBACK["上海"] = CITY_FALLBACK.Shanghai;
+CITY_FALLBACK["北京"] = CITY_FALLBACK.Beijing;
+CITY_FALLBACK["天津"] = CITY_FALLBACK.Tianjin;
+CITY_FALLBACK["南京"] = CITY_FALLBACK.Nanjing;
+
+export const DEFAULT_FALLBACK = CITY_FALLBACK.Shanghai;
+
+/** City 列 → 兜底落点。认不出的城市仍回落到 DEFAULT_FALLBACK。 */
+export function cityAt(city) {
+  const raw = String(city == null ? "" : city).trim();
+  if (!raw) return DEFAULT_FALLBACK;
+  const hit = CITY_FALLBACK[raw]
+    || CITY_FALLBACK[raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()];
+  return hit || DEFAULT_FALLBACK;
+}
 
 /* key = 原表 A 列的单位名称(去掉括号别名前的完整写法亦可,见 xlsxio.js 的规范化) */
 export const PLACES = {

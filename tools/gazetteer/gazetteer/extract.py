@@ -37,7 +37,7 @@ UNIT_TAIL = (r"(?:研究所|研究院|设计院|实验室|试验室|工厂|电�
 TAIL_RE = re.compile(UNIT_TAIL + r"(?![房址长区部内外里方家矿商牌史志属在有以需谓工人员级])")
 
 # 名字里绝不会出现、却常常紧挨在名字前头的字 —— 往左找名字的起点,到此为止
-BOUND = (set("、，,。；;：:（）()[]「」『』《》〈〉“”\"'　 \t") | set("0123456789")
+BOUND = (set("、，,。；;：:（）()[]「」『』《》〈〉“”\"'　 \t\r\n") | set("0123456789")
          | set("与同及由为在于将把经向从自并入该本其此又遂乃旋等是即系之年月日号称归属设立建"))
 # 「和」不入 BOUND —— 「和平电器厂」这类名字太多,截断的代价比留点噪音大
 SOFT_BOUND = set("和")
@@ -318,9 +318,12 @@ def chain_from(sents, start=None):
         if not re.search(r"前身|原名|原为|原系|系由|改组|" + RENAME + "|" + TRANSFER + "|" + MERGE, s):
             continue
         date = cndate.parse(s)
-        m = re.search(r"由\s*([一-鿿A-Za-z0-9、和与同]{4,44}?)\s*(?:合并|合组|组建|组成)", s)
+        # 动词照原文录 ——「由某厂某车间划出组建」录成「划出组建」,不可一律写作
+        # 「合并」:站点据措辞分辨分立与合并(见 src/xlsxio.js 的 founderEventType),
+        # 改了词就改了事件的性质。
+        m = re.search(r"由\s*([一-鿿A-Za-z0-9、和与同]{4,44}?)\s*(合并|合组|组建|组成)", s)
         if m and re.search(UNIT_TAIL, m.group(1)):
-            steps.append((date, m.group(1) + "合并", "合并", s))
+            steps.append((date, m.group(1) + m.group(2), "合并", s))
             continue
         m = re.search(r"(?:前身(?:为|是|系)?|原名(?:为)?|原(?:为|系))\s*"
                       r"([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r"|[一-鿿]{4,20}(?:室|部|组|站|馆))", s)
@@ -335,9 +338,9 @@ def chain_from(sents, start=None):
         if m:
             steps.append((date, m.group(1) + m.group(2).rstrip("。,、,领导管理"), "划归", s))
             continue
-        m = re.search(r"(?:与|同|和)\s*([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r")\s*(?:合并|合组)", s)
+        m = re.search(r"(?:与|同|和)\s*([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r")\s*(合并|合组)", s)
         if m:
-            steps.append((date, m.group(1) + "合并", "合并", s))
+            steps.append((date, m.group(1) + m.group(2), "合并", s))
             continue
         m = re.search(r"(" + MERGE + r")\s*([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r")", s)
         if m:
@@ -362,29 +365,44 @@ def chain_from(sents, start=None):
     return "->".join(parts), evid, ordered, terminal
 
 
-def name_history(ordered, unit, page, source_tag):
+def name_history(ordered, unit, page, head, src):
     """沿革里凡「改名为 X」的一步,单独登记成 Name-History 的一行。
        与从 Founder 列推定不同,这里的出处是志书原文,可以直接写页码。"""
     rows = []
     for date, body, kind, s in ordered:
         if kind == "更名" and date:
             rows.append(dict(Unit=unit, Name=body.replace("改名", "", 1).strip(), From=date,
-                             Remark=s[:120], Source=source_tag % page, page=page,
+                             Remark=s[:120], Source=src(page, head), page=page,
                              evidence=s, confidence=0.7, keep="?"))
         elif kind == "前身" and date:
             rows.append(dict(Unit=unit, Name=body, From=date,
-                             Remark="始建时名称。" + s[:100], Source=source_tag % page,
+                             Remark="始建时名称。" + s[:100], Source=src(page, head),
                              page=page, evidence=s, confidence=0.6, keep="?"))
     return rows
 
 
 # ---------------------------------------------------------------- 主抽取
 
+def make_source(book, page, head=""):
+    """出处:有页码就写页码,没有就退到篇章节。
+
+    别处转来的 Markdown 往往不留页码。此时「北京工业志·电子志·第三章 半导体器件」
+    仍是查得回去的出处 —— 总强过一个 `p.0`。"""
+    if page:
+        return ("%s·p.%d" % (book, page)) if book else ("p.%d" % page)
+    head = re.sub(r"^#+\s*", "", str(head or "")).strip()
+    if head:
+        return ("%s·%s" % (book, head)) if book else head
+    return book or ""
+
+
 def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             min_mentions=2, auto_keep=None):
     blocks = read_blocks(md_text)
     kidx = known_index(known)
-    source_tag = (book + "·p.%d") if book else "p.%d"
+
+    def src(page, head=""):
+        return make_source(book, page, head)
 
     # 一、归户:每句话记下页码、所在段落、以及它对这个单位是什么身份
     dossier = defaultdict(list)
@@ -404,7 +422,8 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     role = "ref"          # 这段讲的是别人,只是顺带提到它
                 else:
                     role = "named"
-                dossier[nm].append({"page": b["page"], "sent": s, "para": b["text"], "role": role})
+                dossier[nm].append({"page": b["page"], "sent": s, "para": b["text"],
+                                    "role": role, "head": b["heads"][-1] if b["heads"] else ""})
 
     units, semi, comp, names = [], [], [], []
 
@@ -419,6 +438,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         text = "".join(sents)
         pages = sorted({h["page"] for h in hits if h["page"]})
         page0 = (sorted({h["page"] for h in facts if h["page"]}) or pages or [0])[0]
+        head0 = next((h["head"] for h in (facts or hits) if h.get("head")), "")
         ev = OrderedDict()
         signals = 0
 
@@ -447,7 +467,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         if founder:
             ev["Founder"] = fev[0] if fev else ""
             signals += 1
-        names.extend(name_history(ordered, nm, page0, source_tag))
+        names.extend(name_history(ordered, nm, page0, head0, src))
 
         stats, offyear = {}, []
         for key, pat in STAT_PATTERNS:
@@ -500,7 +520,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         for key, _ in STAT_PATTERNS:
             row[key] = stats.get(key, "")
         row["Remark"] = "；".join(remark)
-        row["Source"] = source_tag % page0
+        row["Source"] = src(page0, head0)
         row["known"] = "已在表内" if nm in (known or {}) else ""
         pick = list(dict.fromkeys(ev.values())) or [h["sent"] for h in hits[:2]]
         row["evidence"] = " ⏐ ".join(pick[:3])[:400]
@@ -541,14 +561,14 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     base["Personnel"] = persons
                     base["Remark"] = (("协作:" + "、".join(others) + "。")
                                       if others and COLLAB.search(scope) else "") \
-                        + (source_tag % h["page"])
+                        + src(h["page"], h.get("head"))
                     base["evidence"] = h["para"][:300]
                     comp.append(base)
                 else:
                     base["Factory"] = nm
                     base["Time"] = date or ""
                     base["Personnel"] = persons
-                    base["Remark"] = source_tag % h["page"]
+                    base["Remark"] = src(h["page"], h.get("head"))
                     base["evidence"] = s[:300]
                     semi.append(base)
 
