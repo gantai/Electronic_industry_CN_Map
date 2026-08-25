@@ -52,7 +52,16 @@ python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工�
        --city Beijing --book "北京工业志·电子志"
 ```
 
-`--out` 可另指 Excel 的去处,不写就与 .md 同目录同名。出来的工作簿五张表:
+`--out` 可另指 Excel 的去处,不写就与 .md 同目录同名。出来的工作簿五张表,
+**只有四张读得回来**:
+
+| 表 | 作什么用 | 改了算不算数 |
+| --- | --- | --- |
+| 待核 | 厂所,核对与改字都在这儿 | **算** |
+| Semi-Product / Comp-Product / Name-History | 器件、整机、名称沿革 | **算**(各有「取否」列) |
+| Fact and Comp-<城> | 照原表体例生成,好看出将来落在地图上是什么样;表名也是 `--from` 认城市的凭据 | **不算** —— 它是「待核」的另一种排法,读回来只读「待核」 |
+
+出来的工作簿五张表:
 `Fact and Comp-<城>`、`Semi-Product`、`Comp-Product`、`Name-History`,版式与
 `CN_Electronic_Industry.xlsx` 一模一样;外加一张**「待核」**。
 

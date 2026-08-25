@@ -307,6 +307,12 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
                   + [r.get("Remark", ""), r.get("Source", ""), r.get("别名", "")])
     ws.merge_cells(start_row=1, start_column=9, end_row=1, end_column=16)
     ws.cell(row=1, column=19).font = Font(bold=True)
+    # 这张表照原表体例生成,好让你一眼看出将来落在地图上是什么样 —— 但读回来
+    # 只读「待核」。不写明白,在这儿改半天不算数,还没有一处告诉你。
+    note = ws.cell(row=1, column=21,
+                   value="↑ 此表照 CN_Electronic_Industry.xlsx 的体例生成,供预览与粘贴。"
+                         "改这里不算数 —— 要改请改「待核」表。")
+    note.font = Font(italic=True, color="996600")
     ws.cell(row=1, column=9).alignment = Alignment(horizontal="center")
     for c in range(1, 19):
         ws.cell(row=1, column=c).font = Font(bold=True)
