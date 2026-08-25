@@ -54,10 +54,24 @@ python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工�
 
 `--out` 可另指 Excel 的去处,不写就与 .md 同目录同名。出来的工作簿五张表:
 `Fact and Comp-<城>`、`Semi-Product`、`Comp-Product`、`Name-History`,版式与
-`CN_Electronic_Industry.xlsx` 一模一样;外加一张**「待核」** —— 每家一行,
-末一列是据以立论的那句原文,拿 Excel 打开逐条核对最省事。
+`CN_Electronic_Industry.xlsx` 一模一样;外加一张**「待核」**。
 
-`book` 替你办的三件杂事:
+**「待核」就是你落笔的地方。** 每家一行,前五列是 `取否 | 单位 | 置信 | 出处 |
+据以立论的原文`,冻在第 C 列 —— 核的是名字,名字与据以判断的原文并排看,
+不必横拉。名字认错的当场改,要的行「取否」写 `y`,核完:
+
+```bat
+python tools\gazetteer\gaz.py xlsx --from "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.xlsx"
+```
+
+它读的是**你改过的那份工作簿**,不是 `review/` 里的 TSV(那份只当留底)。
+两处都能改的话,改了哪一处算数就说不清了。
+
+**同一家的几个名字,改成同一个就行。**「四机部15所」「电子部15所」「电子部第
+15所」本是一个所,随部委改制换了牌子;在表里都改成一个名字,追加时并作一行,
+各自的出处用「；」接起来一并留着 —— 并了以后仍查得回去是哪一节说的。
+
+`book` 替你办的四件杂事:
 
 **认编码。** Windows 上存的稿子可能是 GB18030、可能带 BOM、也可能是 UTF-16,
 挨个试,试通了报给你,不让乱码悄悄流进表里。
@@ -65,6 +79,19 @@ python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工�
 **接断行。** 转换稿常照原书行宽硬断:「北京市半导体 / 器件研究所」各占一行,
 厂名就断成两截,怎么认都认不出。看到三成以上的行不收在句读上便接回段落
 (`--reflow off` 可关掉)。
+
+**校认错的字。** 转换稿总有认错的字:「安徽无线电厂」成了「安做无线电厂」。
+这种错没规律可循,只能一本书一张表 —— `--fixes` 指一份 TSV,一行一条
+`错<TAB>对`,`#` 开头算注解:
+
+```
+# 《北京工业志·电子志》2001
+安做无线电厂	安徽无线电厂
+```
+
+每条改了几处都报出来,一条也没对上的单列一行 —— 表里的字要是自己写错了,
+默默不改比不改还糟。改在正文上,所以原文、名称沿革里也一并是对的;只在
+「待核」那一格里改,就只有那一格对。
 
 **认页码。** `第123页`、`- 123 -`、`[123]`、`<a name="p123">` 之类都认,认出来
 归一成本工具的 `<!-- p.N -->`,出处便回注得到页。判据是**递增** —— 脚注号
@@ -230,8 +257,9 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 ```
 gaz check                     本机环境自检
 gaz inspect <某某志.md>        看一眼转换稿:标题、页码、套语、断行
-gaz book    <某某志.md>        转换稿 → 待核 TSV + 本地 Excel
+gaz book    <某某志.md>        转换稿 → 本地 Excel(核名字就在这份上核)
                                                     --out/--city/--book
+                                                    --fixes（字形订正表）
                                                     --reflow auto|on|off
                                                     --page-pattern
 gaz convert <pdf>             扫描件 → Markdown      --first/--last（只转一章）
@@ -239,7 +267,8 @@ gaz convert <pdf>             扫描件 → Markdown      --first/--last（只�
 gaz extract --slug X          Markdown → 四张 TSV    --book/--stats-year/--min-mentions/--auto-keep
 gaz notes  --slug X           → Obsidian 笔记        --all（不问 keep 全写出）
 gaz geocode --slug X          → geocode.js 落点草稿
-gaz xlsx   --slug X           keep=y 的行 → 工作簿    --dry-run/--allow-dup
+gaz xlsx   --from <核过.xlsx>  取否=y 的行 → 工作簿    --dry-run/--allow-dup
+gaz xlsx   --slug X           (走 TSV 的老路子,同上)
 gaz run    <pdf>              convert → extract → notes
 
 gaz push   --vault ~/库/地图   工作簿 → 库,全部厂所各一则   --force
