@@ -488,10 +488,39 @@ def test_rename_subject():
           "前头一家也没点到,那就是它")
 
 
+def test_models():
+    """型号常是句子的主语,从动词后头取不着。
+
+    「104机的仿制与103机同时进行」—— find_products 一律从「试制/研制」之后取,
+    这一句一台也取不着。按型号的样子再扫一遍,宁滥勿缺:漏掉一台就永远没有了,
+    多认一个错的,核对时一眼划掉。"""
+    print("型号")
+    eq(EX.find_models("104机的仿制与103机同时进行。"), ["104机", "103机"], "主语位置上的型号")
+    eq(EX.find_models("该机共有机柜32个，字长39位，内存4K，共生产38台。"), [],
+       "「32个」「39位」「38台」都不是型号")
+    eq(EX.find_models("其性能指标超过GB1962-82《声频功率放大器》的要求。"), [],
+       "GB 开头是国标号,从来不是产品")
+    eq(EX.model_key("103型通用数字计算机"), EX.model_key("103机"), "同一台机器,钥匙相同")
+    check(EX.model_key("DJS-130小型计算机") != EX.model_key("DJS2"), "不同型号,钥匙不同")
+
+    md = ("## 第三章 电子计算机\n\n## 一、电子管计算机\n\n"
+          "1958年，中国科学院计算技术研究所仿M-3试制103型通用数字计算机。\n"
+          "104机的仿制与103机同时进行。104机比103机大得多，共有机柜32个。\n")
+    res = EX.extract(md, book="北京工业志·电子志", city="Beijing", min_mentions=1)
+    prod = {c["Product"] for c in res["comp"]}
+    check("104机" in prod, "没人说谁造的,也照样进产品名录")
+    check(not any(EX.model_key(p) == "103" and p != "103型通用数字计算机" for p in prod),
+          "「103机」与「103型通用数字计算机」是一台,不重复登记")
+    orphan = [c for c in res["comp"] if c["Product"] == "104机"][0]
+    eq(orphan.get("Factory", ""), "", "研制单位空着就是空着,不硬派给谁")
+    check("未详" in orphan["Remark"], "备注里写明研制单位未详")
+    check(orphan["Remark"].endswith("一、电子管计算机"), "出处照旧回注到篇章节")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
-               test_rename_subject):
+               test_rename_subject, test_models):
         fn()
     print()
     if FAILED:

@@ -339,6 +339,42 @@ def find_products(sents):
     return out
 
 
+# 型号长什么样:字母数字编号(DJS-130、M401-45、F50),或数字后头直接跟「机」
+# 「型」(103机、104型)。数字型号非得紧跟「机/型」不可 —— 不然「32个」「38台」
+# 「39位」全成了机器。GB/GJB/SJ 一类是国家标准号,从来不是产品。
+STD_PREFIX = re.compile(r"^(?:GB|GJB|SJ|JB|ZB|ISO|IEC|HB|YD)", re.I)
+MODEL_RE = re.compile(
+    r"(?<![A-Za-z0-9])("
+    r"[A-Za-z]{1,6}[-－]?[0-9]{1,4}(?:[-－][0-9A-Za-zⅠ-Ⅹ]{1,5})?"
+    r"|[0-9]{2,4}[甲乙丙丁]?(?=[机型])"
+    r")")
+
+
+def model_key(p):
+    """认型号用的钥匙:「103机」「103型通用数字计算机」是同一台,钥匙都是 103。"""
+    m = MODEL_RE.match(str(p or "").strip())
+    return re.sub(r"[-－\s]", "", m.group(1)).upper() if m else ""
+
+
+def find_models(sent):
+    """句子里出现的型号 —— 不论它在动词前头还是后头。
+
+    find_products 一律从「试制/研制/生产」之后取,可志书写机器,机器常是主语:
+    「104机的仿制与103机同时进行」「104机比103机大得多」—— 从动词后头取,
+    一台也取不着。这里按型号的样子认,认宽一点:漏掉一台就永远没有了,
+    多认一个错的,核对时看一眼就划掉。"""
+    if not re.search(r"[机型]|计算机|系统", sent):
+        return []
+    out = []
+    for m in MODEL_RE.finditer(sent):
+        code = m.group(1)
+        if STD_PREFIX.match(code) or code.upper() in out:
+            continue
+        tail = sent[m.end():m.end() + 1]
+        out.append(code + (tail if tail in "机型" else ""))
+    return out
+
+
 def find_persons(text):
     names = []
     for run in PERSON_RE.findall(text):
@@ -674,40 +710,49 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
     # 进行,共有机柜32个」——整句没有一个单位名,上头那一轮按单位归户,就整条
     # 漏掉了。产品名录该有它,研制单位空着就是空着,不硬派给谁。
     have = {r["Product"] for r in semi} | {r["Product"] for r in comp}
+    seen_models = {k for k in (model_key(p) for p in have) if k}
+
+    def orphan(p, s, b, conf, why):
+        k = model_key(p)
+        if p in have or (k and k in seen_models):
+            return
+        have.add(p)
+        if k:
+            seen_models.add(k)
+        date = cndate.parse(s)
+        head = "·".join(b["heads"])
+        # 是整机还是器件,先看产品名,再看这一句,最后看它在哪一章 ——
+        # 「第三章 电子计算机」底下的型号,自然是计算机
+        is_comp = bool(re.search(r"计算机|电脑|微机|控制机|运算器", p + s + head))
+        base = OrderedDict(keep="?", confidence=conf, page=b["page"])
+        base["Product"] = p
+        if is_comp:
+            w, mem, sp = WORD_RE.search(s), MEM_RE.search(s), SPEED_RE.search(s)
+            mult = {"亿": 100000000, "万": 10000, "千": 1000, None: 1}
+            base["字长"] = w.group(1) if w else ""
+            base["内存"] = (mem.group(1) + (mem.group(2) or "")) if mem else ""
+            base["Speed（次秒）"] = (str(int(float(sp.group(1)) * mult[sp.group(2)]))
+                                  if sp else "")
+            base["Research Insti"] = ""
+            base["Factory"] = ""
+            base["用户"] = ""
+        else:
+            base["Factory"] = ""
+        base["Time"] = date or ""
+        base["Personnel"] = "、".join(find_persons(s))[:40]
+        base["Remark"] = why + src(b["page"], head)
+        base["evidence"] = s[:300]
+        (comp if is_comp else semi).append(base)
+
     for b in blocks:
         for s in sentences(b["text"]):
-            if not re.search(MADE, s):
-                continue
-            date = cndate.parse(s)
-            for p in find_products([s]):
-                if p in have:
-                    continue
-                have.add(p)
-                base = OrderedDict(keep="?", confidence=0.3, page=b["page"])
-                base["Product"] = p
-                head = "·".join(b["heads"])
-                if re.search(r"计算机|电脑|微机|控制机|运算器", p):
-                    w, mem, sp = WORD_RE.search(s), MEM_RE.search(s), SPEED_RE.search(s)
-                    mult = {"亿": 100000000, "万": 10000, "千": 1000, None: 1}
-                    base["字长"] = w.group(1) if w else ""
-                    base["内存"] = (mem.group(1) + (mem.group(2) or "")) if mem else ""
-                    base["Speed（次秒）"] = (str(int(float(sp.group(1)) * mult[sp.group(2)]))
-                                          if sp else "")
-                    base["Research Insti"] = ""
-                    base["Factory"] = ""
-                    base["用户"] = ""
-                    base["Time"] = date or ""
-                    base["Personnel"] = "、".join(find_persons(s))[:40]
-                    base["Remark"] = "研制单位未详。" + src(b["page"], head)
-                    base["evidence"] = s[:300]
-                    comp.append(base)
-                else:
-                    base["Factory"] = ""
-                    base["Time"] = date or ""
-                    base["Personnel"] = "、".join(find_persons(s))[:40]
-                    base["Remark"] = "生产单位未详。" + src(b["page"], head)
-                    base["evidence"] = s[:300]
-                    semi.append(base)
+            if re.search(MADE, s):
+                for p in find_products([s]):
+                    orphan(p, s, b, 0.3, "研制单位未详。")
+            # 型号常是句子的主语,从动词后头取不着 —— 再按型号的样子扫一遍。
+            # 宁滥勿缺:漏掉一台就永远没有了,多认一个错的,核对时一眼划掉。
+            for p in find_models(s):
+                orphan(p, s, b, 0.25, "型号据字面认出,研制单位未详。")
 
     units.sort(key=lambda r: (r["role"] != "专条", -r["confidence"], r["page"]))
     return {
