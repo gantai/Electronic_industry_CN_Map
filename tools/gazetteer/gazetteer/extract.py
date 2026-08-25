@@ -32,7 +32,8 @@ from . import cndate
 # ---------------------------------------------------------------- 词表
 
 UNIT_TAIL = (r"(?:研究所|研究院|设计院|实验室|试验室|工厂|电子厂|仪器厂|机械厂|无线电厂|"
-             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|计算所|大学|学院|"
+             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|计算所|大学|"
+             r"(?<!科)学院|"
              r"[0-9]+所|厂)")
 # 「厂」「所」后头跟这些字的,是「厂房」「所长」一类的词,不是名字的收尾
 TAIL_RE = re.compile(UNIT_TAIL + r"(?![房址长区部内外里方家矿商牌史志属在有以需谓工人员级])")
@@ -375,13 +376,14 @@ def find_models(sent):
     return out
 
 
-# 产量:「至1960年,共生产38台」「共生产189台」。动词必须在数字前头 ——
-# 「全机共用800多只电子管」「配套设备有磁鼓4台」都不是产量。
+# 产量:「至1960年,共生产38台」「共生产12万只」。整机论台、器件论只,都要认。
+# 动词必须在数字前头 ——「全机共用800多只电子管」用的是「用」,「配套设备有磁鼓
+# 4台」用的是「有」,都不是产量。这一条是这里唯一的防线,松了满篇都是产量。
 OUTPUT_RE = re.compile(
     r"(?:共|累计|先后|总计|合计|已)?\s*"
     r"(?:生产|制造|出厂|交付使用|装机|产量达|年产)\s*"
     r"[\u4e00-\u9fff]{0,6}?\s*"          # 「年产微机1.2万台」中间还夹个名词
-    r"([0-9]+(?:\.[0-9]+)?)\s*(万|千)?\s*(?:多|余)?\s*([台套])")
+    r"([0-9]+(?:\.[0-9]+)?)\s*(万|千|亿)?\s*(?:多|余)?\s*([台套只块个支])")
 
 
 def find_output(text):
@@ -390,7 +392,7 @@ def find_output(text):
     返回 (数目, 原话)。数目一律折成个位,「1.2万台」记作 12000。"""
     best, why = 0, ""
     for m in OUTPUT_RE.finditer(text):
-        n = float(m.group(1)) * {"万": 10000, "千": 1000, None: 1}[m.group(2)]
+        n = float(m.group(1)) * {"万": 10000, "千": 1000, "亿": 100000000, None: 1}[m.group(2)]
         if n > best:
             best, why = n, m.group(0).strip()
     return (int(best) if best else 0), why
@@ -465,6 +467,24 @@ def find_aliases(text, whose=""):
                     out.append(a)
             at = text.find(whose, at + 1)
     return out
+
+
+MACHINE_WORDS = r"计算机|电脑|微机|控制机|运算器|工作站|计算装置"
+DEVICE_WORDS = r"晶体管|二极管|三极管|集成电路|电路|器件|电子管|磁芯|磁鼓|电阻|电容"
+
+
+def is_computer(product, ctx=""):
+    """这条产品该记进整机表还是器件表。
+
+    产品名说了算:「103型通用数字计算机」是整机,「3AG型锗晶体管」是器件。
+    名字两样都不沾(「104机」),才看上下文,连篇章标题一起看 ——「第三章 电子
+    计算机」底下一个光秃秃的「104机」,自然是计算机。器件那一条排在前头,所以
+    「3AG型锗晶体管」在这一章里照样算器件,不会被章名带跑。"""
+    if re.search(MACHINE_WORDS, product):
+        return True
+    if re.search(DEVICE_WORDS, product):
+        return False
+    return bool(re.search(MACHINE_WORDS, ctx))
 
 
 def find_persons(text):
@@ -768,7 +788,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             date = cndate.parse(s)
             persons = "、".join(find_persons(s))[:40]
             for p in find_products([s]):
-                is_comp = bool(re.search(r"计算机|电脑|微机|控制机|运算器", p))
+                is_comp = is_computer(p, s + str(h.get("head") or ""))
                 base = OrderedDict(keep="?", confidence=round(0.4 + 0.3 * bool(date), 2),
                                    page=h["page"])
                 base["Product"] = p
@@ -806,7 +826,11 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     base["evidence"] = h["para"][:300]
                     comp.append(base)
                 else:
-                    base["Factory"] = nm
+                    # 器件也分研制与生产:半导体所研制、元件厂投产,原表却只有
+                    # 一列 Factory,把研究所也写成了厂。照整机的办法分开记。
+                    is_inst = bool(re.search(r"研究所|研究院|大学|学院|设计院", nm))
+                    base["Research Insti"] = nm if is_inst else ""
+                    base["Factory"] = "" if is_inst else nm
                     n_out, out_why = output_for(s, h["para"], p)
                     base["产量"] = str(n_out) if n_out else ""
                     base["Time"] = date or ""
@@ -833,7 +857,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         head = "·".join(b["heads"])
         # 是整机还是器件,先看产品名,再看这一句,最后看它在哪一章 ——
         # 「第三章 电子计算机」底下的型号,自然是计算机
-        is_comp = bool(re.search(r"计算机|电脑|微机|控制机|运算器", p + s + head))
+        is_comp = is_computer(p, s + head)
         base = OrderedDict(keep="?", confidence=conf, page=b["page"])
         base["Product"] = p
         if is_comp:
@@ -847,6 +871,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             base["Factory"] = ""
             base["用户"] = ""
         else:
+            base["Research Insti"] = ""
             base["Factory"] = ""
         base["别名"] = "、".join(find_aliases(s, p))
         n_out, out_why = output_for(s, b["text"], p)
@@ -872,7 +897,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
     return {
         "units": units,
         "semi": drop_undated(dedupe(semi, ("Product", "Factory", "Time")),
-                             ("Product", "Factory")),  # 无主的 Factory 为空,自成一组
+                             ("Product", "Factory")),
         "comp": dedupe(comp, ("Product", "Time")),
         "names": dedupe(names, ("Unit", "Name", "From")),
     }

@@ -978,7 +978,8 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
         {kind === "semi" ? (
           <table>
             <thead>
-              <tr><th className="mono">{t.thYear}</th><th>{t.thProduct}</th><th>{t.thMaker}</th>
+              <tr><th className="mono">{t.thYear}</th><th>{t.thProduct}</th>
+                <th>{t.thResearch}</th><th>{t.thMaker}</th>
                 <th className="mono">{t.thOutput}</th>
                 <th>{t.thListed}</th><th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
@@ -986,15 +987,21 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
               {list.map((r) => (
                 <tr key={r.id}>
                   <td className="mono">{r.date ? fmtDate(r.date) : r.timeRaw || "—"}</td>
-                  <td>{r.product || "—"}</td>
-                  <td>{r.factoryText}</td>
+                  <td>
+                    {r.product || "—"}
+                    {r.aliases && r.aliases.length > 0 && (
+                      <div className="dimtext small">{t.alsoKnown + " " + r.aliases.join("、")}</div>
+                    )}
+                  </td>
+                  <td className="small">{r.instText || "—"}</td>
+                  <td>{r.factoryText || "—"}</td>
                   <td className="mono">{r.output || "—"}</td>
                   <td>{unitChips(r)}</td>
                   <td className="small">{r.personnel}</td>
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={7} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
+              {!list.length && <tr><td colSpan={8} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         ) : (

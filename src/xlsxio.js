@@ -285,15 +285,24 @@ function parseSemi(ws, match) {
   const col = colFinder(rows[hi] || []);
   const cP = col("Product", "产品"), cF = col("Factory", "厂"), cT = col("Time", "时间");
   const cO = col("产量", "Output");
+  const cI = col("Research Insti", "研制单位");
+  const cA = col("别名", "Alias", "又名");
   const cPer = col("Personnel", "人员"), cR = col("Remark", "备注");
   return rows.slice(hi + 1).map((r, i) => {
     const factoryText = String(cell(r, cF) || "").trim();
+    /* 器件也分研制与生产:半导体所研制、元件厂投产。原表只有一列 Factory,
+       研究所便也写作了厂;这一列是后添的,没有就照旧只认 Factory。 */
+    const instText = String(cell(r, cI) || "").trim();
+    const ids = [];
+    [...match(instText), ...match(factoryText)].forEach((id) => { if (!ids.includes(id)) ids.push(id); });
     return {
       id: "s" + (i + 1),
       product: String(cell(r, cP) || "").trim(),
       factoryText,
+      instText,
+      aliases: splitAliases(cell(r, cA)),
       output: String(cell(r, cO) || "").trim(),
-      unitIds: match(factoryText),
+      unitIds: ids,
       date: parseCNDate(cell(r, cT)),
       timeRaw: String(cell(r, cT) || "").trim(),
       personnel: String(cell(r, cPer) || "").trim(),
@@ -503,8 +512,8 @@ export function exportWorkbook(data, filename) {
     ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 }, { wch: 9 }, { wch: 9 }];
 
   const ws2 = XLSX.utils.aoa_to_sheet([
-    ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
-    ...data.semi.map((s) => [s.product, s.factoryText, s.output, s.timeRaw, s.personnel, s.remark]),
+    ["Product", "别名", "Research Insti", "Factory", "产量", "Time", "Personnel", "Remark"],
+    ...data.semi.map((s) => [s.product, (s.aliases || []).join("、"), s.instText, s.factoryText, s.output, s.timeRaw, s.personnel, s.remark]),
   ]);
   ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 11 }, { wch: 14 }, { wch: 40 }];
 
