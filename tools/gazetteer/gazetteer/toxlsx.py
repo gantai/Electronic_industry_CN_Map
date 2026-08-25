@@ -54,13 +54,42 @@ def _num(v):
     return s
 
 
-def _existing_names(ws, first_data_row):
+ALIAS_SPLIT = re.compile(r"[、,，;；/／|]")
+
+
+def _bare(v):
+    """判重用的样子:去掉括号与空白。「上海无线电十九厂(上无十九)」→ 上海无线电十九厂"""
+    return re.sub(r"\s+", "", re.sub(r"[（(][^）)]*[）)]", "", str(v or ""))).strip()
+
+
+def _names_of(name_cell, alias_cell=""):
+    """这一行占着哪些名字 —— 正名、名字里括号中的、以及「别名」列里的。"""
+    out = {_bare(name_cell)} if _bare(name_cell) else set()
+    for grp in re.findall(r"[（(]([^）)]*)[）)]", str(name_cell or "")):
+        out |= {x.strip() for x in ALIAS_SPLIT.split(grp) if x.strip()}
+    out |= {x.strip() for x in ALIAS_SPLIT.split(str(alias_cell or "")) if x.strip()}
+    return out
+
+
+def _existing_names(ws, first_data_row, alias_col=None):
+    """表里已经占着的名字。别名也算 —— 「四机部15所」与「华北计算技术研究所」
+    是一家,凭正名比对,同一家会当成两家收两次。"""
     out = set()
     for r in range(first_data_row, ws.max_row + 1):
-        v = ws.cell(row=r, column=1).value
-        if v:
-            out.add(re.sub(r"[（(][^）)]*[）)]", "", str(v)).strip())
+        alias = ws.cell(row=r, column=alias_col).value if alias_col else ""
+        out |= _names_of(ws.cell(row=r, column=1).value, alias)
     return out
+
+
+def _existing_keys(ws, cols, h, first_data_row=2):
+    """器件、整机、沿革三张表的判重钥匙 —— 原先一道也没有,跑两遍就多一份。"""
+    seen = set()
+    for r in range(first_data_row, ws.max_row + 1):
+        key = tuple(_bare(ws.cell(row=r, column=h[c]).value) if c in h else ""
+                    for c in cols)
+        if any(key):
+            seen.add(key)
+    return seen
 
 
 def _last_row(ws, col=1, start=1):
@@ -88,14 +117,17 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     if units:
         ws = wb[SHEET_UNITS]
         h = _headers(ws, 2)
-        have = _existing_names(ws, 3)
+        have = _existing_names(ws, 3, alias_col=h.get("别名"))
         row = _last_row(ws, start=3) + 1
         for r in units:
             nm = str(r.get("Unit") or r.get("name") or "").strip()
             if not nm:
                 continue
-            if not allow_dup and re.sub(r"[（(][^）)]*[）)]", "", nm).strip() in have:
-                report["skipped"].append(nm)
+            mine = _names_of(nm, r.get("别名", ""))
+            if not allow_dup and (mine & have):
+                report["skipped"].append(
+                    "%s(表内已有「%s」)" % (nm, sorted(mine & have)[0])
+                    if _bare(nm) not in have else nm)
                 continue
             ws.cell(row=row, column=1, value=nm)
             if str(r.get("别名") or "").strip():
@@ -109,11 +141,11 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             for key, label in STAT_LABELS:
                 if label in h and r.get(key) not in (None, ""):
                     ws.cell(row=row, column=h[label], value=_num(r[key]))
-            have.add(nm)
+            have |= mine
             row += 1
             report["units"] += 1
 
-    def _append_flat(sheet, cols, rows, tag, text_cols=(), ensure=()):
+    def _append_flat(sheet, cols, rows, tag, text_cols=(), ensure=(), dedup_on=()):
         if not rows:
             return
         ws = wb[sheet]
@@ -121,8 +153,15 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             if any(r.get(label) not in (None, "") for r in rows):
                 _ensure_column(ws, label)
         h = _headers(ws, 1)
+        keys = set() if allow_dup else _existing_keys(ws, dedup_on, h)
         row = _last_row(ws, start=2) + 1
         for r in rows:
+            k = tuple(_bare(r.get(c)) for c in dedup_on)
+            if any(k) and k in keys:
+                report["skipped"].append("%s:%s" % (tag, k[0]))
+                continue
+            if any(k):
+                keys.add(k)
             wrote = False
             for label in cols:
                 if label in h and r.get(label) not in (None, ""):
@@ -135,14 +174,15 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
 
     _append_flat(SHEET_SEMI, ["Product", "别名", "Research Insti", "Factory", "产量", "Time",
                              "Personnel", "Remark"],
-                 semi, "semi", ensure=("产量", "别名", "Research Insti"))
+                 semi, "semi", ensure=("产量", "别名", "Research Insti"),
+                 dedup_on=("Product", "Factory", "Time"))
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     _append_flat(SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                               "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], comp, "comp",
-                 ensure=("用户", "产量", "别名"))
+                 ensure=("用户", "产量", "别名"), dedup_on=("Product", "Time"))
     # Name-History 的 From 一列,原表存的是文本(见 src/xlsxio.js 的 exportWorkbook),照旧
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
-                 names, "names", text_cols=("From",))
+                 names, "names", text_cols=("From",), dedup_on=("Unit", "Name", "From"))
 
     try:
         wb.save(xlsx_path)

@@ -686,11 +686,39 @@ def test_aliases():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_no_dup():
+    """再跑一遍不该多出一份 —— 单位连别名一起比,产品与沿革按整条比。"""
+    print("不重复登记")
+    tmp = tempfile.mkdtemp(prefix="gaz-dup-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        bundle = dict(
+            units=[{"Unit": "华北计算技术研究所", "别名": "四机部15所", "City": "Beijing"}],
+            comp=[{"Product": "机器23计算机", "Factory": "华北计算技术研究所", "Time": "19591100"}],
+            semi=[{"Product": "3AG型锗晶体管", "Factory": "上海元件五厂", "Time": "19650000"}],
+            names=[{"Unit": "华北计算技术研究所", "Name": "电子部15所", "From": "19820000"}])
+        a = toxlsx.append(x, backup=False, **bundle)
+        eq([a["units"], a["semi"], a["comp"], a["names"]], [1, 1, 1, 1], "第一遍四样各进一条")
+        b = toxlsx.append(x, backup=False, **bundle)
+        eq([b["units"], b["semi"], b["comp"], b["names"]], [0, 0, 0, 0], "第二遍一条也不进")
+        eq(len(b["skipped"]), 4, "四条都记在跳过里")
+
+        # 「四机部15所」是「华北计算技术研究所」的别名,不是另一家
+        c = toxlsx.append(x, backup=False, units=[{"Unit": "四机部15所", "City": "Beijing"}])
+        eq(c["units"], 0, "拿别名当正名送进来,认得出是同一家")
+
+        d = toxlsx.append(x, backup=False, allow_dup=True, **bundle)
+        eq(d["units"], 1, "--allow-dup 时照收不误")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
-               test_edit_in_place, test_aliases):
+               test_edit_in_place, test_aliases, test_no_dup):
         fn()
     print()
     if FAILED:

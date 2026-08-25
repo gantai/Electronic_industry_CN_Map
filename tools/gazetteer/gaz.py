@@ -383,7 +383,13 @@ def cmd_xlsx(args):
     print("已写入 %s:单位 +%d、器件 +%d、整机 +%d、沿革 +%d"
           % (os.path.basename(args.xlsx), rep["units"], rep["semi"], rep["comp"], rep["names"]))
     if rep["skipped"]:
-        print("同名已在表内、跳过 %d 家:%s" % (len(rep["skipped"]), "、".join(rep["skipped"][:8])))
+        # 跳过的分两类:单位按名字(连别名一起)比,产品与沿革按整条记录比
+        units_hit = [x for x in rep["skipped"] if not x.startswith(("semi:", "comp:", "names:"))]
+        rows_hit = [x for x in rep["skipped"] if x.startswith(("semi:", "comp:", "names:"))]
+        if units_hit:
+            print("表内已有、跳过 %d 家:%s" % (len(units_hit), "、".join(units_hit[:6])))
+        if rows_hit:
+            print("表内已有、跳过 %d 条记录:%s" % (len(rows_hit), "、".join(rows_hit[:6])))
         print("确要重复登记,加 --allow-dup。")
     # 一行一条 —— PowerShell 5.1 不认 &&
     print("核对无误后提交:")
