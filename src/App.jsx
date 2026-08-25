@@ -793,7 +793,8 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lan
           <div className="chiprow">
             <span className="chip mono" style={{ borderColor: meta.color, color: meta.color }}>{industryLabel(u.industry, lang) || "—"}</span>
             <span className="chip mono">{typeLabel(u.type, lang, (TYPE_META[u.type] || {}).label)}</span>
-            {u.alt && <span className="chip mono">{u.alt}</span>}
+            {(u.aliases && u.aliases.length ? u.aliases : (u.alt ? [u.alt] : []))
+              .map((a, i) => <span key={"a" + i} className="chip mono">{a}</span>)}
             <span className="chip mono">{spanText(u, t)}</span>
           </div>
           <h2 className="panel-name">{unitName(u, lang)}</h2>
@@ -892,7 +893,8 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lan
           {u.comp.map((p, i) => (
             <div key={"c" + i} className="prodline">
               <span className="mono evyear">{p.date ? p.date.y : "—"}</span>
-              <span>{p.product}</span>
+              <span>{p.product}{p.aliases && p.aliases.length
+                ? "（" + t.alsoKnown + " " + p.aliases.join("、") + "）" : ""}</span>
               <span className="chip mono">{p.unitIds.length > 1 ? t.collab : t.solo}</span>
               {(p.speed || p.word) && (
                 <div className="evnote mono small">
@@ -945,7 +947,8 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.product, r.factoryText, r.instText, r.userText, r.output, r.personnel, r.remark, r.timeRaw]
+      [r.product, (r.aliases || []).join(" "), r.factoryText, r.instText, r.userText,
+       r.output, r.personnel, r.remark, r.timeRaw]
         .filter(Boolean).join(" ").toLowerCase().includes(s));
   }, [rows, q]);
 
@@ -1007,7 +1010,12 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
               {list.map((r) => (
                 <tr key={r.id}>
                   <td className="mono small">{r.timeRaw || "—"}</td>
-                  <td>{r.product}</td>
+                  <td>
+                    {r.product}
+                    {r.aliases && r.aliases.length > 0 && (
+                      <div className="dimtext small">{t.alsoKnown + " " + r.aliases.join("、")}</div>
+                    )}
+                  </td>
                   <td className="mono">{r.word || "—"}</td>
                   <td className="mono">{r.memory || "—"}</td>
                   <td className="mono">{r.speed || "—"}</td>
@@ -1036,7 +1044,8 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const filtered = data.units.filter((u) =>
-      !s || [u.name, u.alt, u.industry, u.address, u.district, u.product, u.founder, u.remark, u.source]
+      !s || [u.name, u.alt, (u.aliases || []).join(" "), u.industry, u.address, u.district,
+             u.product, u.founder, u.remark, u.source]
         .filter(Boolean).join(" ").toLowerCase().includes(s));
     const val = (u) => {
       if (sort.key === "start") return u.start ? u.start.y * 10000 + (u.start.m || 0) * 100 + (u.start.d || 0) : Infinity;

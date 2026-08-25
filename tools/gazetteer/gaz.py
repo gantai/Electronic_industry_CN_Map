@@ -69,14 +69,15 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_XLSX = os.path.join(REPO, "CN_Electronic_Industry.xlsx")
 DEFAULT_GEOCODE = os.path.join(REPO, "src", "geocode.js")
 
-UNIT_COLS = (["keep", "confidence", "role", "page", "Unit", "Industry", "Product", "Start Date",
+UNIT_COLS = (["keep", "confidence", "role", "page", "Unit", "别名", "Industry", "Product",
+              "Start Date",
               "End Date", "Founder", "City", "Add."]
              + [k for k, _ in EX.STAT_PATTERNS]
              + ["Remark", "Source", "district", "known", "evidence"])
-SEMI_COLS = ["keep", "confidence", "page", "Product", "Factory", "产量", "Time",
+SEMI_COLS = ["keep", "confidence", "page", "Product", "别名", "Factory", "产量", "Time",
              "Personnel", "Remark", "evidence"]
 COMP_COLS = ["keep", "confidence", "page", "Product", "字长", "内存", "Speed（次秒）",
-             "Research Insti", "Factory", "用户", "产量", "Time", "Personnel", "Remark",
+             "Research Insti", "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark",
              "evidence"]
 NAME_COLS = ["keep", "confidence", "page", "Unit", "Name", "From", "Remark", "Source", "evidence"]
 

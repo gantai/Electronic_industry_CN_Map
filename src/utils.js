@@ -44,6 +44,21 @@ export const parenAlias = (s) => {
   return m ? m[1].trim() : "";
 };
 
+/** 「甲、乙;丙」→ ["甲","乙","丙"]。一家单位、一台机器往往同时有好几个名字,
+    不必挑一个 —— 全留着,都能搜到、都显示。 */
+export const splitAliases = (s) =>
+  String(s || "").split(/[、,，;；/／|]/).map((x) => x.trim()).filter(Boolean);
+
+/** 名字里所有括号中的别名:「甲厂（乙厂、丙厂）」→ ["乙厂","丙厂"] */
+export const parenAliases = (s) => {
+  const out = [];
+  String(s || "").replace(/[（(]([^）)]*)[）)]/g, (_m, g) => {
+    out.push(...splitAliases(g));
+    return "";
+  });
+  return out;
+};
+
 /** 去掉沿革步骤开头的日期,如「19750200改名上海新跃仪表厂」→「改名上海新跃仪表厂」 */
 export const stripLeadingDate = (s) =>
   String(s || "").replace(/^\s*\d{4}(?:\d{2}(?:\d{2})?)?\s*年?\s*/, "");

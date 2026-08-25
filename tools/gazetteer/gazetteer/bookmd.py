@@ -297,15 +297,16 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     sheet = "Fact and Comp-" + (city or "Local")
     ws = wb.create_sheet(sheet)
     ws.append(["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
-               stats_year] + [""] * 7 + ["Remark", "Source"])
+               stats_year] + [""] * 7 + ["Remark", "Source", "别名"])
     ws.append([""] * 8 + stat_labels + ["", ""])
     for r in res["units"]:
         ws.append([r.get("Unit", ""), r.get("Industry", ""), r.get("Product", ""),
                    num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
                    r.get("City", city), r.get("Add.", "")]
                   + [num(r.get(k)) for k in stat_keys]
-                  + [r.get("Remark", ""), r.get("Source", "")])
+                  + [r.get("Remark", ""), r.get("Source", ""), r.get("别名", "")])
     ws.merge_cells(start_row=1, start_column=9, end_row=1, end_column=16)
+    ws.cell(row=1, column=19).font = Font(bold=True)
     ws.cell(row=1, column=9).alignment = Alignment(horizontal="center")
     for c in range(1, 19):
         ws.cell(row=1, column=c).font = Font(bold=True)
@@ -323,10 +324,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         w.freeze_panes = "B2"
         return w
 
-    flat("Semi-Product", ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
+    flat("Semi-Product", ["Product", "别名", "Factory", "产量", "Time", "Personnel", "Remark"],
          res["semi"])
     flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
-                          "Factory", "用户", "产量", "Time", "Personnel", "Remark"], res["comp"])
+                          "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], res["comp"])
     nh = wb.create_sheet("Name-History")
     nh.append(["取否", "Unit", "Name", "From", "Remark", "Source"])
     for c in range(1, 7):
@@ -338,28 +339,29 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
-    rv_head = (["取否", "单位", "置信", "出处", "据以立论的原文", "行业", "产品",
+    rv_head = (["取否", "单位", "别名", "置信", "出处", "据以立论的原文", "行业", "产品",
                 "始建", "终止", "创办", "地址"] + stat_labels + ["备注", "来路", "页"])
     rv.append(rv_head)
     for c in range(1, len(rv_head) + 1):
         rv.cell(row=1, column=c).font = Font(bold=True)
     for r in res["units"]:
-        rv.append(["", r.get("Unit", ""), r.get("confidence", ""), r.get("Source", ""),
+        rv.append(["", r.get("Unit", ""), r.get("别名", ""),
+                   r.get("confidence", ""), r.get("Source", ""),
                    r.get("evidence", ""), r.get("Industry", ""), r.get("Product", ""),
                    num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
                    r.get("Add.", "")]
                   + [num(r.get(k)) for k in stat_keys]
                   + [r.get("Remark", ""), r.get("role", ""), r.get("page", "")])
-    rv.freeze_panes = "C2"
-    for i, wid in enumerate([6, 28, 6, 30, 90, 10, 22, 11, 11, 30, 20] + [9] * 8
+    rv.freeze_panes = "D2"
+    for i, wid in enumerate([6, 28, 24, 6, 30, 90, 10, 22, 11, 11, 30, 20] + [9] * 8
                             + [30, 6, 6], start=1):
         rv.column_dimensions[get_column_letter(i)].width = wid
-    for row in rv.iter_rows(min_row=2, min_col=5, max_col=5):
+    for row in rv.iter_rows(min_row=2, min_col=6, max_col=6):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
-              "Semi-Product": [6, 28, 24, 8, 11, 14, 30],
-              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 8, 14, 16, 34],
+              "Semi-Product": [6, 28, 20, 24, 8, 11, 14, 30],
+              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 8, 20, 14, 16, 34],
               "Name-History": [6, 26, 30, 11, 40, 26]}
     for nm, ws_widths in widths.items():
         w = wb[nm]
@@ -394,6 +396,7 @@ KEEP_YES = {"y", "yes", "true", "1", "是", "要", "✓", "√"}
 
 # 「待核」表头 → 抽取时用的字段名
 REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页": "page",
+               "别名": "别名",
                "单位": "Unit", "行业": "Industry", "产品": "Product",
                "始建": "Start Date", "终止": "End Date", "创办": "Founder",
                "地址": "Add.", "备注": "Remark", "出处": "Source",
@@ -469,6 +472,11 @@ def merge_by_name(rows):
             a, b = str(base.get(k, "") or ""), str(r.get(k, "") or "")
             if b and b not in a:
                 base[k] = (a + "；" + b) if a else b
+        # 并进来的那些名字要留着 —— 挑一个当正名,不等于别的就不算数了
+        alias = [x.strip() for x in
+                 (str(base.get("别名", "") or "") + "、" + str(r.get("别名", "") or "")).split("、")]
+        base["别名"] = "、".join(dict.fromkeys(
+            x for x in alias if x and x != nm))
     return out, merged
 
 

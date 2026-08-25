@@ -373,7 +373,8 @@ def test_book():
         rv = wb["待核"]
         # 核的是名字,名字与据以判断的原文都摆在最左边
         eq(rv.cell(row=1, column=2).value, "单位", "待核表第二列就是单位名")
-        eq(rv.cell(row=1, column=5).value, "据以立论的原文", "原文紧挨着,不用横拉")
+        eq(rv.cell(row=1, column=3).value, "别名", "别名紧挨着正名 —— 核的是名字")
+        eq(rv.cell(row=1, column=6).value, "据以立论的原文", "原文也在近处,不用横拉")
         check(rv.max_row == len(res["units"]) + 1, "待核表一家一行")
 
         # 核过再读回来:「取否」写 y 的才算数,名字改成一样的并作一行
@@ -575,11 +576,43 @@ def test_edit_in_place():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_aliases():
+    """一家单位、一台机器同时有好几个名号,不必挑一个 —— 全留着,全显示。"""
+    print("别名")
+    A = EX.find_aliases
+    eq(A("中国科学院计算技术研究所（简称中科院计算所）成立。", "中国科学院计算技术研究所"),
+       ["中科院计算所"], "「简称」后头那个")
+    eq(A("仿M-3试制103型通用数字计算机（亦称DJS-1）。", "103型通用数字计算机"),
+       ["DJS-1"], "「亦称」后头那个")
+    eq(A("华北计算技术研究所（四机部15所）和哈军工联合研制。", "华北计算技术研究所"),
+       ["四机部15所"], "没有「简称」二字,紧跟着的括号里也认")
+    eq(A("北京崇文电子仪器厂（北京计算机五厂前身）。", "北京崇文电子仪器厂"),
+       [], "「…前身」是注解,不是别名")
+    eq(A("甲厂与乙厂协作，乙厂简称乙。", "甲厂"), [], "别名只跟紧挨着的正名走")
+
+    md = ("## 一、电子管计算机\n\n"
+          "1956年，中国科学院计算技术研究所（简称中科院计算所）仿M-3试制"
+          "103型通用数字计算机（亦称DJS-1）。\n")
+    res = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+    by = {u["Unit"]: u for u in res["units"]}
+    eq(by["中国科学院计算技术研究所"]["别名"], "中科院计算所", "单位的别名记在自己名下")
+    eq({c["Product"]: c["别名"] for c in res["comp"]}.get("103型通用数字计算机"),
+       "DJS-1", "机器的别名记在机器名下")
+
+    # 并作一行时,被并掉的名字不能就这么没了
+    rows = [{"Unit": "华北计算技术研究所", "别名": "四机部15所", "Source": "甲"},
+            {"Unit": "华北计算技术研究所", "别名": "电子部15所", "Source": "乙"}]
+    got, n = bookmd.merge_by_name(rows)
+    eq(n, 1, "两行并作一行")
+    eq(set(got[0]["别名"].split("、")), {"四机部15所", "电子部15所"},
+       "两边的别名都留着 —— 挑一个当正名,不等于别的就不算数")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
-               test_edit_in_place):
+               test_edit_in_place, test_aliases):
         fn()
     print()
     if FAILED:

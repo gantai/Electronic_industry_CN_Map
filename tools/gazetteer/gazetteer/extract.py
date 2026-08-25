@@ -418,6 +418,44 @@ def output_for(scope, para, product=""):
     return n, why
 
 
+# 志书常把另一个名号就写在括号里:「(简称中科院计算所)」「(亦称DJS-1)」
+ALIAS_CUE = re.compile(
+    r"(?:亦称|又称|又名|简称|通称|俗称|习称)\s*"
+    r"([一-鿿A-Za-z0-9\-－]{2,24}?)(?=[，,。；;：:（()）、」』\s]|$)")
+
+
+def find_aliases(text, whose=""):
+    """这段话里给「whose」起的别名。
+
+    一家单位、一台机器同时有好几个名号是常事,不必挑一个:「四机部15所」
+    「电子部15所」都是华北计算技术研究所,「DJS-1」就是103型。别名要紧挨在
+    正名后头才算 —— 一句话里点到好几家时,「简称」说的是刚提过的那一个。"""
+    out = []
+    for m in ALIAS_CUE.finditer(text):
+        if whose:
+            head = text[max(0, m.start() - len(whose) - 6):m.start()]
+            if whose not in head:
+                continue
+        a = m.group(1).strip()
+        if a and a != whose and a not in out:
+            out.append(a)
+    # 「华北计算技术研究所(四机部15所)」—— 没有「简称」二字,紧跟在正名后头的
+    # 括号里又确实是个单位名。但「(北京计算机五厂前身)」是注解,不是别名。
+    if whose:
+        at = text.find(whose)
+        while at >= 0:
+            m = re.match(r"[（(]([^）)]{2,24})[）)]", text[at + len(whose):])
+            if m:
+                a = re.sub(r"^(?:亦称|又称|又名|简称|通称|俗称|习称)\s*", "",
+                           m.group(1).strip())
+                if (a and a != whose and a not in out
+                        and re.search(UNIT_TAIL + r"$", a)
+                        and not re.search(r"前身|原名|后改|现名|改称|简写", a)):
+                    out.append(a)
+            at = text.find(whose, at + 1)
+    return out
+
+
 def find_persons(text):
     names = []
     for run in PERSON_RE.findall(text):
@@ -678,6 +716,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             remark.append("见 p.%d–%d" % (pages[0], pages[-1]))
 
         row = OrderedDict()
+        row["别名"] = "、".join(find_aliases(text, nm))
         row["keep"] = "y" if (auto_keep and conf >= auto_keep) else "?"
         row["confidence"] = round(conf, 2)
         row["role"] = "专条" if has_entry else ("点名" if facts else "提及")
@@ -734,6 +773,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                         ([] if is_inst else [nm])
                         + [x for x in others if not re.search(r"研究所|研究院|大学|学院", x)])
                     base["用户"] = "、".join(users)
+                    base["别名"] = "、".join(find_aliases(scope, p))
                     n_out, out_why = output_for(scope, h["para"], p)
                     base["产量"] = str(n_out) if n_out else ""
                     base["Time"] = date or ""
@@ -787,6 +827,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             base["用户"] = ""
         else:
             base["Factory"] = ""
+        base["别名"] = "、".join(find_aliases(s, p))
         n_out, out_why = output_for(s, b["text"], p)
         base["产量"] = str(n_out) if n_out else ""
         base["Time"] = date or ""

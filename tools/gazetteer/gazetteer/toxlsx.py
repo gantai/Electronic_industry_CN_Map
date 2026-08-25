@@ -98,8 +98,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 report["skipped"].append(nm)
                 continue
             ws.cell(row=row, column=1, value=nm)
+            if str(r.get("别名") or "").strip():
+                _ensure_column(ws, "别名", header_row=1)
+                h = _headers(ws, 2)
             for label in ("Industry", "Product", "Start Date", "End Date", "Founder",
-                          "City", "Add.", "Remark", "Source", "Name EN", "Lat", "Lng"):
+                          "City", "Add.", "Remark", "Source", "Name EN", "Lat", "Lng",
+                          "别名"):
                 if label in h and r.get(label) not in (None, ""):
                     ws.cell(row=row, column=h[label], value=_num(r[label]))
             for key, label in STAT_LABELS:
@@ -129,12 +133,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 row += 1
                 report[tag] += 1
 
-    _append_flat(SHEET_SEMI, ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
-                 semi, "semi", ensure=("产量",))
+    _append_flat(SHEET_SEMI, ["Product", "别名", "Factory", "产量", "Time", "Personnel", "Remark"],
+                 semi, "semi", ensure=("产量", "别名"))
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     _append_flat(SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
-                              "Factory", "用户", "产量", "Time", "Personnel", "Remark"], comp, "comp",
-                 ensure=("用户", "产量"))
+                              "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], comp, "comp",
+                 ensure=("用户", "产量", "别名"))
     # Name-History 的 From 一列,原表存的是文本(见 src/xlsxio.js 的 exportWorkbook),照旧
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
                  names, "names", text_cols=("From",))

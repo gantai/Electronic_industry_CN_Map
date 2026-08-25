@@ -1,7 +1,8 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, cityAt } from "./geocode.js";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
-import { parseCNDate, baseName, parenAlias, splitChain, stripLeadingDate } from "./utils.js";
+import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitChain,
+         stripLeadingDate } from "./utils.js";
 
 /* ============================================================
    CN_Electronic_Industry.xlsx 解析器
@@ -89,7 +90,7 @@ const STAT_COLS = [
 function buildMatcher(units) {
   const tokens = [];
   units.forEach((u) => {
-    const set = new Set([u.name, u.alt, ...(ALIASES[u.name] || [])]);
+    const set = new Set([u.name, u.alt, ...(u.aliases || []), ...(ALIASES[u.name] || [])]);
     set.forEach((t) => { if (t && String(t).length >= 3) tokens.push({ token: String(t), id: u.id }); });
   });
   tokens.sort((a, b) => b.token.length - a.token.length);
@@ -183,6 +184,7 @@ function parseUnits(ws) {
   const col = colFinder(h1, secondIsHeader ? h2 : []);
 
   const cIndustry = col("Industry", "行业");
+  const cAlias = col("别名", "Alias", "又名");
   const cProduct = col("Product", "产品");
   const cStart = col("Start Date", "始建", "始建年");
   const cEnd = col("End Date", "终止", "终止年");
@@ -213,7 +215,13 @@ function parseUnits(ws) {
     const raw = String(cell(r, cName) || "").trim();
     if (!raw) return;
     const name = baseName(raw) || raw;
-    const alt = parenAlias(raw);
+    /* 一家单位常有好几个名字:「华北计算技术研究所（四机部15所、电子部15所）」。
+       挑一个当正名,别的全留着 —— 都能搜到,面板里都列出来,文中提到哪一个都认得。
+       有年份可考的改名归「名称沿革」表,那是按年份显示的;这里放的是没有年份的
+       别名、简称、又称。 */
+    const aliases = [...parenAliases(raw), ...splitAliases(cell(r, cAlias))]
+      .filter((x, i, a) => x && x !== name && a.indexOf(x) === i);
+    const alt = parenAlias(raw) || aliases[0] || "";
     const industry = String(cell(r, cIndustry) || "").trim();
     const founder = String(cell(r, cFounder) || "").trim();
 
@@ -240,6 +248,7 @@ function parseUnits(ws) {
       /* 可选:表内若有 `Name EN` 一列,英文界面便用它称呼这家单位 */
       nameEn: String(cell(r, cNameEn) || "").trim(),
       alt,
+      aliases,
       industry,
       type: industry === "研究所" ? "institute" : /合资/.test(founder) ? "jv" : "factory",
       product: String(cell(r, cProduct) || "").trim(),
@@ -303,6 +312,7 @@ function parseComp(ws, match) {
   const cS = col("Speed（次秒）", "Speed", "速度"), cI = col("Research Insti", "研制单位");
   const cF = col("Factory", "厂"), cT = col("Time", "时间");
   const cU = col("用户", "User", "应用单位"), cO = col("产量", "Output");
+  const cA = col("别名", "Alias", "又名");
   const cPer = col("Personnel", "人员"), cR = col("Remark", "备注");
   return rows.slice(hi + 1).map((r, i) => {
     const instText = String(cell(r, cI) || "").trim();
@@ -322,6 +332,7 @@ function parseComp(ws, match) {
       factoryText,
       userText,
       output: String(cell(r, cO) || "").trim(),
+      aliases: splitAliases(cell(r, cA)),
       unitIds: ids,
       date: parseCNDate(cell(r, cT)),
       timeRaw: String(cell(r, cT) || "").trim(),
@@ -498,8 +509,8 @@ export function exportWorkbook(data, filename) {
   ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 11 }, { wch: 14 }, { wch: 40 }];
 
   const ws3 = XLSX.utils.aoa_to_sheet([
-    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "用户", "产量", "Time", "Personnel", "Remark"],
-    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.userText, c.output, c.timeRaw, c.personnel, c.remark]),
+    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"],
+    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.userText, c.output, (c.aliases || []).join("、"), c.timeRaw, c.personnel, c.remark]),
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
