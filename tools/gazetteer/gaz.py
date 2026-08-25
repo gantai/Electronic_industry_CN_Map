@@ -14,6 +14,9 @@
     gaz xlsx   --slug ...          核过的行 → 追加进 CN_Electronic_Industry.xlsx
     gaz run    上海电子工业志.pdf   convert → extract → notes 一气跑完
 
+没把 gaz 装成命令的话,上面每一行的 `gaz` 都写成 `python tools/gazetteer/gaz.py`
+—— 工具打印下一步时会照你实际的敲法写,照抄即可。
+
 一切成果落在 `--work`(默认 gaz-work/<slug>/)底下:
 
     <slug>.md    转好的 Markdown(丢进 Obsidian 库里就能读)
@@ -31,6 +34,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gazetteer import (bookmd as BOOK, cndate, extract as EX,  # noqa: E402
                        notes as NOTES, toxlsx, tsvio, vault as VAULT)
 
+def _self():
+    """这个脚本在你机器上该怎么敲。
+
+    装成命令了就是 `gaz`,没装就得写全 `python tools/gazetteer/gaz.py` ——
+    打印下一步时按实际情况写,免得照抄下来敲不动。"""
+    if os.path.splitext(os.path.basename(sys.argv[0] or ""))[0] == "gaz" \
+            and not sys.argv[0].endswith(".py"):
+        return "gaz"
+    try:
+        path = os.path.relpath(os.path.abspath(__file__))
+    except ValueError:            # Windows 上跨盘符,relpath 会翻脸
+        path = os.path.abspath(__file__)
+    if path.startswith(".."):
+        path = os.path.abspath(__file__)
+    return "python %s" % (('"%s"' % path) if " " in path else path)
+
+
+SELF = _self()
+
 # 扫描件 → Markdown 不在这个仓里。同一批 PDF 另一个项目也要转,那边把转换
 # 单拆成了 zhiconv 一个包,专门伺候这两处;这边再写一份只会更差。
 ZHICONV_INSTALL = (
@@ -39,7 +61,7 @@ ZHICONV_INSTALL = (
 ZHICONV_MISSING = (
     "没装 zhiconv —— 扫描件转 Markdown 归它管:\n"
     "  " + ZHICONV_INSTALL + "\n"
-    "已经转好的 .md 不必走这一步,直接 gaz book 某某志.md")
+    "已经转好的 .md 不必走这一步,直接 " + SELF + " book 某某志.md")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -84,7 +106,7 @@ def cmd_check(args):
         print("\nzhiconv 认得的转换器:\n  %s" % install_hints(".pdf"))
     except ImportError:
         pass
-    print("\n已经转好的 .md 不需要 zhiconv,gaz book 直接读。")
+    print("\n已经转好的 .md 不需要 zhiconv,%s book 直接读。" % SELF)
     return 0
 
 
@@ -110,7 +132,8 @@ def cmd_convert(args):
     if not res.ok or not res.output:
         sys.exit("转不了:%s" % (res.reason or "zhiconv 没说原因"))
     print("%s（%s）" % (res.output, res.converter))
-    print("下一步:gaz book %s —— 或 gaz extract --slug %s" % (res.output, slug))
+    print("下一步:%s book %s —— 或 %s extract --slug %s"
+          % (SELF, res.output, SELF, slug))
     return 0
 
 
@@ -118,7 +141,7 @@ def cmd_extract(args):
     wd = workdir(args)
     md_path = args.md or os.path.join(wd, args.slug + ".md")
     if not os.path.exists(md_path):
-        sys.exit("找不到 %s,先跑 gaz convert" % md_path)
+        sys.exit("找不到 %s,先跑 %s convert" % (md_path, SELF))
     with open(md_path, encoding="utf-8") as f:
         md = f.read()
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
@@ -134,8 +157,8 @@ def cmd_extract(args):
     print("抽出:%d 家单位(其中 %d 家尚未入表)、%d 条器件、%d 条整机、%d 段名称沿革"
           % (len(res["units"]), fresh, len(res["semi"]), len(res["comp"]), len(res["names"])))
     print("待核 TSV 在 %s" % rd)
-    print("把要的行 keep 改成 y,再跑:gaz notes --slug %s / gaz xlsx --slug %s"
-          % (args.slug, args.slug))
+    print("把要的行 keep 改成 y,再跑:%s notes --slug %s / %s xlsx --slug %s"
+          % (SELF, args.slug, SELF, args.slug))
     return 0
 
 
@@ -219,7 +242,7 @@ def cmd_book(args):
     print("接下来:在 Excel 的「待核」表里核名字 —— 原文就在第 5 列。")
     print("  名字认错的当场改;同一家的几个名字改成同一个,追加时会并作一行;")
     print("  要的行「取否」写 y。核完:")
-    print('    gaz xlsx --from "%s"' % out)
+    print('    %s xlsx --from "%s"' % (SELF, out))
     return 0
 
 
@@ -234,7 +257,7 @@ def _vault_dir(args):
 def cmd_push(args):
     """工作簿 → 库。全部厂所各写一则笔记,字段摆在 frontmatter 里等你改。"""
     VAULT.push(args.xlsx, _vault_dir(args), geocode_js=DEFAULT_GEOCODE, force=args.force)
-    print("改完哪则,`gaz pull` 推回工作簿(先 --dry-run 看清单)。")
+    print("改完哪则,`%s pull` 推回工作簿(先 --dry-run 看清单)。" % SELF)
     return 0
 
 
@@ -329,7 +352,7 @@ def cmd_run(args):
     print("\n到此为止 —— 剩下的活儿只有人能干:")
     print("  1. 翻 %s/review/units.tsv,逐行核对 evidence 那一栏" % workdir(args, slug))
     print("  2. 要的行 keep 改成 y")
-    print("  3. gaz xlsx --slug %s" % slug)
+    print("  3. %s xlsx --slug %s" % (SELF, slug))
     return 0
 
 
@@ -415,7 +438,7 @@ def main(argv=None):
 
     p = sub.add_parser("xlsx", help="取否=y 的行 → 追加进工作簿", parents=[common])
     p.add_argument("--from", dest="from_xlsx", metavar="XLSX",
-                   help="读 gaz book 生成的那份工作簿(你核过的),而不是 TSV")
+                   help="读 book 那一步生成的工作簿(你核过的),而不是 TSV")
     p.add_argument("--allow-dup", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--book")
