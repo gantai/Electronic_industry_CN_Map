@@ -3,6 +3,7 @@
 """gaz —— 把一本地方志变成这张地图上的数据。
 
     gaz guide   --vault ~/库/地图  《流程》:建档与核对,从头到尾照着办
+    gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
     gaz book    某某志.md          现成的转换稿 → 待核 TSV + 一份本地 Excel
@@ -178,6 +179,23 @@ def cmd_notes(args):
     NOTES.write_vault(rows, args.out or os.path.join(wd, "vault"),
                       book=args.book or args.slug,
                       book_note=args.book_note or args.slug)
+    return 0
+
+
+def cmd_dups(args):
+    """把工作簿里疑似重复的地方找出来 —— 只报,一个格子也不动。"""
+    rep = toxlsx.report_dups(args.xlsx)
+    if rep["exact"]:
+        print("一模一样的 %d 处 —— 多半是追加了两遍,可以删:" % len(rep["exact"]))
+        for sheet, key, rows, who in rep["exact"]:
+            print("   %-22s %-26s 行 %s" % (sheet, key[:24], rows))
+    if rep["similar"]:
+        print("\n像是一回事的 %d 处 —— 得你自己看:" % len(rep["similar"]))
+        for sheet, key, rows, who in rep["similar"]:
+            print("   %-22s %-10s 行 %-14s %s" % (sheet, key[:10], str(rows), who[:44]))
+        print("\n   (「DJS-130」与「DJS-130B」型号内核一样,却是两台机器 —— 别一律并掉)")
+    if not rep["exact"] and not rep["similar"]:
+        print("没找到重复。")
     return 0
 
 
@@ -465,6 +483,9 @@ def main(argv=None):
     p.add_argument("--book-note", help="库中原书笔记的文件名,供 wikilink")
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser("dups", help="找出工作簿里疑似重复的行(只报,不动手)", parents=[common])
+    p.set_defaults(func=cmd_dups)
 
     p = sub.add_parser("guide", help="《流程》—— 打印出来,或写进 Obsidian 库", parents=[common])
     p.add_argument("--vault", help="写进这个库(也可设 GAZ_VAULT);不给就打印到屏幕")

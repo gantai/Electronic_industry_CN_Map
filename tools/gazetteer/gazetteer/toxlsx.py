@@ -378,3 +378,76 @@ def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
                     value=(None if v in ("", None) else (str(v) if label == "From" else _num(v))))
     wb.save(xlsx_path)
     return len(rows)
+
+
+# ---------------------------------------------------------------- 找重复
+
+def _sheet_dups(ws, key_cols, label_col, header_row=1, first_data_row=2):
+    """按钥匙分组,返回 {钥匙: [(行号, 标签)]},只留下不止一行的。"""
+    h = _headers(ws, header_row)
+    if not all(c in h for c in key_cols):
+        return {}
+    groups = {}
+    for r in range(first_data_row, ws.max_row + 1):
+        key = tuple(_bare(ws.cell(row=r, column=h[c]).value) for c in key_cols)
+        if not any(key):
+            continue
+        label = ws.cell(row=r, column=h.get(label_col, 1)).value
+        groups.setdefault(key, []).append((r, str(label or "")))
+    return {k: v for k, v in groups.items() if len(v) > 1}
+
+
+def report_dups(xlsx_path):
+    """把工作簿里疑似重复的地方找出来 —— 只报,一个格子也不动。
+
+    分两等:**一模一样**的(整条钥匙相同)多半是追加了两遍,该删;
+    **像是一回事**的(单位名字有交叠、型号内核相同)得你自己看 ——
+    「DJS-130」与「DJS-130B」型号内核一样,却是两台机器。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    out = {"exact": [], "similar": []}
+
+    ws = wb[SHEET_UNITS]
+    h = _headers(ws, 2)
+    seen = {}
+    for r in range(3, ws.max_row + 1):
+        nm = ws.cell(row=r, column=1).value
+        if not nm:
+            continue
+        alias = ws.cell(row=r, column=h["别名"]).value if "别名" in h else ""
+        for one in _names_of(nm, alias):
+            seen.setdefault(one, []).append((r, str(nm)))
+    for one, rows in seen.items():
+        if len(rows) > 1:
+            who = sorted({x[1] for x in rows})
+            kind = "exact" if len(who) == 1 else "similar"
+            out[kind].append(("厂所", one, [x[0] for x in rows], "、".join(who)))
+
+    for sheet, key_cols, label in (
+            (SHEET_COMP, ("Product", "Time"), "Product"),
+            (SHEET_SEMI, ("Product", "Factory", "Time"), "Product"),
+            (SHEET_NAMES, ("Unit", "Name", "From"), "Unit")):
+        if sheet not in wb.sheetnames:
+            continue
+        for key, rows in _sheet_dups(wb[sheet], key_cols, label).items():
+            out["exact"].append((sheet, "·".join(x for x in key if x),
+                                 [x[0] for x in rows], rows[0][1]))
+
+    # 型号内核相同、写法不同的整机 —— 只提醒,不当重复
+    if SHEET_COMP in wb.sheetnames:
+        from .extract import model_key
+        ws = wb[SHEET_COMP]
+        h = _headers(ws, 1)
+        if "Product" in h:
+            by = {}
+            for r in range(2, ws.max_row + 1):
+                p = ws.cell(row=r, column=h["Product"]).value
+                k = model_key(p) if p else ""
+                if k:
+                    by.setdefault(k, []).append((r, str(p).strip()))
+            for k, rows in by.items():
+                names = sorted({x[1] for x in rows})
+                if len(names) > 1:
+                    out["similar"].append((SHEET_COMP, k, [x[0] for x in rows],
+                                           "、".join(names)))
+    return out
