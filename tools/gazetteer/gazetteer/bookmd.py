@@ -38,8 +38,27 @@ PAGE_PATTERNS = [
 ]
 
 
+# 汉字(含中日韩标点、全角符号)之间的空格一律是转换留下的,没有意义
+_CJK = "\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef"
+CJK_GAP = re.compile("(?<=[%s])[ \t]+(?=[%s])" % (_CJK, _CJK))
+
+
+def squeeze_cjk_spaces(text):
+    """去掉汉字中间的空格。
+
+    转换稿常在原书断行处留一个空格,成了「北京计算 机一厂」。空格是找厂名时
+    往左走的边界,留着就截出「机一厂」这种鬼名字。标题和表格不动 —— 那里的
+    空格是分栏用的。"""
+    out = []
+    for line in text.splitlines():
+        s = line.lstrip()
+        out.append(line if s[:1] in ("#", "|") or s.startswith("```")
+                   else CJK_GAP.sub("", line))
+    return "\n".join(out)
+
+
 def read_text(path):
-    """挨个试编码,返回 (正文, 用的哪一种)。"""
+    """挨个试编码,返回 (正文, 用的哪一种)。顺手把换行和汉字间的空格归一。"""
     with open(path, "rb") as f:
         raw = f.read()
     for enc in ENCODINGS:
@@ -52,7 +71,8 @@ def read_text(path):
             continue
         if enc == "latin-1" and len(re.findall(r"[一-鿿]", text[:4000])) < 5:
             continue
-        return text.replace("\r\n", "\n").replace("\r", "\n"), enc
+        return squeeze_cjk_spaces(
+            text.replace("\r\n", "\n").replace("\r", "\n")), enc
     return raw.decode("utf-8", errors="replace").replace("\r\n", "\n"), "utf-8(有乱码)"
 
 

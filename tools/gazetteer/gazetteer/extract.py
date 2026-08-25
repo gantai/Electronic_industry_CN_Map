@@ -32,18 +32,21 @@ from . import cndate
 # ---------------------------------------------------------------- 词表
 
 UNIT_TAIL = (r"(?:研究所|研究院|设计院|实验室|试验室|工厂|电子厂|仪器厂|机械厂|无线电厂|"
-             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|厂)")
+             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|大学|学院|"
+             r"[0-9]+所|厂)")
 # 「厂」「所」后头跟这些字的,是「厂房」「所长」一类的词,不是名字的收尾
 TAIL_RE = re.compile(UNIT_TAIL + r"(?![房址长区部内外里方家矿商牌史志属在有以需谓工人员级])")
 
 # 名字里绝不会出现、却常常紧挨在名字前头的字 —— 往左找名字的起点,到此为止
-BOUND = (set("、，,。；;：:（）()[]「」『』《》〈〉“”\"'　 \t\r\n") | set("0123456789")
-         | set("与同及由为在于将把经向从自并入该本其此又遂乃旋等是即系之年月日号称归属设立建"))
+# 数字不入 BOUND —— 军工厂就叫「国营738厂」「四机部15所」,拿数字断名字等于
+# 把这类厂名全丢了;年月日已在表里,日期照样断得住
+BOUND = (set("、，,。；;：:（）()[]「」『』《》〈〉“”\"'　 \t\r\n")
+         | set("与及由为在于将把向从自并入该本其此又遂乃旋等是即之年月日归属送"))
 # 「和」不入 BOUND —— 「和平电器厂」这类名字太多,截断的代价比留点噪音大
 SOFT_BOUND = set("和")
 # 起头像个正经名号的写法,用来在被「和」「与」截断时把全名捞回来
-STRONG = re.compile(r"^(?:上海|中国|中央|华东|国营|地方国营|公私合营|私营|合营|人民|"
-                    r"第[一二三四五六七八九十百]+|沪)")
+STRONG = re.compile(r"^(?:上海|北京|天津|南京|中国|中央|华东|华北|国营|地方国营|"
+                    r"公私合营|私营|合营|人民|第[一二三四五六七八九十百]+|沪)")
 
 # 名字前头黏着的日期与动词,逐层剥掉
 LEAD_NOISE = re.compile(
@@ -57,7 +60,7 @@ LEAD_NOISE = re.compile(
 NAME_JUNK = re.compile(r"[年月日,,。;;::、?!!]|前身|原名|改名|更名|改称|并入|划归|合并|"
                        r"组建|撤销|成立|建立|创办|等|其中|以及")
 UNIT_STOP = re.compile(r"^(?:该|本|全|各|我|上述|这|那|同|其|此|以上|下属|所属|有关|不少|许多|"
-                       r"部分|两|三|四|五|六|七|八|九|十|几|一批|若干)")
+                       r"部分|两|[三四五六七八九十](?!机部)|几|一批|若干)")
 UNIT_BAD = {"工厂", "该厂", "本厂", "全厂", "分厂", "工场", "公司", "研究所", "实验室",
             "总厂", "母厂", "老厂", "新厂", "小厂", "大厂", "电子厂", "无线电厂", "各厂",
             "兄弟厂", "协作厂", "本所", "该所", "该公司", "本公司", "试验室", "上级主管部门"}
@@ -120,6 +123,23 @@ SENT_SPLIT = re.compile(r"(?<=[。！？；])")
 PAGE_MARK = re.compile(r"<!--\s*p\.(\d+)\s*-->")
 HEAD_MARK = re.compile(r"^(#{1,6})\s+(.*)$")
 
+# 别处转来的稿子常把 篇/章/节/一、 一律压成 `##`,井号就数不出层级了。
+# 志书的层级本来写在标题文字里,认字比数井号可靠。
+HEAD_RANK = [(re.compile(r"^第[〇零一二三四五六七八九十百]+篇"), 1),
+             (re.compile(r"^第[〇零一二三四五六七八九十百]+章"), 2),
+             (re.compile(r"^第[〇零一二三四五六七八九十百]+节"), 3),
+             (re.compile(r"^[一二三四五六七八九十]+[、.．]"), 4),
+             (re.compile(r"^[（(][一二三四五六七八九十]+[)）]"), 5)]
+
+
+def head_rank(text, fallback):
+    """这条标题该算第几层:先认「第三章」「一、」的字面,认不出才回去数井号。"""
+    for rx, lvl in HEAD_RANK:
+        if rx.match(text):
+            return lvl
+    return fallback
+
+
 
 # ---------------------------------------------------------------- 读 Markdown
 
@@ -134,8 +154,9 @@ def read_blocks(md_text):
             continue
         m = HEAD_MARK.match(line)
         if m:
-            lvl = len(m.group(1))
-            stack[lvl] = m.group(2).strip()
+            txt = m.group(2).strip()
+            lvl = head_rank(txt, len(m.group(1)))
+            stack[lvl] = txt
             for j in range(lvl + 1, 7):
                 stack[j] = None
             continue
@@ -171,6 +192,18 @@ def clean_unit_name(raw):
     return s
 
 
+TAIL_END = re.compile(UNIT_TAIL + r"$")
+
+
+def _merges_two(name):
+    """「华北计算技术研究所和哈尔滨军事工程学院」是两家,不是一个名字。
+
+    判据:「和」左边已经收在「研究所」这类字样上,那这个「和」就是连词。
+    「和平电器厂」的「和」在开头,左边什么也没有,照收不误。"""
+    return any(ch in SOFT_BOUND and TAIL_END.search(name[:i])
+               for i, ch in enumerate(name))
+
+
 def _walk_left(text, end, limit=18, bound=BOUND):
     i = end
     while i > 0 and (end - i) < limit and text[i - 1] not in bound:
@@ -190,9 +223,11 @@ def unit_names(text):
         if not cand or not STRONG.match(cand):
             # 也许是被「和」「与」截短了,放宽一格再找一个像样的全名
             wide = text[_walk_left(text, end, limit=22, bound=BOUND):end]
+            # wide 从左往右扫,第一个带字头的就是最长的正名。这里不比长短 ——
+            # cand 本来就没认出字头,再长也是「生产厂家有…」这种连着谓语的脏名字
             for k in range(len(wide)):
                 alt = clean_unit_name(wide[k:])
-                if alt and STRONG.match(alt) and len(alt) > len(cand or ""):
+                if alt and STRONG.match(alt) and not _merges_two(alt):
                     cand = alt
                     break
         if cand and cand not in out:
@@ -423,7 +458,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                 else:
                     role = "named"
                 dossier[nm].append({"page": b["page"], "sent": s, "para": b["text"],
-                                    "role": role, "head": b["heads"][-1] if b["heads"] else ""})
+                                    "role": role, "head": "·".join(b["heads"])})
 
     units, semi, comp, names = [], [], [], []
 

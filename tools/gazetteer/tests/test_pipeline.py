@@ -59,6 +59,16 @@ def test_names():
     eq(EX.unit_names("1966年3月改名为上海无线电十九厂。"), ["上海无线电十九厂"], "剥掉年月与动词")
     eq(EX.unit_names("厂房面积15600平方米。"), [], "厂房不是厂")
     eq(EX.unit_names("该所所长由王某担任,全所职工486人。"), [], "所长不是所")
+    # 以下都是拿《北京工业志·电子志》第三章跑出来的漏子
+    eq(EX.unit_names("交由国营738厂试制。"), ["国营738厂"], "厂名里的数字不是断点")
+    eq(EX.unit_names("四机部15所为空军125工程研制108甲。"), ["四机部15所"],
+       "「四机部」是部委正名,不是「四个机部」")
+    eq(EX.unit_names("生产厂家有北京计算机外部设备三厂。"), ["北京计算机外部设备三厂"],
+       "「设备」的「设」不是断点,「厂家」也不算收尾")
+    eq(EX.unit_names("北京北优计算机系统有限公司承接。"), ["北京北优计算机系统有限公司"],
+       "「系统」的「系」不是断点")
+    eq(EX.unit_names("华北计算技术研究所和哈尔滨军事工程学院联合研制。"),
+       ["华北计算技术研究所", "哈尔滨军事工程学院"], "「和」连着的两家不并成一家")
     eq(EX.find_district(["厂址杨浦区平凉路1690号。"]), "杨浦", "区名不带前一个字")
     eq(EX.find_address(["上海元件十四厂,厂址在闸北区中华新路688号。"])[0], "中华新路688号",
        "地址照原表体例,不带区名")
@@ -373,8 +383,42 @@ def test_book():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flat_heads():
+    """别处转来的稿子:篇章节全压成 `##`,而且一个页码都没有。
+
+    《北京工业志·电子志》2001 第三章就是这样。层级若只数井号,「第三章」
+    「第一节」会被「一、」顶掉,而这书没有页码,出处全靠这条路径 —— 只剩
+    「一、电子管计算机」等于没说,哪一章的一、都长这样。"""
+    print("压平的标题 / 没有页码的书")
+    text, enc = bookmd.read_text(os.path.join(HERE, "fixture", "北京-压平标题.md"))
+
+    check(not bookmd.detect_page_marks(text),
+          "认不出页码(这书本来就没有),不硬凑")
+
+    blocks = EX.read_blocks(text)
+    deep = [b for b in blocks if "晶体管" in "·".join(b["heads"])]
+    check(bool(deep), "找得到「二、晶体管计算机」底下的正文")
+    eq(deep[0]["heads"],
+       ["第三章 电子计算机", "第一节 数字计算机", "二、晶体管计算机"],
+       "三级标题同为 `##`,仍按字面认出章 → 节 → 一、")
+
+    first = [b for b in blocks if "地区" in b["text"]][0]
+    eq(first["heads"], ["第三章 电子计算机"], "概述段只归到章,不蹭下面的节")
+
+    src_ = EX.make_source("北京工业志·电子志", None, "·".join(deep[0]["heads"]))
+    for want in ("第三章", "第一节", "二、"):
+        check(want in src_, "没页码时出处带上「%s」这一级" % want)
+
+    res = EX.extract(text, book="北京工业志·电子志", city="Beijing", min_mentions=1)
+    names = {r["Unit"] for r in res["units"]}
+    check("北京计算机一厂" in names, "「北京计算 机一厂」中间的空格已去掉,厂名认全")
+    check("机一厂" not in names, "没有截出「机一厂」这种鬼名字")
+    check("国营738厂" in names, "「交由国营738厂试制」认得出国营738厂")
+
+
 def main():
-    for fn in (test_dates, test_names, test_pdf, test_pipeline, test_vault, test_book):
+    for fn in (test_dates, test_names, test_pdf, test_pipeline, test_vault,
+               test_book, test_flat_heads):
         fn()
     print()
     if FAILED:
