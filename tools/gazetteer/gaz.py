@@ -307,7 +307,11 @@ def _vault_dir(args):
     """--vault,或环境变量 GAZ_VAULT。库在你自己的机器上,路径只有你知道。"""
     v = getattr(args, "vault", None) or os.environ.get("GAZ_VAULT")
     if not v:
-        sys.exit("要指出库在哪:--vault ~/Obsidian/电子工业/地图,或设个 GAZ_VAULT 环境变量")
+        sys.exit("要指出库里放笔记的目录 —— 是库里的一个子文件夹,不是库根:\n"
+                 "  --vault <你的库>/厂所\n"
+                 "或设个环境变量,以后就不必每回写了:\n"
+                 "  Windows  [Environment]::SetEnvironmentVariable(\"GAZ_VAULT\", \"<你的库>\\厂所\", \"User\")\n"
+                 "  其他     export GAZ_VAULT=<你的库>/厂所")
     return os.path.expanduser(v)
 
 

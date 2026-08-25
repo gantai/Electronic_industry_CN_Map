@@ -243,7 +243,7 @@ git add -A && git commit -m "补录上海电子仪表工业志" && git push
 就在库里做**:
 
 ```bash
-export GAZ_VAULT=~/Obsidian/电子工业/地图        # 省得每次都写 --vault
+export GAZ_VAULT=<你的库>/厂所                   # 省得每次都写 --vault
 
 python3 tools/gazetteer/gaz.py push              # 工作簿 → 库,29 家各一则
 #   ……在 Obsidian 里改。改 frontmatter 的字段,改「名称沿革」那张表……
