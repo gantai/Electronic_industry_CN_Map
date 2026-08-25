@@ -238,6 +238,10 @@ def cmd_book(args):
     entries = sum(1 for r in res["units"] if r.get("role") == "专条")
     print("抽出:%d 家单位(%d 家有专条)、%d 条器件、%d 条整机、%d 段名称沿革"
           % (len(res["units"]), entries, len(res["semi"]), len(res["comp"]), len(res["names"])))
+    guess = sum(1 for r in res["comp"] + res["semi"] if "未详" in str(r.get("Remark", "")))
+    if guess:
+        print("  其中 %d 条没写明研制/生产单位 —— 多半是按型号的样子认出来的,"
+              "宁滥勿缺,核对时留意" % guess)
 
     out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.md)), stem + ".xlsx")
     BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year)

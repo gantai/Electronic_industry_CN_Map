@@ -366,7 +366,21 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
             w.column_dimensions[get_column_letter(i)].width = wid
 
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    wb.save(path)
+    try:
+        wb.save(path)
+    except PermissionError:
+        # Windows 上 Excel 开着文件就锁住它。抽了半天全在内存里,不能到末了
+        # 一句 PermissionError 全丢了 —— 换个名字先存下来。
+        stem, ext = os.path.splitext(path)
+        alt, n = stem + "-新" + ext, 2
+        while os.path.exists(alt):
+            alt, n = "%s-新%d%s" % (stem, n, ext), n + 1
+        wb.save(alt)
+        log("！写不进 %s —— 多半正开在 Excel 里,文件被锁着。"
+            % os.path.basename(path))
+        log("  这一份改存到 %s;关掉 Excel 再跑一遍,才会写回原名。"
+            % os.path.basename(alt))
+        return alt
     log("Excel 已写到 %s" % path)
     log("  五张表:%s、Semi-Product、Comp-Product、Name-History、待核" % sheet)
     log("  在「待核」等表的「取否」列写 y,再 gaz xlsx --from 这个文件")

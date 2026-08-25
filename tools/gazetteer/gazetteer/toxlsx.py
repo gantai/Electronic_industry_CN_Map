@@ -139,7 +139,14 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
                  names, "names", text_cols=("From",))
 
-    wb.save(xlsx_path)
+    try:
+        wb.save(xlsx_path)
+    except PermissionError:
+        # 这一份是总表,不能改名另存 —— 换了名字就不是那本工作簿了
+        raise SystemExit(
+            "写不进 %s —— 多半正开在 Excel 里,文件被锁着。\n"
+            "关掉 Excel 再跑一遍。原表还是原样,备份也还在:%s"
+            % (os.path.basename(xlsx_path), report["backup"] or "(这次没备份)"))
     return report
 
 
