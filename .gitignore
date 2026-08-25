@@ -6,5 +6,3 @@ gaz-work/
 *.backup-*.xlsx
 __pycache__/
 *.pyc
-
-run-*.ps1
