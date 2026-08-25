@@ -601,11 +601,45 @@ def test_aliases():
 
     # 并作一行时,被并掉的名字不能就这么没了
     rows = [{"Unit": "华北计算技术研究所", "别名": "四机部15所", "Source": "甲"},
-            {"Unit": "华北计算技术研究所", "别名": "电子部15所", "Source": "乙"}]
+            {"Unit": "华北计算技术研究所", "别名": "电子部15所、电子部第15所", "Source": "乙"}]
     got, n = bookmd.merge_by_name(rows)
     eq(n, 1, "两行并作一行")
-    eq(set(got[0]["别名"].split("、")), {"四机部15所", "电子部15所"},
-       "两边的别名都留着 —— 挑一个当正名,不等于别的就不算数")
+    eq(set(got[0]["别名"].split("、")), {"四机部15所", "电子部15所", "电子部第15所"},
+       "两边的别名都留着,一边有两个也不丢")
+
+    # 三个别名一路走到工作簿:待核 → read_review → toxlsx → 名录表
+    tmp = tempfile.mkdtemp(prefix="gaz-alias-")
+    try:
+        import openpyxl
+        many = "四机部15所、电子部15所、电子部第15所"
+        md2 = "## 一、机\n\n1959年，华北计算技术研究所研制成功机器23计算机。\n"
+        r2 = EX.extract(md2, book="试", city="Beijing", min_mentions=1)
+        bk = os.path.join(tmp, "待核.xlsx")
+        bookmd.write_xlsx(bk, r2, city="Beijing", log=lambda *a: None)
+        wb = openpyxl.load_workbook(bk)
+        rv = wb["待核"]
+        hd = [c.value for c in rv[1]]
+        for i in range(2, rv.max_row + 1):
+            if rv.cell(row=i, column=2).value == "华北计算技术研究所":
+                rv.cell(row=i, column=1).value = "y"
+                rv.cell(row=i, column=hd.index("别名") + 1).value = many
+        wb.save(bk)
+
+        bundle, _city, _seen = bookmd.read_review(bk)
+        eq(bundle["units"][0]["别名"], many, "三个别名原样读回来")
+
+        master = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), master)
+        toxlsx.append(master, backup=False, **bundle)
+        ws = openpyxl.load_workbook(master)[toxlsx.SHEET_UNITS]
+        hh = {c.value: c.column for c in ws[1] if c.value}
+        check("别名" in hh, "原表没有「别名」列,按需在表尾添上")
+        hit = [ws.cell(row=i, column=hh["别名"]).value
+               for i in range(3, ws.max_row + 1)
+               if ws.cell(row=i, column=1).value == "华北计算技术研究所"]
+        eq(hit, [many], "三个别名一并写进名录表(站点按顿号拆开,逐个都能认)")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():
