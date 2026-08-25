@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """gaz —— 把一本地方志变成这张地图上的数据。
 
-    gaz guide   --vault ~/库/地图  《流程》:建档与核对,从头到尾照着办
+    gaz guide   --vault <库>/厂所  《流程》:建档与核对,从头到尾照着办
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
@@ -10,8 +10,8 @@
     gaz convert 上海电子工业志.pdf  扫描件 → Markdown(转换交给 zhiconv)
     gaz extract --slug ...         Markdown → 四张待核 TSV
     gaz notes  --slug ...          待核记录 → Obsidian 笔记
-    gaz push   --vault ~/库/地图    工作簿 → 库,全部厂所各一则,字段在 frontmatter
-    gaz pull   --vault ~/库/地图    库 → 工作簿,把你改过的字段写回原行
+    gaz push   --vault <库>/厂所    工作簿 → 库,全部厂所各一则,字段在 frontmatter
+    gaz pull   --vault <库>/厂所    库 → 工作簿,把你改过的字段写回原行
     gaz geocode --slug ...         新单位 → src/geocode.js 的落点条目草稿
     gaz xlsx   --slug ...          核过的行 → 追加进 CN_Electronic_Industry.xlsx
     gaz run    上海电子工业志.pdf   convert → extract → notes 一气跑完

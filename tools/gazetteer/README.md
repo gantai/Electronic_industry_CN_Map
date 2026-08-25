@@ -16,7 +16,7 @@
 可勾的清单),写进库里最好使:
 
 ```bash
-python3 tools/gazetteer/gaz.py guide --vault ~/库/地图
+python3 tools/gazetteer/gaz.py guide --vault <你的 Obsidian 库>/厂所
 ```
 
 底下这份 README 是工具的说明书;要问「这一步该干什么」,看《流程》。
@@ -304,7 +304,7 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 
 ```
 gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
-gaz guide  --vault ~/库/地图   《流程》写进库(不给 --vault 就打印)
+gaz guide  --vault <库>/厂所   《流程》写进库(不给 --vault 就打印)
 gaz check                     本机环境自检
 gaz inspect <某某志.md>        看一眼转换稿:标题、页码、套语、断行
 gaz book    <某某志.md>        转换稿 → 本地 Excel(核名字就在这份上核)
@@ -321,8 +321,8 @@ gaz xlsx   --from <核过.xlsx>  取否=y 的行 → 工作簿    --dry-run/--al
 gaz xlsx   --slug X           (走 TSV 的老路子,同上)
 gaz run    <pdf>              convert → extract → notes
 
-gaz push   --vault ~/库/地图   工作簿 → 库,全部厂所各一则   --force
-gaz pull   --vault ~/库/地图   库 → 工作簿,写回改过的字段   --dry-run
+gaz push   --vault <库>/厂所   工作簿 → 库,全部厂所各一则   --force
+gaz pull   --vault <库>/厂所   库 → 工作簿,写回改过的字段   --dry-run
 ```
 
 `--work` 改工作目录(默认 `gaz-work/`),`--xlsx` 改目标工作簿,
