@@ -899,6 +899,7 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lan
                   {p.word ? t.word + " " + p.word + " " : ""}{p.memory ? t.memory + " " + p.memory + " " : ""}{p.speed ? t.speed + " " + p.speed : ""}
                 </div>
               )}
+              {p.userText && <div className="evnote">{t.thUser + "：" + p.userText}</div>}
             </div>
           ))}
         </div>
@@ -938,7 +939,7 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.product, r.factoryText, r.instText, r.personnel, r.remark, r.timeRaw]
+      [r.product, r.factoryText, r.instText, r.userText, r.personnel, r.remark, r.timeRaw]
         .filter(Boolean).join(" ").toLowerCase().includes(s));
   }, [rows, q]);
 
@@ -990,7 +991,8 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
             <thead>
               <tr><th className="mono">{t.thTime}</th><th>{t.thModel}</th><th className="mono">{t.word}</th>
                 <th className="mono">{t.memory}</th><th className="mono">{t.speed}</th><th>{t.thResearch}</th>
-                <th>{t.thMaker}</th><th>{t.thListed}</th><th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
+                <th>{t.thMaker}</th><th>{t.thUser}</th><th>{t.thListed}</th>
+                <th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
             <tbody>
               {list.map((r) => (
@@ -1002,12 +1004,13 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
                   <td className="mono">{r.speed || "—"}</td>
                   <td className="small">{r.instText}</td>
                   <td className="small">{r.factoryText}</td>
+                  <td className="small">{r.userText || "—"}</td>
                   <td>{unitChips(r)}</td>
                   <td className="small">{r.personnel}</td>
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={10} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
+              {!list.length && <tr><td colSpan={11} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         )}

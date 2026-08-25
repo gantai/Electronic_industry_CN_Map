@@ -113,7 +113,7 @@ const zh = {
   countItems: (a, b) => a + " / " + b + " 条",
   productsNote: (file, sheet) => "本页直录 " + file + " 的「" + sheet + "」表。单位名称按别名对照连回名录(如「上无十三」即上海电子计算机厂);未收入名录的协作单位以原文呈现,不作链接。",
   thYear: "年份", thTime: "时间", thProduct: "产品", thModel: "机型",
-  thMaker: "生产单位", thResearch: "研制单位", thListed: "名录内",
+  thMaker: "生产单位", thResearch: "研制单位", thUser: "用户单位", thListed: "名录内",
   thPersonnel: "人员", thRemark: "备注", thSource: "出处",
   noRecords: "没有匹配的记录。",
 
@@ -206,7 +206,8 @@ const en = {
   countItems: (a, b) => a + " / " + b + " rows",
   productsNote: (file, sheet) => "This page reproduces the “" + sheet + "” sheet of " + file + ". Unit names are matched back to the directory through the alias table (e.g. 上无十三 = 上海电子计算机厂); collaborating bodies not in the directory appear as written, without links.",
   thYear: "Year", thTime: "Date", thProduct: "Product", thModel: "Model",
-  thMaker: "Manufacturer", thResearch: "Developed by", thListed: "In directory",
+  thMaker: "Manufacturer", thResearch: "Developed by", thUser: "Deployed at",
+  thListed: "In directory",
   thPersonnel: "People", thRemark: "Remark", thSource: "Source",
   noRecords: "No matching records.",
 

@@ -77,9 +77,15 @@ def test_names():
        "「的」是断点,「508所」是名字")
     eq(EX.unit_names("1990年完成了新疆水泥厂的过程控制改造。"), ["新疆水泥厂"], "剥掉「完成了」")
     eq(EX.unit_names("1988年通过对DEC公司微机的仿制。"), ["DEC公司"], "「通过对」两层都剥掉")
-    eq(EX.unit_names("该所承接了市旅游汽车公司的调度系统。"), [], "剥不净的宁可丢掉")
+    # 承接的那一头是拿机器去用的人家 —— 正是要留的,不是要丢的
+    eq(EX.unit_names("该所承接了市旅游汽车公司的调度系统。"), ["市旅游汽车公司"],
+       "「承接了」后头切开,用户单位留下来")
+    eq(EX.unit_names("四机部6所承接了大庆石油化工总厂的过程控制系统。"),
+       ["四机部6所", "大庆石油化工总厂"], "研制方与用户两家都认出来")
+    eq(EX.clean_unit_name("北京华海新技术开发公司"), "北京华海新技术开发公司",
+       "「开发」不当动词切 —— 它在这儿是名号的一截")
     eq(EX.unit_names("该校电子厂生产微机。"), [], "「该校电子厂」截出来的「校电子厂」不算名字")
-    eq(EX.clean_unit_name("第一个通过机电部4所"), "", "「第一个」不是「第一机床厂」那种字头")
+    eq(EX.clean_unit_name("第一个通过机电部4所"), "机电部4所", "「通过」后头切开,所名留下")
     eq(EX.clean_unit_name("第一机床厂"), "第一机床厂", "真的「第一…厂」照留")
     eq(EX.unit_names("首钢电子公司（当时名为自动化研究所）开发建成。"),
        ["首钢电子公司", "自动化研究所"], "「自」当连接词剥得,「自动化」剥不得")
@@ -442,9 +448,31 @@ def test_fixes():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_users():
+    """用机的人家:记在整机的「用户」一列,不混进研制单位。
+
+    先前一律记进 Factory,站点便据以推定「协作」—— 水泥厂成了计算机的共同
+    研制单位。用户要留(机器去了哪儿,正是计算机怎么用开的),但不能算研制方。"""
+    print("用户单位")
+    md = ("## 一、控制机\n\n"
+          "1988年，四机部6所承接了大庆石油化工总厂的过程控制系统，研制成功DJS-186小型计算机。\n"
+          "1979年，北京控制机厂与北京市计算机技术研究所联合研制成功DJS-130小型计算机。\n")
+    res = EX.extract(md, book="北京工业志·电子志", city="Beijing", min_mentions=1)
+    by = {c["Product"]: c for c in res["comp"]}
+    check("DJS-186小型计算机" in by, "承接工程那一台也记下来了")
+    u = by["DJS-186小型计算机"]
+    eq(u.get("用户"), "大庆石油化工总厂", "承接的那一头记进「用户」")
+    check("大庆" not in u.get("Factory", ""), "决不混进研制单位 —— 否则要画成协作")
+    check("四机部6所" in u.get("Factory", ""), "研制方还在原处")
+    v = by["DJS-130小型计算机"]
+    eq(v.get("用户", ""), "", "真的协作研制,没有用户")
+    check("北京市计算机技术研究所" in (v.get("Research Insti", "") + v.get("Factory", "")),
+          "真的协作单位照旧记下,协作连线不受影响")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
-               test_book, test_flat_heads, test_fixes):
+               test_book, test_flat_heads, test_fixes, test_users):
         fn()
     print()
     if FAILED:

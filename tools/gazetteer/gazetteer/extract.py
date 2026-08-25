@@ -57,6 +57,12 @@ LEAD_NOISE = re.compile(
     r"易名为|易名|定名为|定名|并入|划归|划入|归属|隶属|合并|合组|组建|组成|成立|建立|创办|"
     r"创建|筹建|设立|撤销|撤消|接管|接收|投资|开办|接受|承接|接产|接办|引进|"
     r"组织|完成|通过|移交|审查|开设|采用|选用|委托|订购|承担|支援|会同)?(?:了|过)?\s*")
+# 名字当中还夹着动词的,多半是两截连在一起:「四机部6所承接了大庆石油化工总厂」。
+# 从最后一个动词后头切开 —— 切出来像个名字就用它,不像才整条丢掉。这比一见
+# 动词就丢强:承接的那一头正是用机器的人家,是要留的。
+# 「开发」「生产」不在其列 ——「北京华海新技术开发公司」是正经名号,切不得。
+MID_VERB = re.compile(r"^.*(?:承接|承担|接受|引进|完成|通过|移交|审查|召开|开设|"
+                      r"组织|交付|交给|销往|采用|订购|委托)[了过]?")
 # 剥完之后还带这些字样的,是句子不是名字
 NAME_JUNK = re.compile(r"[年月日,,。;;::、?!!]|移交|承接|接受|引进|完成|通过|审查|召开|"
                        r"开设|组织|承担|试制|前身|原名|改名|更名|改称|并入|划归|合并|"
@@ -122,6 +128,14 @@ MEM_RE = re.compile(r"(?:内存|存储容量|主存|存储器容量)\D{0,4}?([0-
 SPEED_RE = re.compile(r"(?:运算)?速度\D{0,6}?(?:每秒\D{0,4})?([0-9]+(?:\.[0-9]+)?)\s*(亿|万|千)?\s*次")
 COLLAB = re.compile(r"(?:协作|合作|协同|联合|共同|配合)")
 
+# 用机的人家,不是造机的人家。「承接唐山陡河发电总厂」「交付唐山基地应用」
+# 「完成了新疆水泥厂的过程控制改造」—— 这些单位是机器的去处,不是研制方。
+# 先前一律记进 Factory,站点便据以画出一条「协作」连线:水泥厂成了计算机的
+# 共同研制单位。分不清的仍算协作 —— 宁可少认一个用户,不可把用户说成研制方。
+USER_LEAD = re.compile(r"(?:承接|承担|交付|交给|移交|供|销往|用于|装备|应用于|"
+                       r"为(?!主)|给)[了过]?\s*$")
+USER_TAIL = re.compile(r"^\s*的?(?:过程控制|生产控制|调度|管理|监测|监控|自动化)")
+
 SENT_SPLIT = re.compile(r"(?<=[。！？；])")
 PAGE_MARK = re.compile(r"<!--\s*p\.(\d+)\s*-->")
 HEAD_MARK = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -186,6 +200,9 @@ def clean_unit_name(raw):
             break
         s = t
     s = s.strip("　 ·、,,")
+    m = MID_VERB.search(s)
+    if m:
+        s = s[m.end():].strip("　 ·、,,")
     if not s or len(s) < 4 or len(s) > 20:
         return ""
     if NAME_JUNK.search(s) or UNIT_STOP.match(s) or s in UNIT_BAD:
@@ -333,6 +350,21 @@ def find_persons(text):
 
 
 ANAPHOR = re.compile(r"^(?:该机|该型|该机型|此机|该产品|该计算机|该系统|同机|它)")
+
+
+def user_units(scope, names):
+    """这句里哪些单位是拿机器去用的。
+
+    靠名字前后那几个字分辨:前头是「承接」「交付」「为…」,或后头跟着
+    「的过程控制系统」,就是用户。"""
+    out = []
+    for nm in names:
+        i = scope.find(nm)
+        if i < 0:
+            continue
+        if USER_LEAD.search(scope[max(0, i - 6):i]) or USER_TAIL.match(scope[i + len(nm):]):
+            out.append(nm)
+    return out
 
 
 def collab_scope(para, sent):
@@ -588,6 +620,8 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     others = [x for x in (unit_names(scope) + known_in(scope, kidx))
                               if kidx.get(x, x) != nm]
                     others = list(dict.fromkeys(kidx.get(x, x) for x in others))
+                    users = user_units(scope, others)
+                    others = [x for x in others if x not in users]
                     is_inst = bool(re.search(r"研究所|研究院|大学|学院|设计院", nm))
                     base["字长"] = w.group(1) if w else ""
                     base["内存"] = (mem.group(1) + (mem.group(2) or "")) if mem else ""
@@ -598,6 +632,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     base["Factory"] = "、".join(
                         ([] if is_inst else [nm])
                         + [x for x in others if not re.search(r"研究所|研究院|大学|学院", x)])
+                    base["用户"] = "、".join(users)
                     base["Time"] = date or ""
                     base["Personnel"] = persons
                     base["Remark"] = (("协作:" + "、".join(others) + "。")

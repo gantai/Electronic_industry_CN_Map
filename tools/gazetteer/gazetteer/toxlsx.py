@@ -109,10 +109,13 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             row += 1
             report["units"] += 1
 
-    def _append_flat(sheet, cols, rows, tag, text_cols=()):
+    def _append_flat(sheet, cols, rows, tag, text_cols=(), ensure=()):
         if not rows:
             return
         ws = wb[sheet]
+        for label in ensure:
+            if any(r.get(label) not in (None, "") for r in rows):
+                _ensure_column(ws, label)
         h = _headers(ws, 1)
         row = _last_row(ws, start=2) + 1
         for r in rows:
@@ -127,8 +130,10 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 report[tag] += 1
 
     _append_flat(SHEET_SEMI, ["Product", "Factory", "Time", "Personnel", "Remark"], semi, "semi")
+    # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     _append_flat(SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
-                              "Factory", "Time", "Personnel", "Remark"], comp, "comp")
+                              "Factory", "用户", "Time", "Personnel", "Remark"], comp, "comp",
+                 ensure=("用户",))
     # Name-History 的 From 一列,原表存的是文本(见 src/xlsxio.js 的 exportWorkbook),照旧
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
                  names, "names", text_cols=("From",))

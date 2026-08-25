@@ -300,10 +300,14 @@ function parseComp(ws, match) {
   const cP = col("Product", "产品"), cW = col("字长"), cM = col("内存");
   const cS = col("Speed（次秒）", "Speed", "速度"), cI = col("Research Insti", "研制单位");
   const cF = col("Factory", "厂"), cT = col("Time", "时间");
+  const cU = col("用户", "User", "应用单位");
   const cPer = col("Personnel", "人员"), cR = col("Remark", "备注");
   return rows.slice(hi + 1).map((r, i) => {
     const instText = String(cell(r, cI) || "").trim();
     const factoryText = String(cell(r, cF) || "").trim();
+    /* 「用户」是机器的去处,不是研制方 —— 决不并进 unitIds,
+       否则 deriveEvents 会把用机的人家画成共同研制的「协作」。 */
+    const userText = String(cell(r, cU) || "").trim();
     const ids = [];
     [...match(instText), ...match(factoryText)].forEach((id) => { if (!ids.includes(id)) ids.push(id); });
     return {
@@ -314,6 +318,7 @@ function parseComp(ws, match) {
       speed: cell(r, cS) === "" ? "" : String(cell(r, cS)),
       instText,
       factoryText,
+      userText,
       unitIds: ids,
       date: parseCNDate(cell(r, cT)),
       timeRaw: String(cell(r, cT) || "").trim(),
@@ -490,8 +495,8 @@ export function exportWorkbook(data, filename) {
   ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 11 }, { wch: 14 }, { wch: 40 }];
 
   const ws3 = XLSX.utils.aoa_to_sheet([
-    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "Time", "Personnel", "Remark"],
-    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.timeRaw, c.personnel, c.remark]),
+    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "用户", "Time", "Personnel", "Remark"],
+    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.userText, c.timeRaw, c.personnel, c.remark]),
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
