@@ -679,6 +679,14 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                                     "role": role, "head": "·".join(b["heads"])})
 
     units, semi, comp, names = [], [], [], []
+    # 同一个产品名只归一次类。名字说不清的(「104机」)要看上下文,而上下文一句
+    # 一个样 —— 不定死,同一台机器就会一次进器件表、一次进整机表,两张表各有一条。
+    kind = {}
+
+    def to_comp(product, ctx):
+        if product not in kind:
+            kind[product] = is_computer(product, ctx)
+        return kind[product]
 
     for nm, hits in dossier.items():
         roles = [h["role"] for h in hits]
@@ -788,7 +796,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             date = cndate.parse(s)
             persons = "、".join(find_persons(s))[:40]
             for p in find_products([s]):
-                is_comp = is_computer(p, s + str(h.get("head") or ""))
+                is_comp = to_comp(p, s + str(h.get("head") or ""))
                 base = OrderedDict(keep="?", confidence=round(0.4 + 0.3 * bool(date), 2),
                                    page=h["page"])
                 base["Product"] = p
@@ -857,7 +865,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         head = "·".join(b["heads"])
         # 是整机还是器件,先看产品名,再看这一句,最后看它在哪一章 ——
         # 「第三章 电子计算机」底下的型号,自然是计算机
-        is_comp = is_computer(p, s + head)
+        is_comp = to_comp(p, s + head)
         base = OrderedDict(keep="?", confidence=conf, page=b["page"])
         base["Product"] = p
         if is_comp:
