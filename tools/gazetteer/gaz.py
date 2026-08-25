@@ -248,7 +248,8 @@ def cmd_book(args):
     BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year)
     print("待核 TSV 另存一份在 %s" % rd)
     print()
-    print("接下来:在 Excel 的「待核」表里核名字 —— 原文就在第 5 列。")
+    # 别写第几列 —— 加一列就说错一次。列名不会变
+    print("接下来:在 Excel 的「待核」表里核名字,判断的凭据是「据以立论的原文」那一列。")
     print("  名字认错的当场改;同一家的几个名字改成同一个,追加时会并作一行;")
     print("  要的行「取否」写 y。核完:")
     print('    %s xlsx --from "%s"' % (SELF, out))
