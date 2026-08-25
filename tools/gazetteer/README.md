@@ -1,6 +1,6 @@
 # gaz —— 把一本地方志变成这张地图上的数据
 
-扫描件 → 逐页文本 → 带页码的 Markdown → 待核记录 → `CN_Electronic_Industry.xlsx`。
+扫描件 → Markdown → 待核记录 → `CN_Electronic_Industry.xlsx`。
 
 志书是这张图最大的一处矿脉:厂所各占一节,始建、沿革、厂址、产品、职工人数
 都写在里头。手抄一本要几个月,这套东西把**誊录**的活儿包了,**判断**的活儿
@@ -20,19 +20,25 @@ python3 tools/gazetteer/gaz.py check
 它会逐项报告并给出装法。最省事的一套:
 
 ```bash
-pip install openpyxl pymupdf                 # 必装:回写工作簿、读 PDF
-pip install paddleocr paddlepaddle           # 中文 OCR 首选
-# 或者用 tesseract 作备胎:
-#   macOS  brew install tesseract tesseract-lang
-#   Debian apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra
+pip install openpyxl                         # 必装:回写工作簿
 ```
 
-**PDF 本身带字的话,一样 OCR 引擎都不用装。** 书同文、超星、国图数字方志的
-PDF 多半带文本层,`gaz` 会逐页检查,有字就直接取,又快又准。
+**扫描件转 Markdown 不在这个仓里。** 同一批志书 PDF,
+[Historian_Archive_Management](https://github.com/gantai/Historian_Archive_Management)
+那边也要转,它把转换单拆成了 `zhiconv` 一个包,专门伺候这两处 —— 版面、
+竖排、统计表都归它管,这边再写一份只会更差。要转扫描件才装:
+
+```bash
+pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"
+pip install paddleocr "paddlex[ocr]==3.7.2"  # 识别引擎,zhiconv 不自带
+```
+
+引擎这一步在 Windows 上常装不上。装不上也不要紧 —— **已经转好的 `.md`
+根本用不着 zhiconv**,`gaz book` 直接读。
 
 ## 手里已经有转好的 .md
 
-`ocr` / `md` 两步是给扫描件预备的。稿子若已经转成 Markdown —— 别处转的、自己
+`convert` 那一步是给扫描件预备的。稿子若已经转成 Markdown —— 别处转的、自己
 抄的、从数字方志库拷出来的 —— 直接从 `book` 进,一步出一份本地 Excel:
 
 ```bat
@@ -86,7 +92,7 @@ python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工�
 ```bash
 cd /path/to/Electronic_industry_CN_Map
 
-# 一气跑到待核这一步（ocr → md → extract → notes）
+# 一气跑到待核这一步（convert → extract → notes,转换由 zhiconv 代劳）
 python3 tools/gazetteer/gaz.py run ~/志书/上海电子仪表工业志.pdf \
         --slug 上海电子仪表工业志 --book 上海电子仪表工业志
 
@@ -98,10 +104,7 @@ python3 tools/gazetteer/gaz.py run ~/志书/上海电子仪表工业志.pdf \
 跑完东西都在 `gaz-work/<slug>/` 底下:
 
 ```
-pages/            逐页文本。**断了接着跑**靠它 —— 已识别的页不会重做
-meta.json         每页由哪条路径取的字（文本层 / paddleocr / tesseract）
 <slug>.md         转好的 Markdown,丢进 Obsidian 库里就能读
-<slug>.fixes.tsv  字形订正流水,逐条可查
 review/           四张待核 TSV + geocode 落点草稿
 vault/            每单位一则笔记 + 一则索引
 ```
@@ -231,14 +234,13 @@ gaz book    <某某志.md>        转换稿 → 待核 TSV + 本地 Excel
                                                     --out/--city/--book
                                                     --reflow auto|on|off
                                                     --page-pattern
-gaz ocr    <pdf|图目录>        扫描件 → 逐页文本      --engine auto|text|paddle|tesseract
-                                                    --first/--last/--dpi/--force
-gaz md     --slug X           逐页文本 → Markdown    --fixes/--show-furniture/--keep-furniture
+gaz convert <pdf>             扫描件 → Markdown      --first/--last（只转一章）
+                                                    --lang/--force/--out
 gaz extract --slug X          Markdown → 四张 TSV    --book/--stats-year/--min-mentions/--auto-keep
 gaz notes  --slug X           → Obsidian 笔记        --all（不问 keep 全写出）
 gaz geocode --slug X          → geocode.js 落点草稿
 gaz xlsx   --slug X           keep=y 的行 → 工作簿    --dry-run/--allow-dup
-gaz run    <pdf>              前四步一气跑完
+gaz run    <pdf>              convert → extract → notes
 
 gaz push   --vault ~/库/地图   工作簿 → 库,全部厂所各一则   --force
 gaz pull   --vault ~/库/地图   库 → 工作簿,写回改过的字段   --dry-run
@@ -251,10 +253,11 @@ gaz pull   --vault ~/库/地图   库 → 工作簿,写回改过的字段   --dr
 
 - **`--stats-year` 默认 1990**,与原表的统计断面一致。志书里别的年份的数字不会
   写进统计块,只记在 `Remark` 里注明年份,免得两个断面的数混作一谈。
-- **竖排、繁体**:`--lang chinese_cht` 可换 PaddleOCR 的繁体模型;竖排识别率
-  一般,老志书(1949 年前)建议先试三十页看看成色。
-- **表格里的统计数字取不到** —— 志书的厂所一览表多半是表格,本工具只标出
-  「疑似表格」,不作还原。那部分仍要手录。
+- **竖排、繁体**:`--lang chinese_cht` 转繁体模型;竖排识别率一般,老志书
+  (1949 年前)建议 `--first/--last` 先试三十页看看成色。识别的成色归 zhiconv,
+  不归这里。
+- **表格里的统计数字**要看转换稿的成色。转得出表格的,`book` 会照读;转不出的
+  仍要手录。
 - **人名、产品名的抽取偏保守**,宁可漏,不愿错。漏掉的自己往 TSV 里补一行即可。
 - 抽取全是**规则**,不是模型:它认得志书的套语(「前身为」「改名为」「划归」),
   遇上别出心裁的行文就认不出。这也是 `evidence` 一栏必须逐条过目的原因。

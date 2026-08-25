@@ -5,19 +5,17 @@
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
     gaz book    某某志.md          现成的转换稿 → 待核 TSV + 一份本地 Excel
-    gaz ocr    上海电子工业志.pdf   扫描件 → 逐页文本(可断可续)
-    gaz md     --slug 上海电子工业志 逐页文本 → 带页码锚点的 Markdown
+    gaz convert 上海电子工业志.pdf  扫描件 → Markdown(转换交给 zhiconv)
     gaz extract --slug ...         Markdown → 四张待核 TSV
     gaz notes  --slug ...          待核记录 → Obsidian 笔记
     gaz push   --vault ~/库/地图    工作簿 → 库,全部厂所各一则,字段在 frontmatter
     gaz pull   --vault ~/库/地图    库 → 工作簿,把你改过的字段写回原行
     gaz geocode --slug ...         新单位 → src/geocode.js 的落点条目草稿
     gaz xlsx   --slug ...          核过的行 → 追加进 CN_Electronic_Industry.xlsx
-    gaz run    上海电子工业志.pdf   前四步一气跑完,停在待核这一步
+    gaz run    上海电子工业志.pdf   convert → extract → notes 一气跑完
 
 一切成果落在 `--work`(默认 gaz-work/<slug>/)底下:
 
-    pages/       逐页文本,断点续跑靠它
     <slug>.md    转好的 Markdown(丢进 Obsidian 库里就能读)
     review/      四张 TSV,`keep` 列改成 y 的行才准进工作簿
     vault/       每单位一则笔记 + 一则索引
@@ -31,7 +29,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gazetteer import (bookmd as BOOK, cndate, extract as EX,  # noqa: E402
-                       notes as NOTES, ocr as OCR, tomd, toxlsx, tsvio, vault as VAULT)
+                       notes as NOTES, toxlsx, tsvio, vault as VAULT)
+
+# 扫描件 → Markdown 不在这个仓里。同一批 PDF 另一个项目也要转,那边把转换
+# 单拆成了 zhiconv 一个包,专门伺候这两处;这边再写一份只会更差。
+ZHICONV_INSTALL = (
+    'pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"\n'
+    '       再装识别引擎:pip install paddleocr "paddlex[ocr]==3.7.2"')
+ZHICONV_MISSING = (
+    "没装 zhiconv —— 扫描件转 Markdown 归它管:\n"
+    "  " + ZHICONV_INSTALL + "\n"
+    "已经转好的 .md 不必走这一步,直接 gaz book 某某志.md")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -63,62 +71,46 @@ def review_dir(wd):
 # ---------------------------------------------------------------- 各子命令
 
 def cmd_check(args):
-    rows, langs = OCR.check()
     print("本机环境:\n")
-    for name, ok, how, why in rows:
-        print("  [%s] %-30s %s" % ("✓" if ok else " ", name, why))
-        if not ok:
-            print("       装法:%s" % how)
-    if langs:
-        print("\n  tesseract 已装的中文语言包:%s" % langs)
-    elif any(r[0].startswith("Tesseract") and r[1] for r in rows):
-        print("\n  注意:tesseract 装了,但没找到 chi_sim / chi_tra 语言包,识别不了中文。")
-    have_ocr = any(r[0] in ("PaddleOCR", "Tesseract") and r[1] for r in rows)
-    print("\n结论:%s" % ("OCR 可用。" if have_ocr else
-                        "还没有 OCR 引擎;若 PDF 自带文本层,`gaz ocr --engine text` 仍可直接取字。"))
+    for mod, what, how in (("openpyxl", "读写 .xlsx", "pip install openpyxl"),
+                           ("zhiconv", "扫描件 → Markdown", ZHICONV_INSTALL)):
+        try:
+            __import__(mod)
+            print("  [✓] %-12s %s" % (mod, what))
+        except ImportError:
+            print("  [ ] %-12s %s\n       装法:%s" % (mod, what, how))
+    try:
+        from zhiconv import install_hints
+        print("\nzhiconv 认得的转换器:\n  %s" % install_hints(".pdf"))
+    except ImportError:
+        pass
+    print("\n已经转好的 .md 不需要 zhiconv,gaz book 直接读。")
     return 0
 
 
-def cmd_ocr(args):
+def cmd_convert(args):
+    """扫描件 → Markdown,转换本身交给 zhiconv。"""
+    try:
+        from zhiconv import to_markdown
+    except ImportError:
+        sys.exit(ZHICONV_MISSING)
+    from pathlib import Path
     slug = args.slug or os.path.splitext(os.path.basename(args.src))[0]
+    args.slug = slug
     wd = workdir(args, slug)
     os.makedirs(wd, exist_ok=True)
-    OCR.run(args.src, wd, engine=args.engine, dpi=args.dpi, first=args.first,
-            last=args.last, force=args.force, keep_images=args.keep_images, lang=args.lang)
-    print("下一步:gaz md --slug %s" % slug)
-    return 0
-
-
-def cmd_md(args):
-    wd = workdir(args)
-    pages = OCR.load_pages(wd)
-    if not pages:
-        sys.exit("%s/pages/ 里没有页文本,先跑 gaz ocr" % wd)
-    meta = {}
-    mp = os.path.join(wd, "meta.json")
-    if os.path.exists(mp):
-        with open(mp, encoding="utf-8") as f:
-            meta = json.load(f)
-    fixes = tomd.load_fixes(args.fixes)
-    if args.show_furniture:
-        print("判为书眉书脚、将被删去的行:")
-        for l in tomd.furniture_report(pages):
-            print("   ", l)
-        return 0
-    md, ledger = tomd.build(pages, args.title or args.slug, meta=meta, fixes=fixes,
-                            keep_furniture=args.keep_furniture)
-    out = args.out or os.path.join(wd, args.slug + ".md")
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(md)
-    if ledger:
-        lp = os.path.splitext(out)[0] + ".fixes.tsv"
-        with open(lp, "w", encoding="utf-8") as f:
-            f.write("page\t原字\t改作\t次数\n")
-            for p, a, b, n in ledger:
-                f.write("%s\t%s\t%s\t%s\n" % (p, a, b, n))
-        print("字形订正 %d 处,逐条记在 %s" % (len(ledger), os.path.basename(lp)))
-    print("%d 页 → %s（%d 字）" % (len(pages), out, len(md)))
-    print("下一步:gaz extract --slug %s" % args.slug)
+    out = Path(args.out or os.path.join(wd, slug + ".md"))
+    span = (args.first, args.last) if args.last else None
+    if span:
+        print("只转第 %d–%d 页" % span)
+    res = to_markdown(Path(args.src), pages=span, language=args.lang,
+                      force=args.force, out=out)
+    for w in res.warnings:
+        print("  注意:%s" % w)
+    if not res.ok or not res.output:
+        sys.exit("转不了:%s" % (res.reason or "zhiconv 没说原因"))
+    print("%s（%s）" % (res.output, res.converter))
+    print("下一步:gaz book %s —— 或 gaz extract --slug %s" % (res.output, slug))
     return 0
 
 
@@ -126,7 +118,7 @@ def cmd_extract(args):
     wd = workdir(args)
     md_path = args.md or os.path.join(wd, args.slug + ".md")
     if not os.path.exists(md_path):
-        sys.exit("找不到 %s,先跑 gaz md" % md_path)
+        sys.exit("找不到 %s,先跑 gaz convert" % md_path)
     with open(md_path, encoding="utf-8") as f:
         md = f.read()
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
@@ -171,7 +163,7 @@ def cmd_inspect(args):
 
 
 def cmd_book(args):
-    """现成的 .md → 待核 TSV + 一份本地 Excel。扫描件请走 gaz ocr / gaz md。"""
+    """现成的 .md → 待核 TSV + 一份本地 Excel。扫描件请先走 gaz convert。"""
     text, enc = BOOK.read_text(args.md)
     stem = os.path.splitext(os.path.basename(args.md))[0]
     book = args.book or stem
@@ -305,11 +297,9 @@ def cmd_xlsx(args):
 
 
 def cmd_run(args):
-    slug = args.slug or os.path.splitext(os.path.basename(args.src))[0]
-    args.slug = slug
-    cmd_ocr(args)
     args.out = None
-    cmd_md(args)
+    cmd_convert(args)
+    slug = args.slug
     args.md = None
     cmd_extract(args)
     args.all = True
@@ -343,26 +333,15 @@ def main(argv=None):
     p = sub.add_parser("check", help="看看本机装了什么", parents=[common])
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("ocr", help="扫描件 → 逐页文本", parents=[common])
-    p.add_argument("src", help="PDF 文件,或装着页图的目录")
-    p.add_argument("--engine", default="auto",
-                   choices=["auto", "text", "paddle", "tesseract"],
-                   help="auto=先取文本层,没有再 OCR")
-    p.add_argument("--dpi", type=int, default=300)
-    p.add_argument("--first", type=int, default=1)
-    p.add_argument("--last", type=int)
-    p.add_argument("--force", action="store_true", help="已识别过的页也重做")
-    p.add_argument("--keep-images", action="store_true", help="留下渲染出来的页图")
-    p.add_argument("--lang", default="ch", help="PaddleOCR 语种(ch/chinese_cht)")
-    p.set_defaults(func=cmd_ocr)
-
-    p = sub.add_parser("md", help="逐页文本 → Markdown", parents=[common])
-    p.add_argument("--out")
-    p.add_argument("--title")
-    p.add_argument("--fixes", help="自备字形订正表(TSV:错<TAB>对)")
-    p.add_argument("--keep-furniture", action="store_true", help="不删书眉书脚")
-    p.add_argument("--show-furniture", action="store_true", help="只列出将被删的版式行")
-    p.set_defaults(func=cmd_md)
+    p = sub.add_parser("convert", help="扫描件 → Markdown(交给 zhiconv)", parents=[common])
+    p.add_argument("src", help="PDF,或别的 zhiconv 认得的文件")
+    p.add_argument("--out", help="转好的 .md 写到哪儿(默认 gaz-work/<slug>/<slug>.md)")
+    p.add_argument("--first", type=int, default=1, help="只转其中一段:起页")
+    p.add_argument("--last", type=int, help="只转其中一段:止页 —— 一本志几百页,"
+                                            "要一章就别转另外二十九章")
+    p.add_argument("--lang", default="ch", help="识别语种(ch / chinese_cht)")
+    p.add_argument("--force", action="store_true", help="已转过的也重转")
+    p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser("extract", help="Markdown → 待核 TSV", parents=[common])
     p.add_argument("--md")
@@ -418,19 +397,13 @@ def main(argv=None):
     p.add_argument("--book")
     p.set_defaults(func=cmd_xlsx)
 
-    p = sub.add_parser("run", help="ocr → md → extract → notes 一气跑完", parents=[common])
+    p = sub.add_parser("run", help="convert → extract → notes 一气跑完", parents=[common])
     p.add_argument("src")
-    p.add_argument("--engine", default="auto", choices=["auto", "text", "paddle", "tesseract"])
-    p.add_argument("--dpi", type=int, default=300)
+    p.add_argument("--out")
     p.add_argument("--first", type=int, default=1)
     p.add_argument("--last", type=int)
-    p.add_argument("--force", action="store_true")
-    p.add_argument("--keep-images", action="store_true")
     p.add_argument("--lang", default="ch")
-    p.add_argument("--title")
-    p.add_argument("--fixes")
-    p.add_argument("--keep-furniture", action="store_true")
-    p.add_argument("--show-furniture", action="store_true")
+    p.add_argument("--force", action="store_true")
     p.add_argument("--book", help="出处里写的书名")
     p.add_argument("--book-note")
     p.add_argument("--city", default="Shanghai")
