@@ -27,6 +27,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -190,7 +191,9 @@ def cmd_book(args):
     """现成的 .md → 待核 TSV + 一份本地 Excel。扫描件请先走 gaz convert。"""
     text, enc = BOOK.read_text(args.md)
     stem = os.path.splitext(os.path.basename(args.md))[0]
-    book = args.book or stem
+    # 书名默认取《》里那一截:「《北京工业志·电子志》2001 第三章」→「北京工业志·电子志」。
+    # 拿整个文件名当书名,出处会写成「…2001 第三章·第三章 电子计算机」,第三章说两遍。
+    book = args.book or re.sub(r"^《|》.*$", "", stem) or stem
     slug = args.slug or stem
     print("读入 %s（%s,%d 字）" % (os.path.basename(args.md), enc, len(text)))
 
