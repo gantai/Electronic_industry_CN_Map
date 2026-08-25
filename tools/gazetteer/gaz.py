@@ -309,6 +309,7 @@ def cmd_xlsx(args):
         if seen.get("merged"):
             print("  核过之后名字改成一样的,%d 行并作一行,出处都留着" % seen["merged"])
         where = "工作簿的「取否」列"
+        label = args.book or os.path.splitext(os.path.basename(args.from_xlsx))[0]
     else:
         rd = review_dir(workdir(args))
         bundle = {}
@@ -317,13 +318,22 @@ def cmd_xlsx(args):
             p = os.path.join(rd, fn)
             bundle[tag] = tsvio.kept(tsvio.read(p)) if os.path.exists(p) else []
         where = "四张 TSV 的 keep 列"
+        seen = {}
+        label = args.book or args.slug
     total = sum(len(v) for v in bundle.values())
     if not total:
         print("%s里没有一行写着 y —— 什么也没做。" % where)
         print("这是有意为之:没经你点头的记载,不进工作簿。")
         return 1
-    print("将追加:%d 家单位、%d 条器件、%d 条整机、%d 段名称沿革"
-          % (len(bundle["units"]), len(bundle["semi"]), len(bundle["comp"]), len(bundle["names"])))
+    # 分母要写出来 —— 「103/103」一眼看得出是整列都点了头,「12/103」才是核过的样子
+    tally = "、".join(
+        "%d/%d %s" % (len(bundle[k]), seen[k], zh) if k in seen else "%d %s" % (len(bundle[k]), zh)
+        for k, zh in (("units", "家单位"), ("semi", "条器件"),
+                      ("comp", "条整机"), ("names", "段名称沿革")))
+    print("将追加:%s" % tally)
+    if seen.get("units") and len(bundle["units"]) == seen["units"] and seen["units"] > 20:
+        print("  注意:%d 家一家不落全点了头。核名字本是要挑的,整列填 y 与不核无异。"
+              % seen["units"])
     if args.dry_run:
         for r in bundle["units"]:
             print("   + %s %s %s" % (r.get("Unit"), r.get("Industry", ""),
@@ -336,7 +346,14 @@ def cmd_xlsx(args):
     if rep["skipped"]:
         print("同名已在表内、跳过 %d 家:%s" % (len(rep["skipped"]), "、".join(rep["skipped"][:8])))
         print("确要重复登记,加 --allow-dup。")
-    print("核对无误后:git add -A && git commit -m \"补录 %s\" && git push" % (args.book or args.slug))
+    # 一行一条 —— PowerShell 5.1 不认 &&
+    print("核对无误后提交:")
+    print("  git add -A")
+    print('  git commit -m "补录 %s"' % label)
+    print("  git push")
+    if args.from_xlsx:
+        print("追错了要退回:git checkout -- %s(或用上面那份备份覆盖回去)"
+              % os.path.basename(args.xlsx))
     return 0
 
 
