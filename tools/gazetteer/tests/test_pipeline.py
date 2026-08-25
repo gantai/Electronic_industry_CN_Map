@@ -470,9 +470,28 @@ def test_users():
           "真的协作单位照旧记下,协作连线不受影响")
 
 
+def test_rename_subject():
+    """一句话点到好几家时,「改名为」说的是主语那一家。"""
+    print("改的是谁的名")
+    md = ("## 一、控制机\n\n"
+          "1979年，北京控制机厂为兰州炼油厂研制成功过程控制系统，同年改名为北京自动化设备厂。\n"
+          "1980年，北京电器科学研究院参加该项目的设计。\n")
+    res = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+    got = [(n["Unit"], n["Name"]) for n in res["names"]]
+    eq(got, [("北京控制机厂", "北京自动化设备厂")], "只有主语那一家改了名")
+    # 志书行文主语在前,「为兰州炼油厂」夹在主语与动词之间 —— 认第一家,不认最后一家
+    check(EX.renames_this("北京控制机厂为兰州炼油厂研制系统，同年改名为甲厂。", 22, "北京控制机厂"),
+          "主语那一家认得出")
+    check(not EX.renames_this("北京控制机厂为兰州炼油厂研制系统，同年改名为甲厂。", 22, "兰州炼油厂"),
+          "顺带提到的用户不算")
+    check(EX.renames_this("该厂1966年改名为上海无线电十九厂。", 8, "上海元件十四厂"),
+          "前头一家也没点到,那就是它")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
-               test_book, test_flat_heads, test_fixes, test_users):
+               test_book, test_flat_heads, test_fixes, test_users,
+               test_rename_subject):
         fn()
     print()
     if FAILED:

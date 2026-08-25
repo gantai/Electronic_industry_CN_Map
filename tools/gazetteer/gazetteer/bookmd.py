@@ -313,26 +313,26 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
 
     def flat(name, cols, rows, keys=None):
         w = wb.create_sheet(name)
-        w.append(cols + ["取否"])
+        w.append(["取否"] + cols)
         for c in range(1, len(cols) + 2):
             w.cell(row=1, column=c).font = Font(bold=True)
         for r in rows:
-            w.append([num(r.get(k)) if k in ("Time", "From") else r.get(k, "")
-                      for k in (keys or cols)] + [""])
-        w.freeze_panes = "A2"
+            w.append([""] + [num(r.get(k)) if k in ("Time", "From") else r.get(k, "")
+                             for k in (keys or cols)])
+        w.freeze_panes = "B2"
         return w
 
     flat("Semi-Product", ["Product", "Factory", "Time", "Personnel", "Remark"], res["semi"])
     flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                           "Factory", "用户", "Time", "Personnel", "Remark"], res["comp"])
     nh = wb.create_sheet("Name-History")
-    nh.append(["Unit", "Name", "From", "Remark", "Source", "取否"])
+    nh.append(["取否", "Unit", "Name", "From", "Remark", "Source"])
     for c in range(1, 7):
         nh.cell(row=1, column=c).font = Font(bold=True)
     for r in res["names"]:
-        nh.append([r.get("Unit", ""), r.get("Name", ""), str(r.get("From", "")),
-                   r.get("Remark", ""), r.get("Source", ""), ""])
-    nh.freeze_panes = "A2"
+        nh.append(["", r.get("Unit", ""), r.get("Name", ""), str(r.get("From", "")),
+                   r.get("Remark", ""), r.get("Source", "")])
+    nh.freeze_panes = "B2"
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
@@ -356,9 +356,9 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
-              "Semi-Product": [28, 24, 11, 14, 30],
-              "Comp-Product": [30, 8, 12, 14, 30, 24, 26, 14, 16, 34],
-              "Name-History": [26, 30, 11, 40, 26]}
+              "Semi-Product": [6, 28, 24, 11, 14, 30],
+              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 14, 16, 34],
+              "Name-History": [6, 26, 30, 11, 40, 26]}
     for nm, ws_widths in widths.items():
         w = wb[nm]
         for i, wid in enumerate(ws_widths, start=1):

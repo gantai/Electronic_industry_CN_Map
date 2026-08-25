@@ -32,7 +32,7 @@ from . import cndate
 # ---------------------------------------------------------------- 词表
 
 UNIT_TAIL = (r"(?:研究所|研究院|设计院|实验室|试验室|工厂|电子厂|仪器厂|机械厂|无线电厂|"
-             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|大学|学院|"
+             r"器材厂|电器厂|电工厂|灯泡厂|制造厂|修配厂|公司|工场|制造所|计算所|大学|学院|"
              r"[0-9]+所|厂)")
 # 「厂」「所」后头跟这些字的,是「厂房」「所长」一类的词,不是名字的收尾
 TAIL_RE = re.compile(UNIT_TAIL + r"(?![房址长区部内外里方家矿商牌史志属在有以需谓工人员级])")
@@ -383,7 +383,25 @@ def collab_scope(para, sent):
     return scope
 
 
-def chain_from(sents, start=None):
+def renames_this(sent, at, unit, owner=False):
+    """这句话里的「改名为」,说的是不是它。
+
+    一句话常同时点到好几家:「北京控制机厂为兰州炼油厂研制过程控制系统,
+    同年改名为北京自动化设备厂」—— 改名说的是控制机厂,炼油厂不过是顺带
+    提到的用户。可按归户这句话算在两家名下,于是两家各记一笔曾用名,炼油厂
+    平白多了个曾用名「北京自动化设备厂」,而它压根没改过名。
+
+    志书行文,一句话的主语在最前头,后头那些是宾语、是用户、是协作方。所以
+    认第一家,不认最后一家 —— 「为兰州炼油厂」正夹在主语与动词之间。
+    有专条的单位另说:那一节整节都在讲它,改名自然是它的事。
+    前头一家也没点到(「该厂改名为…」),那也是它,照收。"""
+    if owner:
+        return True
+    others = unit_names(sent[:at])
+    return not others or others[0] == unit
+
+
+def chain_from(sents, start=None, unit="", owner=False):
     """把「前身」「改名」「划归」串成本仓库 Founder 列的写法:
        `华通电器厂->19660300改名上海无线电十九厂->19700000划归第四机械工业部`。"""
     steps = []
@@ -401,10 +419,14 @@ def chain_from(sents, start=None):
         m = re.search(r"(?:前身(?:为|是|系)?|原名(?:为)?|原(?:为|系))\s*"
                       r"([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r"|[一-鿿]{4,20}(?:室|部|组|站|馆))", s)
         if m:
+            if unit and not renames_this(s, m.start(), unit, owner):
+                continue
             steps.append((date, m.group(1), "前身", s))
             continue
         m = re.search(RENAME + r"\s*([一-鿿A-Za-z0-9]{4,24})", s)
         if m:
+            if unit and not renames_this(s, m.start(), unit, owner):
+                continue
             steps.append((date, "改名" + m.group(1).rstrip("。,、,"), "更名", s))
             continue
         m = re.search(r"(" + TRANSFER + r")\s*([一-鿿A-Za-z0-9]{2,20})", s)
@@ -536,7 +558,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             ev["Add."] = addr_ev
             signals += 1
 
-        founder, fev, ordered, terminal = chain_from(sents, start=start)
+        founder, fev, ordered, terminal = chain_from(sents, start=start, unit=nm, owner=has_entry)
         if founder:
             ev["Founder"] = fev[0] if fev else ""
             signals += 1
@@ -648,11 +670,50 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                     base["evidence"] = s[:300]
                     semi.append(base)
 
+    # —— 无主的产品。志书写机器,不一定顺带写谁造的:「104机的仿制与103机同时
+    # 进行,共有机柜32个」——整句没有一个单位名,上头那一轮按单位归户,就整条
+    # 漏掉了。产品名录该有它,研制单位空着就是空着,不硬派给谁。
+    have = {r["Product"] for r in semi} | {r["Product"] for r in comp}
+    for b in blocks:
+        for s in sentences(b["text"]):
+            if not re.search(MADE, s):
+                continue
+            date = cndate.parse(s)
+            for p in find_products([s]):
+                if p in have:
+                    continue
+                have.add(p)
+                base = OrderedDict(keep="?", confidence=0.3, page=b["page"])
+                base["Product"] = p
+                head = "·".join(b["heads"])
+                if re.search(r"计算机|电脑|微机|控制机|运算器", p):
+                    w, mem, sp = WORD_RE.search(s), MEM_RE.search(s), SPEED_RE.search(s)
+                    mult = {"亿": 100000000, "万": 10000, "千": 1000, None: 1}
+                    base["字长"] = w.group(1) if w else ""
+                    base["内存"] = (mem.group(1) + (mem.group(2) or "")) if mem else ""
+                    base["Speed（次秒）"] = (str(int(float(sp.group(1)) * mult[sp.group(2)]))
+                                          if sp else "")
+                    base["Research Insti"] = ""
+                    base["Factory"] = ""
+                    base["用户"] = ""
+                    base["Time"] = date or ""
+                    base["Personnel"] = "、".join(find_persons(s))[:40]
+                    base["Remark"] = "研制单位未详。" + src(b["page"], head)
+                    base["evidence"] = s[:300]
+                    comp.append(base)
+                else:
+                    base["Factory"] = ""
+                    base["Time"] = date or ""
+                    base["Personnel"] = "、".join(find_persons(s))[:40]
+                    base["Remark"] = "生产单位未详。" + src(b["page"], head)
+                    base["evidence"] = s[:300]
+                    semi.append(base)
+
     units.sort(key=lambda r: (r["role"] != "专条", -r["confidence"], r["page"]))
     return {
         "units": units,
         "semi": drop_undated(dedupe(semi, ("Product", "Factory", "Time")),
-                             ("Product", "Factory")),
+                             ("Product", "Factory")),  # 无主的 Factory 为空,自成一组
         "comp": dedupe(comp, ("Product", "Time")),
         "names": dedupe(names, ("Unit", "Name", "From")),
     }
