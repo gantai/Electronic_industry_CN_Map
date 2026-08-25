@@ -226,7 +226,7 @@ def test_vault():
         quiet = lambda *a: None
 
         rep = vault.push(xlsx, vdir, geocode_js=geo, log=quiet)
-        eq(rep["wrote"], 29, "29 家各写一则")
+        eq(rep["wrote"], len(toxlsx.read_units_full(xlsx)), "工作簿里有几家就写几则")
         check(os.path.exists(os.path.join(vdir, "_厂所索引.md")), "索引也写了")
 
         note = os.path.join(vdir, "上海微波设备研究所.md")
@@ -239,7 +239,12 @@ def test_vault():
         nh_before = len(toxlsx.read_name_history(xlsx))
         got = vault.collect(xlsx, vdir)
         eq(len(got["changes"]), 0, "刚推出来,没有该改的")
-        eq(got["name_history"], None, "名称沿革也没动")
+        # 沿革表里没有、而 Founder 链里有的,collect 会把它补出来 —— 那是它的本分。
+        # 要紧的是一条也不能少。
+        nh_now = {(r["Unit"], r["Name"], str(r["From"])) for r in toxlsx.read_name_history(xlsx)}
+        if got["name_history"] is not None:
+            back = {(r["Unit"], r["Name"], str(r["From"])) for r in got["name_history"]}
+            check(nh_now <= back, "推出来的沿革不该丢掉原表已有的行")
 
         # 产品表混进名称沿革 —— 曾经真出过这个岔子
         big = os.path.join(vdir, "上海电子计算机厂.md")
@@ -267,7 +272,7 @@ def test_vault():
 
         rep = vault.pull(xlsx, vdir, log=quiet)
         eq(rep["units"], 1, "写回一家")
-        eq(len(toxlsx.read_name_history(xlsx)), nh_before, "沿革行数不该无故增减")
+        check(len(toxlsx.read_name_history(xlsx)) >= nh_before, "沿革行只增不减")
 
         wb = openpyxl.load_workbook(xlsx)
         heads = [c.value for c in wb["Fact and Comp-Shanghai"][1]]
@@ -662,8 +667,8 @@ def test_aliases():
     tmp = tempfile.mkdtemp(prefix="gaz-alias-")
     try:
         import openpyxl
-        many = "四机部15所、电子部15所、电子部第15所"
-        md2 = "## 一、机\n\n1959年，华北计算技术研究所研制成功机器23计算机。\n"
+        many = "试甲所、试乙所、试丙所"
+        md2 = "## 一、机\n\n1959年，辽阳试验计算技术研究所研制成功机器23计算机。\n"
         r2 = EX.extract(md2, book="试", city="Beijing", min_mentions=1)
         bk = os.path.join(tmp, "待核.xlsx")
         bookmd.write_xlsx(bk, r2, city="Beijing", log=lambda *a: None)
@@ -671,7 +676,7 @@ def test_aliases():
         rv = wb["待核"]
         hd = [c.value for c in rv[1]]
         for i in range(2, rv.max_row + 1):
-            if rv.cell(row=i, column=2).value == "华北计算技术研究所":
+            if rv.cell(row=i, column=2).value == "辽阳试验计算技术研究所":
                 rv.cell(row=i, column=1).value = "y"
                 rv.cell(row=i, column=hd.index("别名") + 1).value = many
         wb.save(bk)
@@ -687,7 +692,7 @@ def test_aliases():
         check("别名" in hh, "原表没有「别名」列,按需在表尾添上")
         hit = [ws.cell(row=i, column=hh["别名"]).value
                for i in range(3, ws.max_row + 1)
-               if ws.cell(row=i, column=1).value == "华北计算技术研究所"]
+               if ws.cell(row=i, column=1).value == "辽阳试验计算技术研究所"]
         eq(hit, [many], "三个别名一并写进名录表(站点按顿号拆开,逐个都能认)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -701,10 +706,10 @@ def test_no_dup():
         x = os.path.join(tmp, "总表.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         bundle = dict(
-            units=[{"Unit": "华北计算技术研究所", "别名": "四机部15所", "City": "Beijing"}],
-            comp=[{"Product": "机器23计算机", "Factory": "华北计算技术研究所", "Time": "19591100"}],
-            semi=[{"Product": "3AG型锗晶体管", "Factory": "上海元件五厂", "Time": "19650000"}],
-            names=[{"Unit": "华北计算技术研究所", "Name": "电子部15所", "From": "19820000"}])
+            units=[{"Unit": "辽阳试验计算技术研究所", "别名": "试甲所", "City": "Beijing"}],
+            comp=[{"Product": "试验机零号", "Factory": "辽阳试验计算技术研究所", "Time": "19591100"}],
+            semi=[{"Product": "试验管零号", "Factory": "辽阳试验元件厂", "Time": "19650000"}],
+            names=[{"Unit": "辽阳试验计算技术研究所", "Name": "试乙所", "From": "19820000"}])
         a = toxlsx.append(x, backup=False, **bundle)
         eq([a["units"], a["semi"], a["comp"], a["names"]], [1, 1, 1, 1], "第一遍四样各进一条")
         b = toxlsx.append(x, backup=False, **bundle)
@@ -712,7 +717,7 @@ def test_no_dup():
         eq(len(b["skipped"]), 4, "四条都记在跳过里")
 
         # 「四机部15所」是「华北计算技术研究所」的别名,不是另一家
-        c = toxlsx.append(x, backup=False, units=[{"Unit": "四机部15所", "City": "Beijing"}])
+        c = toxlsx.append(x, backup=False, units=[{"Unit": "试甲所", "City": "Beijing"}])
         eq(c["units"], 0, "拿别名当正名送进来,认得出是同一家")
 
         d = toxlsx.append(x, backup=False, allow_dup=True, **bundle)
@@ -721,11 +726,42 @@ def test_no_dup():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_later_rename():
+    """「后更名为」没说是哪一年 —— 宁可不记年份,也不能安上一个。"""
+    print("后更名为")
+    # 窗口按字数硬切,「1966年，…（后」切出「6年，…」,认成了 1906 年
+    eq(EX.near_date("1966年，北京开关厂平谷分厂（后更名为甲厂）。", 17), None,
+       "隔着逗号与括号的那个年份,不算改名那年")
+    eq(EX.near_date("北京崇文电子仪器厂（1985年改名为甲厂）。", 19), "19850000",
+       "同一小句里写明的年份,照写明的取")
+
+    def nh(md):
+        r = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+        return [(n["Unit"], n["Name"], n["From"]) for n in r["names"]]
+
+    eq(nh("## 一、机\n\n1966年，北京开关厂平谷分厂（后更名为北京控制机厂）接受成果。\n"),
+       [], "「后更名为」不记进沿革表 —— 没有年份可系")
+    eq(nh("## 一、机\n\n1965年，北京崇文电子仪器厂（1985年改名为北京计算机五厂）研制成功107机。\n"),
+       [("北京崇文电子仪器厂", "北京计算机五厂", "19850000")], "写明年份的照旧")
+    # 「中心」不在收尾字样之列,一家也认不出 —— 那就谁也别派,别派给同句的汽车公司
+    eq(nh("## 一、机\n\n1984年6月，北京市计算机软件中心（后更名为北京计算机五厂）"
+          "承接了市旅游汽车公司的任务。\n"),
+       [], "主语认不出来时,不把名字派给同句里别的单位")
+
+    # 改名本身没丢 —— 它进了 Founder 链,只是不带年份
+    r = EX.extract("## 一、机\n\n1966年，北京开关厂平谷分厂（后更名为北京控制机厂）接受成果。\n",
+                   book="试", city="Beijing", min_mentions=1)
+    f = [u.get("Founder", "") for u in r["units"] if u.get("Founder")]
+    check(any("改名北京控制机厂" in x for x in f), "改名记在 Founder 链里,不带年份")
+    check(not any("1906" in x or "19060000" in x for x in f), "决不写出 1906 这样的年份")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
-               test_edit_in_place, test_aliases, test_no_dup):
+               test_edit_in_place, test_aliases, test_no_dup,
+               test_later_rename):
         fn()
     print()
     if FAILED:

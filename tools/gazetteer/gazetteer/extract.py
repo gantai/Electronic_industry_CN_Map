@@ -502,6 +502,8 @@ def find_persons(text):
 
 
 ANAPHOR = re.compile(r"^(?:该机|该型|该机型|此机|该产品|该计算机|该系统|同机|它)")
+# 「该厂」「本所」一类指代词,说的就是正在讲的这一家
+ANAPHOR_ANY = re.compile(r"该[厂所公司院校]|本[厂所院]|该单位|该公司")
 
 
 def user_units(scope, names):
@@ -535,13 +537,31 @@ def collab_scope(para, sent):
     return scope
 
 
+# 「后更名为」「后称」「今名」——「后来」是多久以后,句子没说。这一步没有日子。
+LATER = re.compile(r"(?:后|嗣后|其后|旋|今|现)(?:又)?$")
+
+DATEISH = re.compile(r"[0-9〇零一二三四五六七八九十]{1,4}\s*年"
+                     r"(?:[0-9一二三四五六七八九十]{1,3}\s*月)?"
+                     r"(?:[0-9一二三四五六七八九十]{1,3}\s*[日号])?")
+
+
 def near_date(sent, at, window=14):
     """紧挨在这个动词前头的年份,才是这一步的年份。
 
     「北京崇文电子仪器厂(1985年改名为北京计算机五厂)研制成功107机」——
-    整句的年份是 1965(造机器那年),改名却在 1985。拿整句的年份记改名,
-    是把两件事的日子记串了。近处没写年份才退回整句。"""
-    return cndate.parse(sent[max(0, at - window):at])
+    整句的年份是 1965(造机器那年),改名却在 1985。
+
+    要按整个年份取,不能按字数切:先前是 sent[at-14:at] 硬切一段,
+    「1966年,北京开关厂平谷分厂(后」切出来是「6年,…」,认成了 1906 年。
+    近处没写年份,返回 None,由调用者决定退不退回整句。"""
+    # 只在同一个小句里找 ——「1966年,北京开关厂平谷分厂(后更名为…」中间隔着
+    # 逗号与括号,那个 1966 是整句的年份(接受成果那年),不是改名那年。
+    head = re.split(r"[，,。；;：:（(]", sent[:at])[-1]
+    best = None
+    for m in DATEISH.finditer(head):
+        if len(head) - m.end() <= window:
+            best = m.group(0)
+    return cndate.parse(best) if best else None
 
 
 def renames_this(sent, at, unit, owner=False):
@@ -558,8 +578,14 @@ def renames_this(sent, at, unit, owner=False):
     前头一家也没点到(「该厂改名为…」),那也是它,照收。"""
     if owner:
         return True
-    others = unit_names(sent[:at])
-    return not others or others[0] == unit
+    head = sent[:at]
+    others = unit_names(head)
+    if others:
+        return others[0] == unit
+    # 前头一家也没认出来,可主语未必就是它 ——「北京市计算机软件中心(后更名为
+    # 北京计算机五厂)承接了市旅游汽车公司…」,「中心」不在收尾字样之列,于是
+    # 一家也认不出,汽车公司便平白得了个曾用名。得它自己在场才算。
+    return bool(unit and unit in head) or bool(ANAPHOR_ANY.search(head))
 
 
 def chain_from(sents, start=None, unit="", owner=False):
@@ -588,8 +614,10 @@ def chain_from(sents, start=None, unit="", owner=False):
         if m:
             if unit and not renames_this(s, m.start(), unit, owner):
                 continue
-            steps.append((near_date(s, m.start()) or date,
-                          "改名" + m.group(1).rstrip("。,、,"), "更名", s))
+            # 「后更名为」没说是哪一年 —— 宁可不记年份,也不能安上一个
+            near = near_date(s, m.start())
+            when = near if near else (None if LATER.search(s[:m.start()]) else date)
+            steps.append((when, "改名" + m.group(1).rstrip("。,、,"), "更名", s))
             continue
         m = re.search(r"(" + TRANSFER + r")\s*([一-鿿A-Za-z0-9]{2,20})", s)
         if m:
