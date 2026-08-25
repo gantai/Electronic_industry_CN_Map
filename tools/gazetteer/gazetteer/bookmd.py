@@ -19,6 +19,7 @@ import os
 import re
 from collections import Counter
 
+from . import cndate
 from . import extract as EX
 
 ENCODINGS = ["utf-8-sig", "utf-8", "gb18030", "big5", "utf-16", "latin-1"]
@@ -400,6 +401,29 @@ REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页"
 REVIEW_COLS.update({label: key for key, label in STAT_COLS})
 
 
+DATE_COLS = ("Start Date", "End Date", "Time", "From")
+
+
+def date_cell(v):
+    """把手填的日期归到八位整数上。
+
+    核对时是要直接改字的,不会有人记得「1958年建厂」该写成 19580000。
+    四位年补成 19580000,六位补成 19580300,「1958年3月」照样认;Excel 把
+    1958-03-01 存成了日期对象,也认。认不出就原样留着,不猜。"""
+    if v is None or str(v).strip() == "":
+        return ""
+    if hasattr(v, "year") and hasattr(v, "month"):        # Excel 的日期格
+        return "%04d%02d%02d" % (v.year, v.month, getattr(v, "day", 0) or 0)
+    t = str(v).strip()
+    if re.fullmatch(r"\d{8}", t):
+        return t
+    if re.fullmatch(r"\d{6}", t):
+        return t + "00"
+    if re.fullmatch(r"\d{4}", t) and 1800 <= int(t) <= 2100:
+        return t + "0000"
+    return cndate.parse(t) or t
+
+
 def _yes(v):
     return str("" if v is None else v).strip().lower() in KEEP_YES
 
@@ -411,8 +435,13 @@ def _sheet_rows(ws):
     for row in ws.iter_rows(min_row=2, values_only=True):
         if all(v is None or str(v).strip() == "" for v in row):
             continue
-        out.append({REVIEW_COLS.get(h, h): ("" if v is None else v)
-                    for h, v in zip(head, row) if h})
+        r = {}
+        for h, v in zip(head, row):
+            if not h:
+                continue
+            k = REVIEW_COLS.get(h, h)
+            r[k] = date_cell(v) if k in DATE_COLS else ("" if v is None else v)
+        out.append(r)
     return out
 
 

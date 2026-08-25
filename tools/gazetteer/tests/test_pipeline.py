@@ -538,10 +538,48 @@ def test_output():
     eq(by.get("M-3", {}).get("产量", ""), "", "一段两台机器,产量不派给另一台")
 
 
+def test_edit_in_place():
+    """核对是改字,不只是打勾:改过的字要照改过的样子读回来。"""
+    print("直接改字")
+    import datetime
+    eq(bookmd.date_cell("1958"), "19580000", "只写年份,补成八位")
+    eq(bookmd.date_cell("195803"), "19580300", "写到月,补成八位")
+    eq(bookmd.date_cell("1958年3月"), "19580300", "中文写法照样认")
+    eq(bookmd.date_cell(datetime.datetime(1958, 3, 1)), "19580301", "Excel 存成日期格也认")
+    eq(bookmd.date_cell("待查"), "待查", "认不出就原样留着,不猜")
+
+    tmp = tempfile.mkdtemp(prefix="gaz-edit-")
+    try:
+        import openpyxl
+        md, _enc = bookmd.read_text(os.path.join(HERE, "fixture", "北京-压平标题.md"))
+        res = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+        x = os.path.join(tmp, "核.xlsx")
+        bookmd.write_xlsx(x, res, city="Beijing", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        rv = wb["待核"]
+        head = [c.value for c in rv[1]]
+        rv.cell(row=2, column=1).value = "y"
+        rv.cell(row=2, column=head.index("单位") + 1).value = "安徽无线电厂"
+        rv.cell(row=2, column=head.index("行业") + 1).value = "半导体"
+        rv.cell(row=2, column=head.index("始建") + 1).value = 1958
+        wb.save(x)
+
+        bundle, city, seen = bookmd.read_review(x)
+        eq(len(bundle["units"]), 1, "只取点了头的那一行")
+        u = bundle["units"][0]
+        eq(u["Unit"], "安徽无线电厂", "改过的厂名照改过的读回来")
+        eq(u["Industry"], "半导体", "改过的行业照改过的读回来")
+        eq(u["Start Date"], "19580000", "手填的年份补成八位,不会写成 1958")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
-               test_rename_subject, test_models, test_output):
+               test_rename_subject, test_models, test_output,
+               test_edit_in_place):
         fn()
     print()
     if FAILED:
