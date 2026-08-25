@@ -409,6 +409,12 @@ def cmd_xlsx(args):
         if rows_hit:
             print("表内已有、跳过 %d 条记录:%s" % (len(rows_hit), "、".join(rows_hit[:6])))
         print("确要重复登记,加 --allow-dup。")
+    if rep.get("near"):
+        print("\n型号内核相同、写法不同的 %d 条 —— 已经收下了,但值得看一眼:" % len(rep["near"]))
+        for new_nm, old_nm in rep["near"][:10]:
+            print("   新收「%s」 ↔ 表内「%s」" % (new_nm, old_nm))
+        print("   同一台机器就把一条并掉,另一个名字填进「别名」列;")
+        print("   真是两台(如 DJS-130 与 DJS-130B)就不用管。gaz dups 随时再查。")
     # 一行一条 —— PowerShell 5.1 不认 &&
     print("核对无误后提交:")
     print("  git add -A")

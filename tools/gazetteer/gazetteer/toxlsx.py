@@ -104,7 +104,8 @@ def _last_row(ws, col=1, start=1):
 def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
            allow_dup=False, log=print):
     wb = _open(xlsx_path)
-    report = {"backup": "", "units": 0, "semi": 0, "comp": 0, "names": 0, "skipped": []}
+    report = {"backup": "", "units": 0, "semi": 0, "comp": 0, "names": 0,
+              "skipped": [], "near": []}
 
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -177,6 +178,24 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                  semi, "semi", ensure=("产量", "别名", "Research Insti"),
                  dedup_on=("Product", "Factory", "Time"))
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
+    if comp:
+        from .extract import model_key
+        ws = wb[SHEET_COMP]
+        hc = _headers(ws, 1)
+        if "Product" in hc:
+            core = {}
+            for rr in range(2, ws.max_row + 1):
+                pv = ws.cell(row=rr, column=hc["Product"]).value
+                k = model_key(pv) if pv else ""
+                if k:
+                    core.setdefault(k, set()).add(str(pv).strip())
+            for r in comp:
+                pv = str(r.get("Product") or "").strip()
+                k = model_key(pv)
+                old_names = core.get(k, set()) - {pv} if k else set()
+                if old_names:
+                    report["near"].append((pv, "、".join(sorted(old_names))))
+
     _append_flat(SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                               "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], comp, "comp",
                  ensure=("用户", "产量", "别名"), dedup_on=("Product", "Time"))
@@ -448,6 +467,13 @@ def report_dups(xlsx_path):
             for k, rows in by.items():
                 names = sorted({x[1] for x in rows})
                 if len(names) > 1:
+                    detail = []
+                    for rr, nm in rows:
+                        t = ws.cell(row=rr, column=h["Time"]).value if "Time" in h else ""
+                        f = (ws.cell(row=rr, column=h["Factory"]).value
+                             if "Factory" in h else "") or ""
+                        detail.append("%s(%s%s)" % (nm, t or "年份未详",
+                                                    ("·" + str(f)) if f else ""))
                     out["similar"].append((SHEET_COMP, k, [x[0] for x in rows],
-                                           "、".join(names)))
+                                           " ｜ ".join(detail)))
     return out

@@ -344,10 +344,14 @@ def find_products(sents):
 # 「型」(103机、104型)。数字型号非得紧跟「机/型」不可 —— 不然「32个」「38台」
 # 「39位」全成了机器。GB/GJB/SJ 一类是国家标准号,从来不是产品。
 STD_PREFIX = re.compile(r"^(?:GB|GJB|SJ|JB|ZB|ISO|IEC|HB|YD)", re.I)
+# 数字型号后头跟着什么才算型号 ——「109乙计算机」跟的是「计算机」不是「机」,
+# 只认「机」「型」两个字,这一台就一个钥匙也配不出,跟「109乙机」认不到一处去。
+MODEL_TAIL = (r"(?:计算机|电子计算机|晶体管|二极管|三极管|集成电路|电路|"
+              r"机组|系统|[机型])")
 MODEL_RE = re.compile(
     r"(?<![A-Za-z0-9])("
     r"[A-Za-z]{1,6}[-－]?[0-9]{1,4}(?:[-－][0-9A-Za-zⅠ-Ⅹ]{1,5})?"
-    r"|[0-9]{2,4}[甲乙丙丁]?(?=[机型])"
+    r"|[0-9]{2,4}[甲乙丙丁]?(?=" + MODEL_TAIL + r")"
     r")")
 
 
@@ -371,8 +375,8 @@ def find_models(sent):
         code = m.group(1)
         if STD_PREFIX.match(code) or code.upper() in out:
             continue
-        tail = sent[m.end():m.end() + 1]
-        out.append(code + (tail if tail in "机型" else ""))
+        t = re.match(MODEL_TAIL, sent[m.end():])
+        out.append(code + (t.group(0) if t else ""))
     return out
 
 
