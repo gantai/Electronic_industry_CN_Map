@@ -6,7 +6,8 @@
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
-    gaz book    某某志.md          现成的转换稿 → 待核 TSV + 一份本地 Excel
+    gaz volume  第三章             按名字找稿子跑一本(转换稿目录设 GAZ_DRAFTS)
+    gaz book    某某志.md          指名道姓地跑一份
     gaz convert 上海电子工业志.pdf  扫描件 → Markdown(转换交给 zhiconv)
     gaz extract --slug ...         Markdown → 四张待核 TSV
     gaz notes  --slug ...          待核记录 → Obsidian 笔记
@@ -233,6 +234,48 @@ def cmd_inspect(args):
     print("编码:%s" % enc)
     BOOK.report(BOOK.inspect(text, args.md))
     return 0
+
+
+def cmd_volume(args):
+    """按关键词找稿子,连订正表一并配好,跑 book —— 每本志一条命令。
+
+    路径、订正表、城市,每回都要重打一遍,打错一处就白跑。这里只记一个
+    「转换稿放在哪」(GAZ_DRAFTS),往下按名字找。"""
+    root = args.dir or os.environ.get("GAZ_DRAFTS")
+    if not root:
+        sys.exit("要指出转换稿放在哪:--dir …,或设个环境变量,以后就不必写了:\n"
+                 "  Windows  [Environment]::SetEnvironmentVariable("
+                 "\"GAZ_DRAFTS\", \"D:\\Archive\\转换稿\", \"User\")\n"
+                 "  其他     export GAZ_DRAFTS=~/转换稿")
+    if not os.path.isdir(root):
+        sys.exit("找不到目录:%s" % root)
+    hits = []
+    for dirpath, _d, files in os.walk(root):
+        for fn in files:
+            if fn.lower().endswith(".md") and args.key in fn:
+                hits.append(os.path.join(dirpath, fn))
+    hits.sort()
+    if not hits:
+        sys.exit("在 %s 底下,名字里带「%s」的 .md 一份也没有。" % (root, args.key))
+    if len(hits) > 1:
+        print("名字里带「%s」的稿子有 %d 份:" % (args.key, len(hits)))
+        for h in hits:
+            print("   " + h)
+        sys.exit("关键词说得再准一点。")
+    args.md = hits[0]
+    print("稿子:%s" % args.md)
+
+    if not args.fixes:
+        here = os.path.dirname(args.md)
+        stem = os.path.splitext(os.path.basename(args.md))[0]
+        cand = sorted(f for f in os.listdir(here) if f.endswith(".fixes.tsv"))
+        # 同名的优先,没有就用这一目录里唯一的一份
+        same = [f for f in cand if stem.startswith(os.path.splitext(f)[0][:8])
+                or os.path.splitext(f)[0][:8] in stem]
+        pick = (same or (cand if len(cand) == 1 else []))
+        if pick:
+            args.fixes = os.path.join(here, pick[0])
+    return cmd_book(args)
 
 
 def cmd_book(args):
@@ -507,18 +550,29 @@ def main(argv=None):
     p.add_argument("md", help="已转好的 Markdown 文件")
     p.set_defaults(func=cmd_inspect)
 
-    p = sub.add_parser("book", help="现成的 .md → 待核 TSV + 一份本地 Excel", parents=[common])
+    def _book_opts(p):
+        p.add_argument("--out", help="Excel 存到哪(默认与 .md 同目录同名)")
+        p.add_argument("--city", default="Shanghai", help="City 列的值,如 Beijing")
+        p.add_argument("--book", help="出处里写的书名(默认取《》里那一截)")
+        p.add_argument("--stats-year", type=int, default=1990)
+        p.add_argument("--min-mentions", type=int, default=2)
+        p.add_argument("--auto-keep", type=float)
+        p.add_argument("--fixes", help="字形订正表(TSV:错<TAB>对);volume 会自己找")
+        p.add_argument("--page-pattern", help="指定页码写法,不用自动认")
+        p.add_argument("--reflow", default="auto", choices=["auto", "on", "off"],
+                       help="接回硬断的行(默认 auto:看了再定)")
+        return p
+
+    p = sub.add_parser("volume", help="按关键词找稿子跑一本 —— 每本志一条命令",
+                       parents=[common])
+    p.add_argument("key", help="稿子名里的一截,如「第三章」")
+    p.add_argument("--dir", help="转换稿放在哪(也可设 GAZ_DRAFTS 环境变量)")
+    _book_opts(p)
+    p.set_defaults(func=cmd_volume)
+
+    p = sub.add_parser("book", help="指名道姓地跑一份 .md", parents=[common])
     p.add_argument("md", help="已转好的 Markdown 文件")
-    p.add_argument("--out", help="Excel 存到哪(默认与 .md 同目录同名)")
-    p.add_argument("--city", default="Shanghai", help="City 列的值,如 Beijing")
-    p.add_argument("--book", help="出处里写的书名(默认取文件名)")
-    p.add_argument("--stats-year", type=int, default=1990)
-    p.add_argument("--min-mentions", type=int, default=2)
-    p.add_argument("--auto-keep", type=float)
-    p.add_argument("--fixes", help="字形订正表(TSV:错<TAB>对),转换稿认错的字在这儿改")
-    p.add_argument("--page-pattern", help="指定页码写法,不用自动认")
-    p.add_argument("--reflow", default="auto", choices=["auto", "on", "off"],
-                   help="接回硬断的行(默认 auto:看了再定)")
+    _book_opts(p)
     p.set_defaults(func=cmd_book)
 
     p = sub.add_parser("push", help="工作簿 → Obsidian 库(全部厂所各一则笔记)", parents=[common])
