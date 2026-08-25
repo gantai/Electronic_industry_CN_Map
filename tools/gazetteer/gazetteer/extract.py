@@ -105,8 +105,11 @@ STAT_PATTERNS = [
 # 地址照原表体例,只取路名门牌(如「虹桥路951弄2号」),不带区名
 ADDR_MARK = re.compile(r"(?:厂址|所址|地址|位于|坐落|设|迁至|迁往|迁入)\s*(?:在|于)?\s*")
 # 路名里不会有「区」「址」「在」这些字,逐字排除,免得把「厂址在闸北区中华新路」整段抓走
+# 「路」前头是这些字的,说的不是马路:集成电路、印刷线路、思路、销路……
+NOT_STREET = r"(?<![电线回网管通思销出销门套])"
 ADDR_RE = re.compile(r"((?:(?![区县址在于设迁坐落位])[一-鿿A-Za-z0-9]){1,10}"
-                     r"(?:路|街|大道|弄|巷|里|村|浜|桥|坊)(?:[0-9]{1,4}弄)?(?:[0-9]{1,4}号)?)")
+                     r"(?:" + NOT_STREET + r"路|街|大道|弄|巷|里|村|浜|桥|坊)"
+                     r"(?:[0-9]{1,4}弄)?(?:[0-9]{1,4}号)?)")
 # 区名单独记一栏 —— 地址照原表体例不带区,但 src/geocode.js 的落点表要用
 DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
                          r"(?![^,,。;;]{0,4}(?:政府|工业局|人民政府))")
@@ -322,7 +325,10 @@ def find_address(sents):
                     continue
                 hay = s[m.end():]
             m = ADDR_RE.search(hay)
-            if m and (not want_mark or "号" in m.group(1) or "弄" in m.group(1)):
+            # 没有「厂址」一类字样领着的那一遍,还得有个门牌号才算 —— 不然
+            # 但凡带个「路」「村」的词都成了地址
+            ok = ("号" in m.group(1) or "弄" in m.group(1)) if m else False
+            if m and (ok if want_mark else re.search(r"[0-9]", m.group(1))):
                 return m.group(1), s
     return "", ""
 
