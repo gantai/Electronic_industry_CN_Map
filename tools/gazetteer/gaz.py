@@ -216,8 +216,10 @@ def cmd_book(args):
     BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year)
     print("待核 TSV 另存一份在 %s" % rd)
     print()
-    print("接下来:在 Excel 的「待核」表里逐行看最后一列的原文;")
-    print("要并进地图,就把 units.tsv 的 keep 改成 y,再 gaz xlsx --slug %s。" % slug)
+    print("接下来:在 Excel 的「待核」表里核名字 —— 原文就在第 5 列。")
+    print("  名字认错的当场改;同一家的几个名字改成同一个,追加时会并作一行;")
+    print("  要的行「取否」写 y。核完:")
+    print('    gaz xlsx --from "%s"' % out)
     return 0
 
 
@@ -277,16 +279,24 @@ def cmd_geocode(args):
 
 
 def cmd_xlsx(args):
-    wd = workdir(args)
-    rd = review_dir(wd)
-    bundle = {}
-    for tag, fn in (("units", "units.tsv"), ("semi", "semi.tsv"),
-                    ("comp", "comp.tsv"), ("names", "names.tsv")):
-        p = os.path.join(rd, fn)
-        bundle[tag] = tsvio.kept(tsvio.read(p)) if os.path.exists(p) else []
+    if args.from_xlsx:
+        bundle, city, seen = BOOK.read_review(args.from_xlsx)
+        print("读回 %s%s" % (os.path.basename(args.from_xlsx),
+                            ("(%s)" % city) if city else ""))
+        if seen.get("merged"):
+            print("  核过之后名字改成一样的,%d 行并作一行,出处都留着" % seen["merged"])
+        where = "工作簿的「取否」列"
+    else:
+        rd = review_dir(workdir(args))
+        bundle = {}
+        for tag, fn in (("units", "units.tsv"), ("semi", "semi.tsv"),
+                        ("comp", "comp.tsv"), ("names", "names.tsv")):
+            p = os.path.join(rd, fn)
+            bundle[tag] = tsvio.kept(tsvio.read(p)) if os.path.exists(p) else []
+        where = "四张 TSV 的 keep 列"
     total = sum(len(v) for v in bundle.values())
     if not total:
-        print("四张 TSV 里没有一行写着 keep=y —— 什么也没做。")
+        print("%s里没有一行写着 y —— 什么也没做。" % where)
         print("这是有意为之:没经你点头的记载,不进工作簿。")
         return 1
     print("将追加:%d 家单位、%d 条器件、%d 条整机、%d 段名称沿革"
@@ -403,7 +413,9 @@ def main(argv=None):
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")
     p.set_defaults(func=cmd_geocode)
 
-    p = sub.add_parser("xlsx", help="keep=y 的行 → 追加进工作簿", parents=[common])
+    p = sub.add_parser("xlsx", help="取否=y 的行 → 追加进工作簿", parents=[common])
+    p.add_argument("--from", dest="from_xlsx", metavar="XLSX",
+                   help="读 gaz book 生成的那份工作簿(你核过的),而不是 TSV")
     p.add_argument("--allow-dup", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--book")

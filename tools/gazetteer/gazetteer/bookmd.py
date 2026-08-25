@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """现成的 Markdown 转换稿 → 待核记录 + 一份本地 Excel。
 
-`gaz ocr` / `gaz md` 是给扫描件预备的。手里若已经有转好的 .md —— 别处转的、
-自己抄的、从数字方志库拷出来的 —— 那两步都不必走,直接从这里进。
+`gaz convert`(转换交给 zhiconv)是给扫描件预备的。手里若已经有转好的 .md ——
+别处转的、自己抄的、从数字方志库拷出来的 —— 那一步不必走,直接从这里进。
 
 要紧的差别有两处:
 
 **一、编码。** Windows 上存下来的稿子可能是 GB18030、可能带 BOM、也可能是
 UTF-16。挨个试,试通了记下来告诉你,别让一堆乱码悄悄流进表里。
 
-**二、页码。** 转换稿多半不留页码。`gaz md` 会在每页正文前留 `<!-- p.123 -->`,
+**二、页码。** 转换稿多半不留页码。本工具认的是每页正文前的 `<!-- p.123 -->`,
 抽取时据以回注出处;别处转来的没有这一手。所以先认一遍常见的页码写法
 (`第123页`、`- 123 -`、`[123]` 之类),认出来就归一成 `<!-- p.N -->`;
 认不出也不要紧 —— 出处退到篇章节,「北京工业志·电子志·第三章」仍查得回去。
@@ -22,6 +22,11 @@ from collections import Counter
 from . import extract as EX
 
 ENCODINGS = ["utf-8-sig", "utf-8", "gb18030", "big5", "utf-16", "latin-1"]
+
+# 统计块:字段名 ↔ 表头。写出去、读回来共用一份,免得两头对不上
+STAT_COLS = [("staff", "职工总数"), ("tech", "技术人员"), ("plant", "厂房面积"),
+             ("floor", "建筑面积"), ("assets", "固定资产"), ("output", "工业总产值"),
+             ("sales", "销售收入"), ("profit", "实现利润")]
 
 # 页码的常见写法。每条给出正则与取数的组号;认哪一条,看谁的数字最像页码。
 PAGE_PATTERNS = [
@@ -272,11 +277,8 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    stat_labels = [label for _k, label in [
-        ("staff", "职工总数"), ("tech", "技术人员"), ("plant", "厂房面积"),
-        ("floor", "建筑面积"), ("assets", "固定资产"), ("output", "工业总产值"),
-        ("sales", "销售收入"), ("profit", "实现利润")]]
-    stat_keys = [k for k, _ in EX.STAT_PATTERNS]
+    stat_labels = [label for _k, label in STAT_COLS]
+    stat_keys = [k for k, _ in STAT_COLS]
 
     def num(v):
         s = str(v if v is not None else "").strip()
@@ -311,12 +313,12 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
 
     def flat(name, cols, rows, keys=None):
         w = wb.create_sheet(name)
-        w.append(cols)
-        for c in range(1, len(cols) + 1):
+        w.append(cols + ["取否"])
+        for c in range(1, len(cols) + 2):
             w.cell(row=1, column=c).font = Font(bold=True)
         for r in rows:
             w.append([num(r.get(k)) if k in ("Time", "From") else r.get(k, "")
-                      for k in (keys or cols)])
+                      for k in (keys or cols)] + [""])
         w.freeze_panes = "A2"
         return w
 
@@ -324,29 +326,33 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                           "Factory", "Time", "Personnel", "Remark"], res["comp"])
     nh = wb.create_sheet("Name-History")
-    nh.append(["Unit", "Name", "From", "Remark", "Source"])
-    for c in range(1, 6):
+    nh.append(["Unit", "Name", "From", "Remark", "Source", "取否"])
+    for c in range(1, 7):
         nh.cell(row=1, column=c).font = Font(bold=True)
     for r in res["names"]:
         nh.append([r.get("Unit", ""), r.get("Name", ""), str(r.get("From", "")),
-                   r.get("Remark", ""), r.get("Source", "")])
+                   r.get("Remark", ""), r.get("Source", ""), ""])
     nh.freeze_panes = "A2"
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
-    rv.append(["取否", "来路", "置信", "页", "单位", "行业", "始建", "终止", "地址",
-               "出处", "据以立论的原文"])
-    for c in range(1, 12):
+    rv_head = (["取否", "单位", "置信", "出处", "据以立论的原文", "行业", "产品",
+                "始建", "终止", "创办", "地址"] + stat_labels + ["备注", "来路", "页"])
+    rv.append(rv_head)
+    for c in range(1, len(rv_head) + 1):
         rv.cell(row=1, column=c).font = Font(bold=True)
     for r in res["units"]:
-        rv.append(["", r.get("role", ""), r.get("confidence", ""), r.get("page", ""),
-                   r.get("Unit", ""), r.get("Industry", ""), num(r.get("Start Date")),
-                   num(r.get("End Date")), r.get("Add.", ""), r.get("Source", ""),
-                   r.get("evidence", "")])
-    rv.freeze_panes = "E2"
-    for col, wid in zip("ABCDEFGHIJK", [6, 6, 6, 6, 26, 10, 11, 11, 20, 28, 90]):
-        rv.column_dimensions[col].width = wid
-    for row in rv.iter_rows(min_row=2, min_col=11, max_col=11):
+        rv.append(["", r.get("Unit", ""), r.get("confidence", ""), r.get("Source", ""),
+                   r.get("evidence", ""), r.get("Industry", ""), r.get("Product", ""),
+                   num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
+                   r.get("Add.", "")]
+                  + [num(r.get(k)) for k in stat_keys]
+                  + [r.get("Remark", ""), r.get("role", ""), r.get("page", "")])
+    rv.freeze_panes = "C2"
+    for i, wid in enumerate([6, 28, 6, 30, 90, 10, 22, 11, 11, 30, 20] + [9] * 8
+                            + [30, 6, 6], start=1):
+        rv.column_dimensions[get_column_letter(i)].width = wid
+    for row in rv.iter_rows(min_row=2, min_col=5, max_col=5):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
@@ -362,4 +368,101 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     wb.save(path)
     log("Excel 已写到 %s" % path)
     log("  五张表:%s、Semi-Product、Comp-Product、Name-History、待核" % sheet)
+    log("  在「待核」等表的「取否」列写 y,再 gaz xlsx --from 这个文件")
     return path
+
+
+# ---------------------------------------------------------------- 核过再读回来
+
+KEEP_YES = {"y", "yes", "true", "1", "是", "要", "✓", "√"}
+
+# 「待核」表头 → 抽取时用的字段名
+REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页": "page",
+               "单位": "Unit", "行业": "Industry", "产品": "Product",
+               "始建": "Start Date", "终止": "End Date", "创办": "Founder",
+               "地址": "Add.", "备注": "Remark", "出处": "Source",
+               "据以立论的原文": "evidence"}
+REVIEW_COLS.update({label: key for key, label in STAT_COLS})
+
+
+def _yes(v):
+    return str("" if v is None else v).strip().lower() in KEEP_YES
+
+
+def _sheet_rows(ws):
+    """一张表读成 [{表头: 值}],整行空的跳过。"""
+    head = [c.value for c in ws[1]]
+    out = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if all(v is None or str(v).strip() == "" for v in row):
+            continue
+        out.append({REVIEW_COLS.get(h, h): ("" if v is None else v)
+                    for h, v in zip(head, row) if h})
+    return out
+
+
+def merge_by_name(rows):
+    """核过之后名字写成一样的,就当同一家,合成一行。
+
+    这正是核名字要干的事:「四机部15所」「电子部15所」「电子部第15所」本是
+    一个所,随部委改制换了牌子。在表里把它们都改成一个名字,这里就并起来,
+    各自的出处一并留着 —— 并了以后仍要查得回去是哪一节说的。"""
+    out, idx, merged = [], {}, 0
+    for r in rows:
+        nm = str(r.get("Unit", "")).strip()
+        if not nm:
+            continue
+        if nm not in idx:
+            idx[nm] = dict(r, Unit=nm)
+            out.append(idx[nm])
+            continue
+        merged += 1
+        base = idx[nm]
+        for k, v in r.items():
+            if v not in ("", None) and base.get(k) in ("", None):
+                base[k] = v
+        for k in ("Source", "Remark"):
+            a, b = str(base.get(k, "") or ""), str(r.get(k, "") or "")
+            if b and b not in a:
+                base[k] = (a + "；" + b) if a else b
+    return out, merged
+
+
+def read_review(path):
+    """把核过的工作簿读回来:四张表里「取否」写了 y 的行。
+
+    落笔的地方只有一处 —— Excel。keep 在那儿打,认错的字也在那儿改,读回来
+    的就是你改过的样子。TSV 只当留底,不再回头去读:两处都能改,改了哪一处
+    算数就说不清了。
+
+    返回 (四张表的行, 城市)。城市从「Fact and Comp-北京」这类表名上取。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    city = ""
+    for name in wb.sheetnames:
+        if name.startswith("Fact and Comp-"):
+            city = name[len("Fact and Comp-"):]
+            break
+
+    bundle, seen = {}, {}
+    for tag, sheet in (("units", "待核"), ("semi", "Semi-Product"),
+                       ("comp", "Comp-Product"), ("names", "Name-History")):
+        if sheet not in wb.sheetnames:
+            bundle[tag], seen[tag] = [], 0
+            continue
+        rows = _sheet_rows(wb[sheet])
+        seen[tag] = len(rows)
+        kept = []
+        for r in rows:
+            if not _yes(r.pop("keep", "")):
+                continue
+            r.pop("evidence", None)
+            if tag == "units" and city and not r.get("City"):
+                r["City"] = city
+            if tag == "names" and r.get("From") != "":
+                r["From"] = str(r["From"])
+            kept.append(r)
+        if tag == "units":
+            kept, seen["merged"] = merge_by_name(kept)
+        bundle[tag] = kept
+    return bundle, city, seen

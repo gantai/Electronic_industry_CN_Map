@@ -365,8 +365,25 @@ def test_book():
         eq(ws.cell(row=2, column=9).value, "职工总数", "第二行是统计块的表头")
         eq(ws.cell(row=3, column=4).value, 19561000, "日期写成八位整数")
         rv = wb["待核"]
-        eq(rv.cell(row=1, column=11).value, "据以立论的原文", "待核表最后一列是原文")
+        # 核的是名字,名字与据以判断的原文都摆在最左边
+        eq(rv.cell(row=1, column=2).value, "单位", "待核表第二列就是单位名")
+        eq(rv.cell(row=1, column=5).value, "据以立论的原文", "原文紧挨着,不用横拉")
         check(rv.max_row == len(res["units"]) + 1, "待核表一家一行")
+
+        # 核过再读回来:「取否」写 y 的才算数,名字改成一样的并作一行
+        rv.cell(row=2, column=1).value = "y"
+        rv.cell(row=3, column=1).value = "y"
+        rv.cell(row=2, column=2).value = "上海无线电十九厂"
+        rv.cell(row=3, column=2).value = "上海无线电十九厂"
+        rv.cell(row=4, column=1).value = ""
+        wb.save(out)
+        bundle, city2, seen = bookmd.read_review(out)
+        eq(city2, "Beijing", "城市从「Fact and Comp-北京」这类表名上认")
+        eq(len(bundle["units"]), 1, "两行改成同一个名字,并作一家")
+        eq(seen["merged"], 1, "并了几行要报出来")
+        eq(bundle["units"][0]["Unit"], "上海无线电十九厂", "并成的那一家用核过的名字")
+        check("；" in bundle["units"][0]["Source"], "两处出处都留着")
+        check(all(not r.get("evidence") for r in bundle["units"]), "原文只是核对用的,不进表")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
