@@ -424,6 +424,17 @@ ALIAS_CUE = re.compile(
     r"([一-鿿A-Za-z0-9\-－]{2,24}?)(?=[，,。；;：:（()）、」』\s]|$)")
 
 
+# 别名与沿革是两回事。「(四机部15所)」是同时并行的另一个名号;「(后改名为
+# 北京计算机五厂)」说的是后来改叫什么 —— 那是沿革,有年份可系,归「名称沿革」
+# 表与 Founder 链,不该混进别名里。带年份、带「改名/后称/今/原」这类时间说法的,
+# 一律不算别名。
+NOT_ALIAS = re.compile(
+    r"^(?:今|后|旧|曾|原(?!子)|现(?!代))|"
+    r"前身|原名|原为|原系|旧名|旧称|曾名|曾称|"
+    r"改名|更名|改称|易名|定名|后改|后称|后为|今名|现名|现称|"
+    r"[0-9]{2,4}\s*年|兼营|代管|撤销|停办|并入")
+
+
 def find_aliases(text, whose=""):
     """这段话里给「whose」起的别名。
 
@@ -437,7 +448,7 @@ def find_aliases(text, whose=""):
             if whose not in head:
                 continue
         a = m.group(1).strip()
-        if a and a != whose and a not in out:
+        if a and a != whose and a not in out and not NOT_ALIAS.search(a):
             out.append(a)
     # 「华北计算技术研究所(四机部15所)」—— 没有「简称」二字,紧跟在正名后头的
     # 括号里又确实是个单位名。但「(北京计算机五厂前身)」是注解,不是别名。
@@ -450,7 +461,7 @@ def find_aliases(text, whose=""):
                            m.group(1).strip())
                 if (a and a != whose and a not in out
                         and re.search(UNIT_TAIL + r"$", a)
-                        and not re.search(r"前身|原名|后改|现名|改称|简写", a)):
+                        and not NOT_ALIAS.search(a)):
                     out.append(a)
             at = text.find(whose, at + 1)
     return out
@@ -500,6 +511,15 @@ def collab_scope(para, sent):
     return scope
 
 
+def near_date(sent, at, window=14):
+    """紧挨在这个动词前头的年份,才是这一步的年份。
+
+    「北京崇文电子仪器厂(1985年改名为北京计算机五厂)研制成功107机」——
+    整句的年份是 1965(造机器那年),改名却在 1985。拿整句的年份记改名,
+    是把两件事的日子记串了。近处没写年份才退回整句。"""
+    return cndate.parse(sent[max(0, at - window):at])
+
+
 def renames_this(sent, at, unit, owner=False):
     """这句话里的「改名为」,说的是不是它。
 
@@ -538,13 +558,14 @@ def chain_from(sents, start=None, unit="", owner=False):
         if m:
             if unit and not renames_this(s, m.start(), unit, owner):
                 continue
-            steps.append((date, m.group(1), "前身", s))
+            steps.append((near_date(s, m.start()) or date, m.group(1), "前身", s))
             continue
         m = re.search(RENAME + r"\s*([一-鿿A-Za-z0-9]{4,24})", s)
         if m:
             if unit and not renames_this(s, m.start(), unit, owner):
                 continue
-            steps.append((date, "改名" + m.group(1).rstrip("。,、,"), "更名", s))
+            steps.append((near_date(s, m.start()) or date,
+                          "改名" + m.group(1).rstrip("。,、,"), "更名", s))
             continue
         m = re.search(r"(" + TRANSFER + r")\s*([一-鿿A-Za-z0-9]{2,20})", s)
         if m:
