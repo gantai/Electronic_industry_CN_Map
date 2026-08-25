@@ -404,9 +404,30 @@ def test_flat_heads():
     check("国营738厂" in names, "「交由国营738厂试制」认得出国营738厂")
 
 
+def test_fixes():
+    """字形订正表:转换稿认错的字,一本书一张表。"""
+    print("字形订正")
+    tmp = tempfile.mkdtemp(prefix="gaz-fix-")
+    try:
+        tsv = os.path.join(tmp, "fixes.tsv")
+        _write(tsv, "# 《北京工业志·电子志》2001\n"
+                    "安做无线电厂\t安徽无线电厂\n"
+                    "莫须有厂\t查无此厂\n")
+        fixes = bookmd.load_fixes(tsv)
+        eq(len(fixes), 2, "注解行不算一条")
+        # 汉字之间的制表符是分栏用的,不能跟空格一起吃掉,不然两列并成一列
+        eq(fixes[0], ("安做无线电厂", "安徽无线电厂"), "两列各归各的")
+        text, ledger = bookmd.apply_fixes("由四机部6所、安做无线电厂联合研制。", fixes)
+        check("安徽无线电厂" in text, "认错的字改了回来")
+        eq([n for _a, _b, n in ledger], [1, 0], "每条改了几处都记着")
+        check(bookmd.load_fixes(None) == [], "没给表就是没有,不报错")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
-               test_book, test_flat_heads):
+               test_book, test_flat_heads, test_fixes):
         fn()
     print()
     if FAILED:

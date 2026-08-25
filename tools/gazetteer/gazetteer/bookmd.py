@@ -40,7 +40,8 @@ PAGE_PATTERNS = [
 
 # 汉字(含中日韩标点、全角符号)之间的空格一律是转换留下的,没有意义
 _CJK = "\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef"
-CJK_GAP = re.compile("(?<=[%s])[ \t]+(?=[%s])" % (_CJK, _CJK))
+# 只吃空格,不吃制表符 —— 制表符多半是分栏的(订正表就是 TSV),吃掉就把两列并了
+CJK_GAP = re.compile("(?<=[%s]) +(?=[%s])" % (_CJK, _CJK))
 
 
 def squeeze_cjk_spaces(text):
@@ -74,6 +75,35 @@ def read_text(path):
         return squeeze_cjk_spaces(
             text.replace("\r\n", "\n").replace("\r", "\n")), enc
     return raw.decode("utf-8", errors="replace").replace("\r\n", "\n"), "utf-8(有乱码)"
+
+
+def load_fixes(path):
+    """读字形订正表:一行一条「错<TAB>对」,# 开头算注解。
+
+    转换稿总有认错的字,「安徽无线电厂」成了「安做无线电厂」。这种错改不出
+    规律,只能一本书一张表,跟着书走。"""
+    if not path:
+        return []
+    text, _enc = read_text(path)
+    out = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cell = line.rstrip("\n").split("\t")
+        if len(cell) >= 2 and cell[0]:
+            out.append((cell[0], cell[1]))
+    return out
+
+
+def apply_fixes(text, fixes):
+    """逐条改,并回报每条改了几处 —— 表里写错了字,得看得见,不能默默不改。"""
+    ledger = []
+    for bad, good in fixes:
+        n = text.count(bad)
+        if n:
+            text = text.replace(bad, good)
+        ledger.append((bad, good, n))
+    return text, ledger
 
 
 def _monotonic(nums):

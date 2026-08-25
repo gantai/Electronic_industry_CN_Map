@@ -170,6 +170,17 @@ def cmd_book(args):
     slug = args.slug or stem
     print("读入 %s（%s,%d 字）" % (os.path.basename(args.md), enc, len(text)))
 
+    fixes = BOOK.load_fixes(args.fixes)
+    if fixes:
+        text, ledger = BOOK.apply_fixes(text, fixes)
+        hit = [(a, b, n) for a, b, n in ledger if n]
+        miss = [a for a, _b, n in ledger if not n]
+        print("字形订正 %d 条,改了 %d 处%s"
+              % (len(fixes), sum(n for _a, _b, n in hit),
+                 (":" + "、".join("%s→%s×%d" % t for t in hit)) if hit else ""))
+        if miss:
+            print("  没对上的 %d 条,原文里找不到:%s" % (len(miss), "、".join(miss)))
+
     wrapped, share = BOOK.hard_wrapped(text)
     if args.reflow == "on" or (args.reflow == "auto" and wrapped):
         text = BOOK.reflow_soft(text)
@@ -372,6 +383,7 @@ def main(argv=None):
     p.add_argument("--stats-year", type=int, default=1990)
     p.add_argument("--min-mentions", type=int, default=2)
     p.add_argument("--auto-keep", type=float)
+    p.add_argument("--fixes", help="字形订正表(TSV:错<TAB>对),转换稿认错的字在这儿改")
     p.add_argument("--page-pattern", help="指定页码写法,不用自动认")
     p.add_argument("--reflow", default="auto", choices=["auto", "on", "off"],
                    help="接回硬断的行(默认 auto:看了再定)")
