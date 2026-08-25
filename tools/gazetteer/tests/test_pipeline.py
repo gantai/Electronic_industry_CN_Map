@@ -517,10 +517,31 @@ def test_models():
     check(orphan["Remark"].endswith("一、电子管计算机"), "出处照旧回注到篇章节")
 
 
+def test_output():
+    """产量:「至1960年,共生产38台」。动词得在数字前头,不然满篇都是产量。"""
+    print("产量")
+    eq(EX.find_output("至1960年，共生产38台。")[0], 38, "共生产38台")
+    eq(EX.find_output("1988年，年产微机1.2万台。")[0], 12000, "「1.2万台」折成个位")
+    eq(EX.find_output("全机共用800多只电子管。")[0], 0, "电子管的只数不是产量")
+    eq(EX.find_output("配套外部设备有磁鼓4台；磁带机5台。")[0], 0, "配套设备的台数不是产量")
+    eq(EX.find_output("机房占地面积约40平方米。")[0], 0, "平方米不是产量")
+
+    # 产量常与型号隔着一两句,主语是「该机」或干脆省略
+    md = ("## 第三章 电子计算机\n\n## 一、电子管计算机\n\n"
+          "1958年，中国科学院计算技术研究所仿M-3试制103型通用数字计算机。"
+          "该机共有三大机柜。至1960年，共生产38台。\n")
+    res = EX.extract(md, book="北京工业志·电子志", city="Beijing", min_mentions=1)
+    by = {c["Product"]: c for c in res["comp"]}
+    eq(by["103型通用数字计算机"]["产量"], "38", "隔了两句也认得回来")
+    check("共生产38台" in by["103型通用数字计算机"]["Remark"], "备注里留着原话,好核对")
+    # 同一段里有两台机器,产量归产量前头最后点到的那一台 —— M-3 是仿的对象,不是它
+    eq(by.get("M-3", {}).get("产量", ""), "", "一段两台机器,产量不派给另一台")
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
-               test_rename_subject, test_models):
+               test_rename_subject, test_models, test_output):
         fn()
     print()
     if FAILED:

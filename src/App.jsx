@@ -899,7 +899,13 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lan
                   {p.word ? t.word + " " + p.word + " " : ""}{p.memory ? t.memory + " " + p.memory + " " : ""}{p.speed ? t.speed + " " + p.speed : ""}
                 </div>
               )}
-              {p.userText && <div className="evnote">{t.thUser + "：" + p.userText}</div>}
+              {(p.userText || p.output) && (
+                <div className="evnote">
+                  {p.userText ? t.thUser + "：" + p.userText : ""}
+                  {p.userText && p.output ? " · " : ""}
+                  {p.output ? t.thOutput + "：" + p.output : ""}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -939,7 +945,7 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.product, r.factoryText, r.instText, r.userText, r.personnel, r.remark, r.timeRaw]
+      [r.product, r.factoryText, r.instText, r.userText, r.output, r.personnel, r.remark, r.timeRaw]
         .filter(Boolean).join(" ").toLowerCase().includes(s));
   }, [rows, q]);
 
@@ -970,6 +976,7 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
           <table>
             <thead>
               <tr><th className="mono">{t.thYear}</th><th>{t.thProduct}</th><th>{t.thMaker}</th>
+                <th className="mono">{t.thOutput}</th>
                 <th>{t.thListed}</th><th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
             <tbody>
@@ -978,12 +985,13 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
                   <td className="mono">{r.date ? fmtDate(r.date) : r.timeRaw || "—"}</td>
                   <td>{r.product || "—"}</td>
                   <td>{r.factoryText}</td>
+                  <td className="mono">{r.output || "—"}</td>
                   <td>{unitChips(r)}</td>
                   <td className="small">{r.personnel}</td>
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={6} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
+              {!list.length && <tr><td colSpan={7} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         ) : (
@@ -991,7 +999,8 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
             <thead>
               <tr><th className="mono">{t.thTime}</th><th>{t.thModel}</th><th className="mono">{t.word}</th>
                 <th className="mono">{t.memory}</th><th className="mono">{t.speed}</th><th>{t.thResearch}</th>
-                <th>{t.thMaker}</th><th>{t.thUser}</th><th>{t.thListed}</th>
+                <th>{t.thMaker}</th><th>{t.thUser}</th><th className="mono">{t.thOutput}</th>
+                <th>{t.thListed}</th>
                 <th>{t.thPersonnel}</th><th>{t.thRemark}</th></tr>
             </thead>
             <tbody>
@@ -1005,12 +1014,13 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
                   <td className="small">{r.instText}</td>
                   <td className="small">{r.factoryText}</td>
                   <td className="small">{r.userText || "—"}</td>
+                  <td className="mono">{r.output || "—"}</td>
                   <td>{unitChips(r)}</td>
                   <td className="small">{r.personnel}</td>
                   <td className="small">{r.remark}</td>
                 </tr>
               ))}
-              {!list.length && <tr><td colSpan={11} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
+              {!list.length && <tr><td colSpan={12} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noRecords}</td></tr>}
             </tbody>
           </table>
         )}

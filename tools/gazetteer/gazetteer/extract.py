@@ -375,6 +375,49 @@ def find_models(sent):
     return out
 
 
+# 产量:「至1960年,共生产38台」「共生产189台」。动词必须在数字前头 ——
+# 「全机共用800多只电子管」「配套设备有磁鼓4台」都不是产量。
+OUTPUT_RE = re.compile(
+    r"(?:共|累计|先后|总计|合计|已)?\s*"
+    r"(?:生产|制造|出厂|交付使用|装机|产量达|年产)\s*"
+    r"[\u4e00-\u9fff]{0,6}?\s*"          # 「年产微机1.2万台」中间还夹个名词
+    r"([0-9]+(?:\.[0-9]+)?)\s*(万|千)?\s*(?:多|余)?\s*([台套])")
+
+
+def find_output(text):
+    """这一段里说的产量。几处都写了就取最大的一个 —— 那多半是累计数。
+
+    返回 (数目, 原话)。数目一律折成个位,「1.2万台」记作 12000。"""
+    best, why = 0, ""
+    for m in OUTPUT_RE.finditer(text):
+        n = float(m.group(1)) * {"万": 10000, "千": 1000, None: 1}[m.group(2)]
+        if n > best:
+            best, why = n, m.group(0).strip()
+    return (int(best) if best else 0), why
+
+
+def output_for(scope, para, product=""):
+    """产量常不与型号同句:「……该机共有三大机柜。至1960年,共生产38台。」
+
+    先在本句(连同「该机」起头的续句)里找;找不着退到整段。整段里若提到
+    好几台机器 ——「仿M-3试制103型」这样的句子一段里就有两台 —— 便看产量
+    前头最后点到的是哪一台:那才是这个产量的主人。认不准就不认,产量派错
+    了人,比空着还坏。"""
+    n, why = find_output(scope)
+    if n:
+        return n, why
+    n, why = find_output(para)
+    if not n:
+        return 0, ""
+    key = model_key(product)
+    last = ""
+    for m in MODEL_RE.finditer(para[:para.find(why)]):
+        last = re.sub(r"[-－\s]", "", m.group(1)).upper()
+    if last and key and last != key:
+        return 0, ""
+    return n, why
+
+
 def find_persons(text):
     names = []
     for run in PERSON_RE.findall(text):
@@ -691,18 +734,24 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                         ([] if is_inst else [nm])
                         + [x for x in others if not re.search(r"研究所|研究院|大学|学院", x)])
                     base["用户"] = "、".join(users)
+                    n_out, out_why = output_for(scope, h["para"], p)
+                    base["产量"] = str(n_out) if n_out else ""
                     base["Time"] = date or ""
                     base["Personnel"] = persons
                     base["Remark"] = (("协作:" + "、".join(others) + "。")
                                       if others and COLLAB.search(scope) else "") \
+                        + (("产量据「%s」。" % out_why) if out_why else "") \
                         + src(h["page"], h.get("head"))
                     base["evidence"] = h["para"][:300]
                     comp.append(base)
                 else:
                     base["Factory"] = nm
+                    n_out, out_why = output_for(s, h["para"], p)
+                    base["产量"] = str(n_out) if n_out else ""
                     base["Time"] = date or ""
                     base["Personnel"] = persons
-                    base["Remark"] = src(h["page"], h.get("head"))
+                    base["Remark"] = (("产量据「%s」。" % out_why) if out_why else "") \
+                        + src(h["page"], h.get("head"))
                     base["evidence"] = s[:300]
                     semi.append(base)
 
@@ -738,9 +787,12 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             base["用户"] = ""
         else:
             base["Factory"] = ""
+        n_out, out_why = output_for(s, b["text"], p)
+        base["产量"] = str(n_out) if n_out else ""
         base["Time"] = date or ""
         base["Personnel"] = "、".join(find_persons(s))[:40]
-        base["Remark"] = why + src(b["page"], head)
+        base["Remark"] = why + (("产量据「%s」。" % out_why) if out_why else "") \
+            + src(b["page"], head)
         base["evidence"] = s[:300]
         (comp if is_comp else semi).append(base)
 

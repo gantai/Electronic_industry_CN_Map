@@ -72,10 +72,11 @@ UNIT_COLS = (["keep", "confidence", "role", "page", "Unit", "Industry", "Product
               "End Date", "Founder", "City", "Add."]
              + [k for k, _ in EX.STAT_PATTERNS]
              + ["Remark", "Source", "district", "known", "evidence"])
-SEMI_COLS = ["keep", "confidence", "page", "Product", "Factory", "Time", "Personnel",
-             "Remark", "evidence"]
+SEMI_COLS = ["keep", "confidence", "page", "Product", "Factory", "产量", "Time",
+             "Personnel", "Remark", "evidence"]
 COMP_COLS = ["keep", "confidence", "page", "Product", "字长", "内存", "Speed（次秒）",
-             "Research Insti", "Factory", "用户", "Time", "Personnel", "Remark", "evidence"]
+             "Research Insti", "Factory", "用户", "产量", "Time", "Personnel", "Remark",
+             "evidence"]
 NAME_COLS = ["keep", "confidence", "page", "Unit", "Name", "From", "Remark", "Source", "evidence"]
 
 

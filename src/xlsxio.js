@@ -275,6 +275,7 @@ function parseSemi(ws, match) {
   const hi = headerIndex(rows, "product");
   const col = colFinder(rows[hi] || []);
   const cP = col("Product", "产品"), cF = col("Factory", "厂"), cT = col("Time", "时间");
+  const cO = col("产量", "Output");
   const cPer = col("Personnel", "人员"), cR = col("Remark", "备注");
   return rows.slice(hi + 1).map((r, i) => {
     const factoryText = String(cell(r, cF) || "").trim();
@@ -282,6 +283,7 @@ function parseSemi(ws, match) {
       id: "s" + (i + 1),
       product: String(cell(r, cP) || "").trim(),
       factoryText,
+      output: String(cell(r, cO) || "").trim(),
       unitIds: match(factoryText),
       date: parseCNDate(cell(r, cT)),
       timeRaw: String(cell(r, cT) || "").trim(),
@@ -300,7 +302,7 @@ function parseComp(ws, match) {
   const cP = col("Product", "产品"), cW = col("字长"), cM = col("内存");
   const cS = col("Speed（次秒）", "Speed", "速度"), cI = col("Research Insti", "研制单位");
   const cF = col("Factory", "厂"), cT = col("Time", "时间");
-  const cU = col("用户", "User", "应用单位");
+  const cU = col("用户", "User", "应用单位"), cO = col("产量", "Output");
   const cPer = col("Personnel", "人员"), cR = col("Remark", "备注");
   return rows.slice(hi + 1).map((r, i) => {
     const instText = String(cell(r, cI) || "").trim();
@@ -319,6 +321,7 @@ function parseComp(ws, match) {
       instText,
       factoryText,
       userText,
+      output: String(cell(r, cO) || "").trim(),
       unitIds: ids,
       date: parseCNDate(cell(r, cT)),
       timeRaw: String(cell(r, cT) || "").trim(),
@@ -489,14 +492,14 @@ export function exportWorkbook(data, filename) {
     ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 }, { wch: 9 }, { wch: 9 }];
 
   const ws2 = XLSX.utils.aoa_to_sheet([
-    ["Product", "Factory", "Time", "Personnel", "Remark"],
-    ...data.semi.map((s) => [s.product, s.factoryText, s.timeRaw, s.personnel, s.remark]),
+    ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
+    ...data.semi.map((s) => [s.product, s.factoryText, s.output, s.timeRaw, s.personnel, s.remark]),
   ]);
   ws2["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 11 }, { wch: 14 }, { wch: 40 }];
 
   const ws3 = XLSX.utils.aoa_to_sheet([
-    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "用户", "Time", "Personnel", "Remark"],
-    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.userText, c.timeRaw, c.personnel, c.remark]),
+    ["Product", "字长", "内存", "Speed（次秒）", "Research Insti", "Factory", "用户", "产量", "Time", "Personnel", "Remark"],
+    ...data.comp.map((c) => [c.product, c.word, c.memory, c.speed, c.instText, c.factoryText, c.userText, c.output, c.timeRaw, c.personnel, c.remark]),
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 

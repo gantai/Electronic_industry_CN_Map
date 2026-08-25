@@ -322,9 +322,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         w.freeze_panes = "B2"
         return w
 
-    flat("Semi-Product", ["Product", "Factory", "Time", "Personnel", "Remark"], res["semi"])
+    flat("Semi-Product", ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
+         res["semi"])
     flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
-                          "Factory", "用户", "Time", "Personnel", "Remark"], res["comp"])
+                          "Factory", "用户", "产量", "Time", "Personnel", "Remark"], res["comp"])
     nh = wb.create_sheet("Name-History")
     nh.append(["取否", "Unit", "Name", "From", "Remark", "Source"])
     for c in range(1, 7):
@@ -356,8 +357,8 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
-              "Semi-Product": [6, 28, 24, 11, 14, 30],
-              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 14, 16, 34],
+              "Semi-Product": [6, 28, 24, 8, 11, 14, 30],
+              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 8, 14, 16, 34],
               "Name-History": [6, 26, 30, 11, 40, 26]}
     for nm, ws_widths in widths.items():
         w = wb[nm]

@@ -129,11 +129,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 row += 1
                 report[tag] += 1
 
-    _append_flat(SHEET_SEMI, ["Product", "Factory", "Time", "Personnel", "Remark"], semi, "semi")
+    _append_flat(SHEET_SEMI, ["Product", "Factory", "产量", "Time", "Personnel", "Remark"],
+                 semi, "semi", ensure=("产量",))
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     _append_flat(SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
-                              "Factory", "用户", "Time", "Personnel", "Remark"], comp, "comp",
-                 ensure=("用户",))
+                              "Factory", "用户", "产量", "Time", "Personnel", "Remark"], comp, "comp",
+                 ensure=("用户", "产量"))
     # Name-History 的 From 一列,原表存的是文本(见 src/xlsxio.js 的 exportWorkbook),照旧
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
                  names, "names", text_cols=("From",))
