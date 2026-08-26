@@ -3,6 +3,7 @@
 """gaz —— 把一本地方志变成这张地图上的数据。
 
     gaz guide   --vault D:\\Archive  两份《流程》:建档与核对、有厂址的章怎么落点
+    gaz verify                    手改过工作簿之后验一验(只报,不动手)
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
@@ -32,6 +33,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -197,6 +199,42 @@ def cmd_dups(args):
         print("\n   (「DJS-130」与「DJS-130B」型号内核一样,却是两台机器 —— 别一律并掉)")
     if not rep["exact"] and not rep["similar"]:
         print("没找到重复。")
+    return 0
+
+
+def _w(text):
+    """中文字在终端里占两格 —— 拿它对齐,列才不会歪。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+VERIFY_NOTE = {
+    "日期": "只知道年份就写 19580000,月日拿零补足",
+    "坐标": "Lat/Lng 两个一起填,填了就以你填的为准",
+    "出处": "哪一本、哪一页 —— 空着的将来没法回查",
+    "名录": "这些名字在厂所表里查无此人。打错字、把动词粘进了名字、"
+            "或者这一家本来就没登记 —— 连不上的那条线,地图上什么也看不出来",
+}
+
+
+def cmd_verify(args):
+    """手改过工作簿之后验一验 —— 只报,一个格子也不动。"""
+    bad = toxlsx.verify(args.xlsx)
+    if not bad:
+        print("没看出问题。")
+        return 0
+    by = {}
+    for kind, where, why in bad:
+        by.setdefault(kind, []).append((where, why))
+    print("%d 处可疑:" % len(bad))
+    for kind in ("名录", "日期", "坐标", "出处"):
+        rows = by.pop(kind, [])
+        if not rows:
+            continue
+        print("\n【%s】%d 处 —— %s" % (kind, len(rows), VERIFY_NOTE.get(kind, "")))
+        for where, why in rows[:30]:
+            print("   %s%s%s" % (where, " " * max(1, 30 - _w(where)), why))
+        if len(rows) > 30:
+            print("   …… 还有 %d 处" % (len(rows) - 30))
     return 0
 
 
@@ -544,6 +582,10 @@ def main(argv=None):
     p.add_argument("--book-note", help="库中原书笔记的文件名,供 wikilink")
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser("verify", help="手改过工作簿之后验一验(只报,不动手)",
+                       parents=[common])
+    p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("dups", help="找出工作簿里疑似重复的行(只报,不动手)", parents=[common])
     p.set_defaults(func=cmd_dups)

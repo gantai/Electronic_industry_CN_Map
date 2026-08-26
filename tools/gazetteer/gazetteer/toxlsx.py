@@ -477,3 +477,78 @@ def report_dups(xlsx_path):
                     out["similar"].append((SHEET_COMP, k, [x[0] for x in rows],
                                            " ｜ ".join(detail)))
     return out
+
+
+# ---------------------------------------------------------------- 手改之后验一验
+
+def verify(xlsx_path):
+    """手改过工作簿之后,看看有没有改坏。只报,一个格子也不动。
+
+    Excel 改起来顺手,坏起来也无声无息:日期写成 1958、坐标只填了一半、
+    整机的研制单位打错一个字 —— 站点照读不误,只是那条连线从此连不上,
+    而表面上什么也看不出来。
+
+    返回 [(哪一类, 哪一行, 怎么了)]。分类是为了让「出处空着」这种
+    成片的旧账,别把「研制单位打错字」这种一处一处的伤埋掉。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    bad = []
+
+    ws = wb[SHEET_UNITS]
+    h = _headers(ws, 2)
+    names = set()
+    for r in range(3, ws.max_row + 1):
+        nm = ws.cell(row=r, column=1).value
+        if not nm:
+            continue
+        nm = str(nm).strip()
+        names |= _names_of(nm, ws.cell(row=r, column=h["别名"]).value if "别名" in h else "")
+        where = "%s 第%d行" % (nm, r)
+
+        for label in ("Start Date", "End Date"):
+            if label not in h:
+                continue
+            v = ws.cell(row=r, column=h[label]).value
+            if v in (None, ""):
+                continue
+            t = re.sub(r"\s+", "", str(v))
+            if not re.fullmatch(r"\d{8}", t):
+                bad.append(("日期", where, "%s 不是八位日期:%r —— 只知道年份写 19580000" % (label, v)))
+            elif not (1800 <= int(t[:4]) <= 2100):
+                bad.append(("日期", where, "%s 的年份不像话:%s" % (label, t[:4])))
+
+        lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
+        lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
+        if (lat in (None, "")) != (lng in (None, "")):
+            bad.append(("坐标", where, "经纬度只填了一半 —— 两个都填,或者都空着"))
+        else:
+            try:
+                if lat not in (None, "") and not (3 <= float(lat) <= 54 and 73 <= float(lng) <= 136):
+                    bad.append(("坐标", where, "经纬度不在中国范围内:%s, %s(是不是填反了?)" % (lat, lng)))
+            except (TypeError, ValueError):
+                bad.append(("坐标", where, "经纬度不是数字:%r, %r" % (lat, lng)))
+
+        if "Source" in h and not str(ws.cell(row=r, column=h["Source"]).value or "").strip():
+            bad.append(("出处", where, "没写出处"))
+
+    # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
+    for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),
+                        (SHEET_SEMI, ("Research Insti", "Factory"))):
+        if sheet not in wb.sheetnames:
+            continue
+        w = wb[sheet]
+        hh = _headers(w, 1)
+        for r in range(2, w.max_row + 1):
+            who = w.cell(row=r, column=hh["Product"]).value if "Product" in hh else ""
+            miss = []
+            for c in cols:
+                if c not in hh:
+                    continue
+                for one in ALIAS_SPLIT.split(str(w.cell(row=r, column=hh[c]).value or "")):
+                    one = _bare(one)
+                    if one and one not in names and one not in miss:
+                        miss.append(one)
+            if miss:
+                bad.append(("名录", "%s 第%d行 %s" % (sheet, r, who or ""),
+                            "、".join(miss)))
+    return bad

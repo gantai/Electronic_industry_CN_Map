@@ -730,6 +730,90 @@ def test_no_dup():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_verify():
+    """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
+    print("手改之后验一验")
+    tmp = tempfile.mkdtemp(prefix="gaz-vfy-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        toxlsx.append(x, backup=False, units=[
+            {"Unit": "辽阳试验计算技术研究所", "City": "Beijing", "Source": "试·一页"}])
+
+        def kinds(where_has):
+            return sorted({k for k, w, _ in toxlsx.verify(x) if where_has in w})
+
+        base = toxlsx.verify(x)
+        n0 = len(base)
+        check(all(len(t) == 3 for t in base), "每一条都带着「哪一类」")
+
+        wb = openpyxl.load_workbook(x)
+        ws = wb[toxlsx.SHEET_UNITS]
+        h = toxlsx._headers(ws, 2)
+        r = None
+        for i in range(3, ws.max_row + 1):
+            if str(ws.cell(row=i, column=1).value or "").strip() == "辽阳试验计算技术研究所":
+                r = i
+        check(r is not None, "找得到刚添的那一行")
+
+        ws.cell(row=r, column=h["Start Date"]).value = 1958
+        wb.save(x)
+        eq(kinds("辽阳"), ["日期"], "年份写成 1958 而不是 19580000,报出来")
+
+        ws.cell(row=r, column=h["Start Date"]).value = "19580000"
+        wb.save(x)
+        eq(kinds("辽阳"), [], "补成八位就不再报")
+
+        # 坐标:两个一起填才算数,填了还得落在中国境内
+        col = max(h.values()) + 1
+        ws.cell(row=2, column=col).value = "Lat"
+        ws.cell(row=2, column=col + 1).value = "Lng"
+        ws.cell(row=r, column=col).value = 41.27
+        wb.save(x)
+        eq(kinds("辽阳"), ["坐标"], "经纬度只填了一半,报出来")
+
+        ws.cell(row=r, column=col + 1).value = 123.17
+        wb.save(x)
+        eq(kinds("辽阳"), [], "两个都填上,不再报")
+
+        ws.cell(row=r, column=col).value = 123.17
+        ws.cell(row=r, column=col + 1).value = 41.27
+        wb.save(x)
+        eq(kinds("辽阳"), ["坐标"], "经纬度填反了,落到中国境外,报出来")
+
+        ws.cell(row=r, column=col).value = None
+        ws.cell(row=r, column=col + 1).value = None
+        ws.cell(row=r, column=h["Source"]).value = ""
+        wb.save(x)
+        eq(kinds("辽阳"), ["出处"], "出处空着,报出来")
+
+        # 整机里点到的单位,名录里得有 —— 别名也算数,不能因为写了简称就报
+        ws.cell(row=r, column=h["Source"]).value = "试·一页"
+        ws.cell(row=r, column=h["别名"]).value = "辽试所"
+        wb.save(x)
+        c = wb[toxlsx.SHEET_COMP]
+        hh = toxlsx._headers(c, 1)
+        rr = c.max_row + 1
+        c.cell(row=rr, column=hh["Product"]).value = "试验机零号"
+        c.cell(row=rr, column=hh["Factory"]).value = "辽试所"
+        wb.save(x)
+        eq(kinds("试验机零号"), [], "点的是别名,认得出是同一家,不报")
+
+        c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所、查无此厂"
+        wb.save(x)
+        eq(kinds("试验机零号"), ["名录"], "同一格里混着一个查无此人的,报出来")
+        why = [w for k, wh, w in toxlsx.verify(x) if "试验机零号" in wh][0]
+        eq(why, "查无此厂", "只点名查不到的那个,认得出的不跟着一起报")
+
+        c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所"
+        ws.cell(row=r, column=h["Source"]).value = "试·一页"
+        wb.save(x)
+        eq(len(toxlsx.verify(x)), n0, "都改回去,报的条数回到原样")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_later_rename():
     """「后更名为」没说是哪一年 —— 宁可不记年份,也不能安上一个。"""
     print("后更名为")
@@ -765,7 +849,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_later_rename):
+               test_verify, test_later_rename):
         fn()
     print()
     if FAILED:

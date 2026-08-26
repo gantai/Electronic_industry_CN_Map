@@ -497,19 +497,28 @@ export function exportWorkbook(data, filename) {
   const wb = XLSX.utils.book_new();
   const y = data.statsYear || "";
 
+  /* Lat/Lng 是你写下的坐标,推定的另立两列 —— 导出改完再存回来,
+     不该把「天安门」这样的兜底落点,悄悄变成一条有出处的断言。 */
   const head1 = ["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.", y,
-    ...Array(STAT_LABELS.length - 1).fill(""), "Remark", "Source", "Name EN", "Lat", "Lng"];
-  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", "", ""];
-  const body = data.units.map((u) => [
-    u.raw, u.industry, u.product,
-    u.start ? u.start.raw : "", u.end ? u.end.raw : "",
-    u.founder, u.city, u.address,
-    ...STAT_COLS.map(([k]) => (u.stats[k] == null ? "" : u.stats[k])),
-    u.remark, u.source, u.nameEn || "", u.lat, u.lng,
-  ]);
+    ...Array(STAT_LABELS.length - 1).fill(""), "Remark", "Source", "Name EN",
+    "Lat", "Lng", "推定纬度", "推定经度", "落点"];
+  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", "", "", "", "", ""];
+  const body = data.units.map((u) => {
+    const own = u.precision === "given";
+    return [
+      u.raw, u.industry, u.product,
+      u.start ? u.start.raw : "", u.end ? u.end.raw : "",
+      u.founder, u.city, u.address,
+      ...STAT_COLS.map(([k]) => (u.stats[k] == null ? "" : u.stats[k])),
+      u.remark, u.source, u.nameEn || "",
+      own ? u.lat : "", own ? u.lng : "",
+      own ? "" : u.lat, own ? "" : u.lng, u.precision || "",
+    ];
+  });
   const ws1 = XLSX.utils.aoa_to_sheet([head1, head2, ...body]);
   ws1["!cols"] = [{ wch: 26 }, { wch: 10 }, { wch: 20 }, { wch: 11 }, { wch: 11 }, { wch: 40 }, { wch: 9 }, { wch: 26 },
-    ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 }, { wch: 9 }, { wch: 9 }];
+    ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 },
+    { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 8 }];
 
   const ws2 = XLSX.utils.aoa_to_sheet([
     ["Product", "别名", "Research Insti", "Factory", "产量", "Time", "Personnel", "Remark"],
