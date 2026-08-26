@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """gaz —— 把一本地方志变成这张地图上的数据。
 
-    gaz guide   --vault <库>/厂所  《流程》:建档与核对,从头到尾照着办
+    gaz guide   --vault D:\\Archive  两份《流程》:建档与核对、有厂址的章怎么落点
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
@@ -201,30 +201,38 @@ def cmd_dups(args):
 
 
 def cmd_guide(args):
-    """把《流程》写进 Obsidian 库 —— 核对时照着办的那一份,该跟笔记摆在一处。"""
-    src = os.path.join(HERE, "流程.md")
-    if not os.path.exists(src):
-        sys.exit("找不到 %s" % src)
-    with open(src, encoding="utf-8") as f:
-        text = f.read()
+    """把两份《流程》写进库里 —— 照着办的那几份,该跟笔记摆在一处。"""
+    docs = [("流程.md", "地方志建档流程.md"),
+            ("有厂址的章.md", "地方志建档-有厂址的章.md")]
     vault = args.vault or os.environ.get("GAZ_VAULT")
     if not vault:
-        sys.stdout.write(text)
+        for src, _name in docs:
+            with open(os.path.join(HERE, src), encoding="utf-8") as f:
+                sys.stdout.write(f.read())
+            sys.stdout.write("\n\n")
         return 0
-    out = os.path.join(vault, args.out or "地方志建档流程.md")
-    if os.path.exists(out):
-        with open(out, encoding="utf-8") as f:
-            old = f.read()
-        if old == text:
-            print("已是最新:%s" % out)
-            return 0
-        if not args.force:
-            sys.exit("%s 已存在,且与本版不同 —— 你可能在上头写过批注。\n"
-                     "确要覆盖,加 --force(先自己留个副本)。" % out)
-    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-    with open(out, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
-    print("流程已写到 %s" % out)
+    os.makedirs(vault, exist_ok=True)
+    for src, name in docs:
+        path = os.path.join(HERE, src)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        out = os.path.join(vault, name)
+        if os.path.exists(out):
+            with open(out, encoding="utf-8") as f:
+                old_text = f.read()
+            if old_text == text:
+                print("已是最新:%s" % name)
+                continue
+            if not args.force:
+                print("！%s 已存在,且与本版不同 —— 你可能在上头写过批注,没动它。"
+                      % name)
+                print("   确要覆盖:加 --force(先自己留个副本)")
+                continue
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        print("写到 %s" % out)
     return 0
 
 
@@ -541,8 +549,7 @@ def main(argv=None):
     p.set_defaults(func=cmd_dups)
 
     p = sub.add_parser("guide", help="《流程》—— 打印出来,或写进 Obsidian 库", parents=[common])
-    p.add_argument("--vault", help="写进这个库(也可设 GAZ_VAULT);不给就打印到屏幕")
-    p.add_argument("--out", help="库里的文件名(默认 地方志建档流程.md)")
+    p.add_argument("--vault", help="写进这个目录(也可设 GAZ_VAULT);不给就打印到屏幕")
     p.add_argument("--force", action="store_true", help="已存在且不同也照覆盖")
     p.set_defaults(func=cmd_guide)
 

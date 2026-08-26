@@ -11,9 +11,14 @@
 
 ## 照着办
 
-从头到尾的流程写在 [`流程.md`](流程.md) 里 —— 转换、抽取、核对、并表、
-看图,连每本志的清单都有。它是给 Obsidian 读的(Mermaid 流程图、callout、
-可勾的清单),写进库里最好使:
+从头到尾的流程写在两份文档里,都是给 Obsidian 读的(Mermaid 流程图、
+callout、可勾的清单):
+
+- [`流程.md`](流程.md) —— 共通的那几步:转换、抽取、核对、并表、看图。
+- [`有厂址的章.md`](有厂址的章.md) —— 志书写明厂址的章,多出来的**落点**
+  那一步:`gaz geocode` 开草稿、查经纬度、填进 `src/geocode.js`。
+
+写进库里最好使:
 
 ```bash
 python3 tools/gazetteer/gaz.py guide --vault <你的 Obsidian 库>/厂所
@@ -304,7 +309,7 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 
 ```
 gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
-gaz guide  --vault <库>/厂所   《流程》写进库(不给 --vault 就打印)
+gaz guide  --vault D:\Archive  两份《流程》写进这个目录(不给就打印)
 gaz check                     本机环境自检
 gaz inspect <某某志.md>        看一眼转换稿:标题、页码、套语、断行
 gaz book    <某某志.md>        转换稿 → 本地 Excel(核名字就在这份上核)
