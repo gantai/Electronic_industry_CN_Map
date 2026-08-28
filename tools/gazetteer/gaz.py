@@ -321,14 +321,21 @@ def cmd_volume(args):
 
     路径、订正表、城市,每回都要重打一遍,打错一处就白跑。这里只记一个
     「转换稿放在哪」(GAZ_DRAFTS),往下按名字找。"""
+    # 稿子的正经去处就是仓库里的 转换稿 —— 没别的指示就用它,不必先设环境变量
+    default = os.path.join(REPO, "转换稿")
     root = args.dir or os.environ.get("GAZ_DRAFTS")
+    if not root and os.path.isdir(default):
+        root = default
+        print("转换稿目录:%s(没设 GAZ_DRAFTS,用的仓库里这一个)" % root)
     if not root:
-        sys.exit("要指出转换稿放在哪:--dir …,或设个环境变量,以后就不必写了:\n"
+        sys.exit("找不到转换稿目录。稿子放进 %s 就行 —— 那是默认去处,\n"
+                 "目录建起来、稿子放进去,这条命令就跑得动了。\n"
+                 "\n放在别处的话,指给它:--dir …,或设个环境变量,以后不必再写:\n"
                  "  Windows  [Environment]::SetEnvironmentVariable("
                  "\"GAZ_DRAFTS\", \"D:\\Coding\\CN_Map\\转换稿\", \"User\")\n"
-                 "  其他     export GAZ_DRAFTS=~/转换稿")
+                 "  其他     export GAZ_DRAFTS=~/转换稿" % default)
     if not os.path.isdir(root):
-        sys.exit("找不到目录:%s" % root)
+        sys.exit("找不到目录:%s\n(稿子的默认去处是 %s)" % (root, default))
     # 关键词可以写好几截,不必加引号 —— 志书的文件名带空格、带《》,
     # PowerShell 会把它拆成好几个词送进来。几截都在名字里,才算这一份。
     terms = [t for t in args.key if t.strip()]

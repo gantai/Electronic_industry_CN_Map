@@ -749,6 +749,32 @@ def test_no_dup():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_drafts_default():
+    """没设 GAZ_DRAFTS 时,稿子的去处是仓库里的 转换稿 —— 不该逼人先设环境变量。"""
+    print("转换稿的默认去处")
+    import subprocess
+    gaz = os.path.join(HERE, "..", "gaz.py")
+    env = dict(os.environ)
+    env.pop("GAZ_DRAFTS", None)
+    out = subprocess.run([sys.executable, gaz, "volume", "查无此稿"],
+                         capture_output=True, text=True, env=env, cwd=REPO)
+    said = out.stdout + out.stderr
+    check(os.path.join(REPO, "转换稿") in said, "说得出默认去处是仓库里的 转换稿")
+    check("--dir" in said, "也说得出放在别处该怎么指")
+
+    tmp = tempfile.mkdtemp(prefix="gaz-drafts-")
+    try:
+        open(os.path.join(tmp, "某某志 第九章.md"), "w",
+             encoding="utf-8").write("## 一、机\n\n无事。\n")
+        out = subprocess.run([sys.executable, gaz, "volume", "--dir", tmp,
+                              "第九章", "Beijing"],
+                             capture_output=True, text=True, env=env, cwd=REPO)
+        check("--city" in (out.stdout + out.stderr),
+              "把城市当成关键词写,提醒该用 --city")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_verify():
     """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
     print("手改之后验一验")
@@ -910,7 +936,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_verify, test_later_rename):
+               test_drafts_default, test_verify, test_later_rename):
         fn()
     print()
     if FAILED:
