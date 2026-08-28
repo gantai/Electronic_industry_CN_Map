@@ -115,6 +115,40 @@ def cmd_check(args):
     except ImportError:
         pass
     print("\n已经转好的 .md 不需要 zhiconv,%s book 直接读。" % SELF)
+
+    # 底下这两样不归 pip 管,却是真绊过人的:没设 user.name 提交会被拒,
+    # 没装 Node 看不了本地那张图
+    import subprocess
+
+    def run(*cmd):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            return out.stdout.strip() if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    print("\n仓库这一头:\n")
+    if run("git", "--version") is None:
+        print("  [ ] git          没装 —— https://git-scm.com/download/win")
+    else:
+        who = run("git", "config", "user.name")
+        mail = run("git", "config", "user.email")
+        if who and mail:
+            print("  [✓] git          提交署名:%s <%s>" % (who, mail))
+        else:
+            print("  [ ] git          没设署名,git commit 会拒绝\n"
+                  '       装法:git config --global user.name "你的名字"\n'
+                  '            git config --global user.email "你的邮箱"')
+
+    npm = run("npm", "--version") or run("npm.cmd", "--version")
+    node = run("node", "--version")
+    if npm and node:
+        print("  [✓] Node/npm     node %s、npm %s —— npm run dev 看本地那张图"
+              % (node, npm))
+    else:
+        print("  [ ] Node/npm     没装,本地看不了图(线上不受影响 —— "
+              "GitHub 那头自带)\n"
+              "       装法:winget install OpenJS.NodeJS.LTS,装完新开终端")
     return 0
 
 
