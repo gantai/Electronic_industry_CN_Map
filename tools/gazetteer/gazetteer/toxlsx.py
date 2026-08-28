@@ -481,6 +481,25 @@ def report_dups(xlsx_path):
 
 # ---------------------------------------------------------------- 手改之后验一验
 
+# 「1966年（后改名…」被从中切开,「6年」当成了纪元六年 —— 折出 1906。
+# 中国电子工业没有 1900 年代的事,这十年里的年份一概是这么来的。
+SLICED_YEAR = range(1900, 1910)
+
+
+def _year_trouble(v, label):
+    """日期格子有没有毛病 —— 有就说一句,没有就返回 None。"""
+    t = re.sub(r"\s+", "", str(v))
+    if not re.fullmatch(r"\d{8}", t):
+        return "%s 不是八位日期:%r —— 只知道年份写 19580000" % (label, v)
+    y = int(t[:4])
+    if not (1800 <= y <= 2100):
+        return "%s 的年份不像话:%d" % (label, y)
+    if y in SLICED_YEAR:
+        return ("%s = %d,多半是「1966年（…」被从中切开算出来的,"
+                "回原文核一核" % (label, y))
+    return None
+
+
 def verify(xlsx_path):
     """手改过工作簿之后,看看有没有改坏。只报,一个格子也不动。
 
@@ -511,11 +530,9 @@ def verify(xlsx_path):
             v = ws.cell(row=r, column=h[label]).value
             if v in (None, ""):
                 continue
-            t = re.sub(r"\s+", "", str(v))
-            if not re.fullmatch(r"\d{8}", t):
-                bad.append(("日期", where, "%s 不是八位日期:%r —— 只知道年份写 19580000" % (label, v)))
-            elif not (1800 <= int(t[:4]) <= 2100):
-                bad.append(("日期", where, "%s 的年份不像话:%s" % (label, t[:4])))
+            why = _year_trouble(v, label)
+            if why:
+                bad.append(("日期", where, why))
 
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
@@ -530,6 +547,29 @@ def verify(xlsx_path):
 
         if "Source" in h and not str(ws.cell(row=r, column=h["Source"]).value or "").strip():
             bad.append(("出处", where, "没写出处"))
+
+    # 沿革表:年份不像话的、以及孤零零一条「自己改名叫自己」的
+    if SHEET_NAMES in wb.sheetnames:
+        w = wb[SHEET_NAMES]
+        hh = _headers(w, 1)
+        rows, per = [], {}
+        for r in range(2, w.max_row + 1):
+            u = _bare(w.cell(row=r, column=hh["Unit"]).value) if "Unit" in hh else ""
+            n = _bare(w.cell(row=r, column=hh["Name"]).value) if "Name" in hh else ""
+            f = w.cell(row=r, column=hh["From"]).value if "From" in hh else None
+            if not u:
+                continue
+            rows.append((r, u, n, f))
+            per[u] = per.get(u, 0) + 1
+        for r, u, n, f in rows:
+            where = "%s 第%d行 %s" % (SHEET_NAMES, r, u)
+            if f not in (None, ""):
+                why = _year_trouble(f, "启用年")
+                if why:
+                    bad.append(("日期", where, why))
+            # 「甲厂 → 甲厂」是改名链的末一段,前头得有段别的名字才立得住
+            if n == u and per.get(u, 0) < 2:
+                bad.append(("沿革", where, "只此一条,却是「改名叫自己」—— 不载信息"))
 
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),

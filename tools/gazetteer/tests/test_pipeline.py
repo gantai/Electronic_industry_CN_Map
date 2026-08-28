@@ -829,6 +829,34 @@ def test_verify():
         ws.cell(row=r, column=h["Source"]).value = "试·一页"
         wb.save(x)
         eq(len(toxlsx.verify(x)), n0, "都改回去,报的条数回到原样")
+
+        # 沿革表:1900 年代的年份是「1966年（后改名…」被切开算出来的
+        nh = wb[toxlsx.SHEET_NAMES]
+        hn = toxlsx._headers(nh, 1)
+        nr = nh.max_row + 1
+        nh.cell(row=nr, column=hn["Unit"]).value = "辽阳试验计算技术研究所"
+        nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验机械所"
+        nh.cell(row=nr, column=hn["From"]).value = "19060000"
+        wb.save(x)
+        eq(kinds("Name-History 第%d行" % nr), ["日期"], "1906 这样的年份,报出来")
+
+        nh.cell(row=nr, column=hn["From"]).value = "19660000"
+        wb.save(x)
+        eq(kinds("Name-History 第%d行" % nr), [], "1966 是正常年份,不报")
+
+        # 「甲厂 → 甲厂」是改名链的末一段:前头有别的名字才立得住
+        nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验计算技术研究所"
+        wb.save(x)
+        eq(kinds("Name-History 第%d行" % nr), ["沿革"],
+           "孤零零一条「改名叫自己」,不载信息,报出来")
+
+        nr2 = nh.max_row + 1
+        nh.cell(row=nr2, column=hn["Unit"]).value = "辽阳试验计算技术研究所"
+        nh.cell(row=nr2, column=hn["Name"]).value = "辽阳试验机械所"
+        nh.cell(row=nr2, column=hn["From"]).value = "19600000"
+        wb.save(x)
+        eq(kinds("Name-History 第%d行" % nr), [],
+           "前头有一段别的名字,末一段就立得住,不报")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
