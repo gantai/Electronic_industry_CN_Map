@@ -392,8 +392,9 @@ def test_book():
         bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
                           log=lambda *a: None)
         wb = openpyxl.load_workbook(out)
-        eq(wb.sheetnames, ["Fact and Comp-Beijing", "Semi-Product", "Comp-Product",
-                           "Name-History", "待核"], "五张表")
+        eq(wb.sheetnames, ["待核", "Fact and Comp-Beijing", "Semi-Product",
+                           "Comp-Product", "Name-History"],
+           "五张表,要核的那张排在头一个")
         ws = wb["Fact and Comp-Beijing"]
         eq([c.value for c in ws[1]][:8],
            [None, "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add."],
@@ -619,6 +620,12 @@ def test_edit_in_place():
         bookmd.write_xlsx(x, res, city="Beijing", log=lambda *a: None)
 
         wb = openpyxl.load_workbook(x)
+        # 一打开就该停在「待核」上 —— 停在预览表上,第一眼看见的是一列光秃秃的
+        # 单位名,连「取否」列都没有,不知道该往哪儿写 y
+        eq(wb.sheetnames[0], "待核", "「待核」排在头一张")
+        eq(wb.active.title, "待核", "打开就停在「待核」")
+        eq([w.title for w in wb.worksheets if w.sheet_view.tabSelected], ["待核"],
+           "选中的只有「待核」这一张")
         rv = wb["待核"]
         head = [c.value for c in rv[1]]
         rv.cell(row=2, column=1).value = "y"

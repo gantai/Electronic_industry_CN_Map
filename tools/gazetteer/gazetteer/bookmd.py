@@ -374,6 +374,14 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         for i, wid in enumerate(ws_widths, start=1):
             w.column_dimensions[get_column_letter(i)].width = wid
 
+    # 「待核」排在头一张,打开就停在它上头 —— 从前排在最末,一开文件停在
+    # 「Fact and Comp-<城>」预览表上:那张 A 列是一列光秃秃的单位名,表头空着,
+    # 又没有「取否」列。要核对的人第一眼看见的,恰恰是唯一改了不算数的那张。
+    wb.move_sheet("待核", offset=-(len(wb.sheetnames) - 1))
+    wb.active = wb.sheetnames.index("待核")
+    for w in wb.worksheets:
+        w.sheet_view.tabSelected = (w.title == "待核")
+
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     try:
         wb.save(path)
@@ -391,8 +399,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
             % os.path.basename(alt))
         return alt
     log("Excel 已写到 %s" % path)
-    log("  五张表:%s、Semi-Product、Comp-Product、Name-History、待核" % sheet)
-    log("  在「待核」等表的「取否」列写 y,再 gaz xlsx --from 这个文件")
+    log("  五张表:待核、Semi-Product、Comp-Product、Name-History、%s" % sheet)
+    log("  打开就停在「待核」——「取否」在 A 列,写 y 的行才收。")
+    log("  另外三张(Semi/Comp/Name-History)的「取否」也在 A 列,别漏了;")
+    log("  「%s」是照原表体例排的预览,改它不算数。" % sheet)
     return path
 
 
