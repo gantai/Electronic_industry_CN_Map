@@ -830,6 +830,20 @@ def test_verify():
         wb.save(x)
         eq(len(toxlsx.verify(x)), n0, "都改回去,报的条数回到原样")
 
+        # 产品表没有出处列,书名混在备注里 —— 判断「市计算机技术研究所」
+        # 是哪个市的,全靠它
+        eq(toxlsx._book_of("产量据「生产10台」。北京工业志·电子志·第三章"),
+           "北京工业志", "备注末尾那截出处里的书名")
+        eq(toxlsx._book_of("协作:某某厂。"), "", "备注里没有出处就不硬认")
+        c.cell(row=rr, column=hh["Remark"]).value = "上海电子仪表工业志·第一章"
+        c.cell(row=rr, column=hh["Factory"]).value = "查无此厂"
+        wb.save(x)
+        wh = [wh for k, wh, w in toxlsx.verify(x) if "试验机零号" in wh][0]
+        check("〔上海电子仪表工业志〕" in wh, "报的时候带上是哪本志抄来的")
+        c.cell(row=rr, column=hh["Remark"]).value = None
+        c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所"
+        wb.save(x)
+
         # 沿革表:1900 年代的年份是「1966年（后改名…」被切开算出来的
         nh = wb[toxlsx.SHEET_NAMES]
         hn = toxlsx._headers(nh, 1)

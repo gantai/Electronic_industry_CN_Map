@@ -485,6 +485,18 @@ def report_dups(xlsx_path):
 # 中国电子工业没有 1900 年代的事,这十年里的年份一概是这么来的。
 SLICED_YEAR = range(1900, 1910)
 
+# 产品表没有出处列,书名混在备注末尾的那截出处里:「…北京工业志·电子志·第三章…」
+BOOK_IN_TEXT = re.compile(r"([一-鿿]{2,12}志)[·・]")
+
+
+def _book_of(*cells):
+    """这一行是哪本志抄来的 —— 判断「市计算机技术研究所」是哪个市的,全靠它。"""
+    for v in cells:
+        m = BOOK_IN_TEXT.search(str(v or ""))
+        if m:
+            return m.group(1)
+    return ""
+
 
 def _year_trouble(v, label):
     """日期格子有没有毛病 —— 有就说一句,没有就返回 None。"""
@@ -580,6 +592,10 @@ def verify(xlsx_path):
         hh = _headers(w, 1)
         for r in range(2, w.max_row + 1):
             who = w.cell(row=r, column=hh["Product"]).value if "Product" in hh else ""
+            book = _book_of(w.cell(row=r, column=hh["Remark"]).value
+                            if "Remark" in hh else "")
+            if book:
+                who = "%s〔%s〕" % (who or "", book)
             miss = []
             for c in cols:
                 if c not in hh:
