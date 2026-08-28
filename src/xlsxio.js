@@ -194,6 +194,9 @@ function parseUnits(ws) {
   const cRemark = col("Remark", "备注");
   const cSource = col("Source", "出处", "资料来源");
   const cNameEn = col("Name EN", "英文名", "English Name");
+  /* 统计数字是哪一年的 —— 志书按「1995年末,职工总数…」整段报,一行一个年份。
+     没这一列就退回表头那个总年份(表头 `1990` 那一格)。 */
+  const cStatsYear = col("统计年", "Stats Year", "数据年份");
   const cLat = col("Lat", "Latitude", "纬度");
   const cLng = col("Lng", "Lon", "Longitude", "经度");
   /* A 列无表头,即单位名称 */
@@ -259,6 +262,7 @@ function parseUnits(ws) {
       chain: splitChain(founder).map((t) => ({ text: t, date: parseCNDate(t) })),
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
+      statsYear: (cStatsYear >= 0 ? parseInt(cell(r, cStatsYear), 10) : NaN) || statsYear,
       lat: hasOwn ? latOverride : hasPlace ? place.lat : fallback.lat,
       lng: hasOwn ? lngOverride : hasPlace ? place.lng : fallback.lng,
       precision: hasOwn ? "given" : hasPlace ? place.precision || "district" : "city",
@@ -501,8 +505,8 @@ export function exportWorkbook(data, filename) {
      不该把「天安门」这样的兜底落点,悄悄变成一条有出处的断言。 */
   const head1 = ["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.", y,
     ...Array(STAT_LABELS.length - 1).fill(""), "Remark", "Source", "Name EN",
-    "Lat", "Lng", "推定纬度", "推定经度", "落点"];
-  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", "", "", "", "", ""];
+    "统计年", "Lat", "Lng", "推定纬度", "推定经度", "落点"];
+  const head2 = ["", "", "", "", "", "", "", "", ...STAT_LABELS, "", "", "", "", "", "", "", "", ""];
   const body = data.units.map((u) => {
     const own = u.precision === "given";
     return [
@@ -510,7 +514,7 @@ export function exportWorkbook(data, filename) {
       u.start ? u.start.raw : "", u.end ? u.end.raw : "",
       u.founder, u.city, u.address,
       ...STAT_COLS.map(([k]) => (u.stats[k] == null ? "" : u.stats[k])),
-      u.remark, u.source, u.nameEn || "",
+      u.remark, u.source, u.nameEn || "", u.statsYear || "",
       own ? u.lat : "", own ? u.lng : "",
       own ? "" : u.lat, own ? "" : u.lng, u.precision || "",
     ];
@@ -518,7 +522,7 @@ export function exportWorkbook(data, filename) {
   const ws1 = XLSX.utils.aoa_to_sheet([head1, head2, ...body]);
   ws1["!cols"] = [{ wch: 26 }, { wch: 10 }, { wch: 20 }, { wch: 11 }, { wch: 11 }, { wch: 40 }, { wch: 9 }, { wch: 26 },
     ...STAT_LABELS.map(() => ({ wch: 9 })), { wch: 40 }, { wch: 18 }, { wch: 30 },
-    { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 8 }];
+    { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 8 }];
 
   const ws2 = XLSX.utils.aoa_to_sheet([
     ["Product", "别名", "Research Insti", "Factory", "产量", "Time", "Personnel", "Remark"],

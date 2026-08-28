@@ -143,6 +143,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             for key, label in STAT_LABELS:
                 if label in h and r.get(key) not in (None, ""):
                     ws.cell(row=row, column=h[label], value=_num(r[key]))
+            # 数字是哪一年的 —— 志书各章截取的年份不一致(上海多是 1990,
+            # 北京第四篇是 1995),不记下来,一个数字就等于没说
+            if r.get("统计年") not in (None, ""):
+                _ensure_column(ws, "统计年", header_row=1)
+                h = _headers(ws, 2)
+                ws.cell(row=row, column=h["统计年"], value=_num(r["统计年"]))
             have |= mine
             row += 1
             report["units"] += 1
@@ -299,6 +305,7 @@ def read_units_full(xlsx_path):
             rec[label] = ws.cell(row=r, column=h[label]).value if label in h else None
         for key, label in STAT_LABELS:
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
+        rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
         out.append(rec)
     return out
 

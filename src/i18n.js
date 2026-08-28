@@ -26,7 +26,8 @@ export const EVENT_EN = {
   "划归": "Transfer", "更名": "Rename", "协作": "Collaboration",
 };
 export const STAT_EN = {
-  staff: "Employees", tech: "Technical staff", plant: "Plant area", floor: "Floor area",
+  staff: "Number of employees", tech: "Number of technical staff",
+  plant: "Plant area", floor: "Floor area",
   assets: "Fixed assets", output: "Gross output", sales: "Sales revenue", profit: "Profit",
 };
 export const PRECISION_EN = {
@@ -61,7 +62,7 @@ const zh = {
   tabs: { map: "地图", lineage: "谱系", products: "产品", directory: "名录" },
   navLabel: "页面切换",
   langLabel: "切换到英文",
-  coverage: (n) => "现有数据:上海 · " + n + " 家厂所",
+  coverage: (cities, n) => "现有数据:" + (cities.length ? cities.join("、") : "—") + " · " + n + " 家厂所",
   previewChip: (f) => "● 本地预览:" + f + " ✕",
   previewTitle: "当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览。",
 
@@ -123,8 +124,9 @@ const zh = {
   countUnits: (a, b) => a + " / " + b + " 家",
   importExcel: "导入 Excel", exportExcel: "导出 Excel",
   directoryNote: (file) => "全站数据来自仓库根目录的 " + file + "(Fact and Comp-Shanghai / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。",
-  statsNoteYear: (y) => " 统计列为 " + y + " 年数值,量纲悉依原表。",
-  thUnit: "单位", thIndustry: "行业", thType: "类型", thSpan: "起讫", thAddress: "地址",
+  statsNoteYear: (y) => " 统计数字未标年份的,按 " + y + " 年计;标了的以数字后那一年为准。量纲悉依原表。",
+  thUnit: "单位", thIndustry: "行业", thType: "类型", thSpan: "起讫",
+  thCity: "城市", thAddress: "地址",
   noAddressShort: "未著录", vagueShort: "坐标待定位",
   noUnits: "没有匹配的单位。",
 
@@ -159,7 +161,7 @@ const en = {
   tabs: { map: "Map", lineage: "Lineage", products: "Products", directory: "Directory" },
   navLabel: "Switch page",
   langLabel: "Switch to Chinese",
-  coverage: (n) => "Coverage: Shanghai · " + n + " units",
+  coverage: (cities, n) => "Coverage: " + (cities.length ? cities.join(", ") : "—") + " · " + n + " units",
   previewChip: (f) => "● Local preview: " + f + " ✕",
   previewTitle: "You are viewing a file you imported. The published data is unchanged. Click to discard the preview.",
 
@@ -217,8 +219,9 @@ const en = {
   countUnits: (a, b) => a + " / " + b + " units",
   importExcel: "Import Excel", exportExcel: "Export Excel",
   directoryNote: (file) => "All data comes from " + file + " in the repository root (sheets Fact and Comp-Shanghai / Semi-Product / Comp-Product, plus the optional Name-History), compiled into the build. To update: edit the workbook → check it locally with “Import Excel” → overwrite the file in the repository and push; Actions rebuilds automatically. Importing affects only your own browsing session.",
-  statsNoteYear: (y) => " Statistics are " + y + " figures; units follow the source table.",
-  thUnit: "Unit", thIndustry: "Industry", thType: "Type", thSpan: "Span", thAddress: "Address",
+  statsNoteYear: (y) => " Undated figures are " + y + "; where a year follows a figure, that year applies. Units follow the source table.",
+  thUnit: "Unit", thIndustry: "Industry", thType: "Type", thSpan: "Span",
+  thCity: "City", thAddress: "Address",
   noAddressShort: "unrecorded", vagueShort: "location approximate",
   noUnits: "No matching units.",
 

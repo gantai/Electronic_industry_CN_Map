@@ -25,7 +25,7 @@
 """
 
 import re
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 
 from . import cndate
 
@@ -334,6 +334,17 @@ def find_district(sents):
 
 
 ADDR_SURE = re.compile(r"^(?:厂址|所址|地址)")
+
+
+# 统计年只认写明的「1995年」。拿 cndate.parse 去认,「销售收人1840.2万元」
+# 里那个 1840 就成了年份 —— 数字堆里的四位数,十有八九不是年。
+STAT_YEAR_RE = re.compile(r"(1[89]\d{2}|20\d{2})\s*年")
+
+
+def stat_year_of(sent):
+    """这句话里的统计数字是哪一年的 —— 只认写明年份的那种。"""
+    m = STAT_YEAR_RE.search(sent)
+    return int(m.group(1)) if m else None
 
 
 def find_address(sents):
@@ -793,19 +804,27 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             signals += 1
         names.extend(name_history(ordered, nm, page0, head0, src))
 
-        stats, offyear = {}, []
+        # 数字连它是哪一年的一起记。从前不是 stats_year 的一概丢掉,只在备注里
+        # 留一句「非1990年数字:staff=1499(1995年)」—— 数字本身没了,图上、
+        # 表上都看不见。志书按「1995年末,职工总数…占地面积…」整段报,
+        # 一行的数字通常同出一年,所以年份记在行上,不必一个数字一个年份。
+        stats, yrs = {}, {}
         for key, pat in STAT_PATTERNS:
             for s in sents:
                 m = re.search(pat, s)
                 if not m:
                     continue
-                y = cndate.year(s)
-                if y and stats_year and y != stats_year:
-                    offyear.append("%s=%s(%d年)" % (key, m.group(1), y))
-                    break
                 stats[key] = _stat_value(m.group(1), m.group(2))
+                y = stat_year_of(s)
+                if y:
+                    yrs[key] = y
                 ev[key] = s
                 break
+        stat_year = None
+        if yrs:
+            stat_year = Counter(yrs.values()).most_common(1)[0][0]
+        elif stats:
+            stat_year = stats_year
         signals += min(len(stats), 3)
 
         prods = find_products(sents)
@@ -822,8 +841,11 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             remark.append("未见专条,据行文点名")
         if ibasis:
             remark.append("行业%s" % ibasis)
-        if offyear:
-            remark.append("非%d年数字:%s" % (stats_year, "；".join(offyear[:4])))
+        # 同一行的数字若不同出一年,那才值得说一句 —— 年份本身已经单列一栏
+        odd = sorted({(k, y) for k, y in yrs.items() if y != stat_year})
+        if odd:
+            remark.append("另有他年数字:%s"
+                          % "；".join("%s=%d年" % (k, y) for k, y in odd[:4]))
         if len(pages) > 1:
             remark.append("见 p.%d–%d" % (pages[0], pages[-1]))
 
@@ -844,6 +866,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["district"] = find_district([addr_ev] if addr_ev else sents)
         for key, _ in STAT_PATTERNS:
             row[key] = stats.get(key, "")
+        row["统计年"] = stat_year or ""
         row["Remark"] = "；".join(remark)
         row["Source"] = src(page0, head0)
         row["known"] = "已在表内" if nm in (known or {}) else ""

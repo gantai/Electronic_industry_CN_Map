@@ -919,7 +919,13 @@ function DetailPanel({ u, data, byId, onClose, gotoUnit, statsYear, year, t, lan
           <table className="ministat">
             <tbody>
               {stats.map((f) => (
-                <tr key={f.key}><td>{statLabel(f.key, lang, f.label)}</td><td className="mono">{fmtNum(u.stats[f.key])}</td></tr>
+                <tr key={f.key}>
+                  <td>{statLabel(f.key, lang, f.label)}</td>
+                  <td className="mono">
+                    {fmtNum(u.stats[f.key])}
+                    {u.statsYear ? <span className="dimtext small"> {u.statsYear}</span> : null}
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -1045,6 +1051,18 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
 }
 
 /* ============================================================ DIRECTORY ============================================================ */
+/* 统计数字后头缀上年份 —— 「1499」与「1499(1995)」是两回事:
+   前者要读者自己去猜是哪一年,而志书各章的截取年份并不一致。 */
+function StatCell({ value, year }) {
+  if (value == null) return <td className="mono" />;
+  return (
+    <td className="mono">
+      {fmtNum(value)}
+      {year ? <span className="dimtext small"> {year}</span> : null}
+    </td>
+  );
+}
+
 function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState({ key: "start", dir: 1 });
@@ -1058,6 +1076,7 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
       if (sort.key === "start") return u.start ? u.start.y * 10000 + (u.start.m || 0) * 100 + (u.start.d || 0) : Infinity;
       if (sort.key === "name") return u.name;
       if (sort.key === "industry") return u.industry;
+      if (sort.key === "city") return cityLabel(u.city, lang) || "";
       const v = u.stats[sort.key];
       return v == null ? -Infinity : v;
     };
@@ -1066,7 +1085,7 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
       if (typeof va === "string" || typeof vb === "string") return String(va).localeCompare(String(vb)) * sort.dir;
       return (va - vb) * sort.dir;
     });
-  }, [data.units, q, sort]);
+  }, [data.units, q, sort, lang]);
 
   const th = (key, label, mono) => (
     <th className={(mono ? "mono " : "") + "sortable" + (sort.key === key ? " on" : "")}
@@ -1103,6 +1122,7 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
               {th("industry", t.thIndustry)}
               <th>{t.thType}</th>
               {th("start", t.thSpan, true)}
+              {th("city", t.thCity)}
               <th>{t.thAddress}</th>
               {STAT_FIELDS.map((f) => th(f.key, statLabel(f.key, lang, f.label), true))}
               <th>{t.thRemark}</th>
@@ -1119,16 +1139,19 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
                 <td><span className="chip mono" style={{ borderColor: industryMeta(u.industry).color, color: industryMeta(u.industry).color }}>{industryLabel(u.industry, lang) || "—"}</span></td>
                 <td className="small">{typeLabel(u.type, lang, (TYPE_META[u.type] || {}).label)}</td>
                 <td className="mono small">{spanText(u, t)}</td>
+                <td className="small">{cityLabel(u.city, lang) || <span className="dimtext">—</span>}</td>
                 <td className="small">
                   {u.address || <span className="dimtext">{t.noAddressShort}</span>}
                   {u.precision === "city" && <div className="dimtext mono small">{t.vagueShort}</div>}
                 </td>
-                {STAT_FIELDS.map((f) => <td key={f.key} className="mono">{fmtNum(u.stats[f.key])}</td>)}
+                {STAT_FIELDS.map((f) => (
+                  <StatCell key={f.key} value={u.stats[f.key]} year={u.statsYear} />
+                ))}
                 <td className="small">{u.remark}</td>
                 <td className="small">{u.source || <span className="dimtext">—</span>}</td>
               </tr>
             ))}
-            {!list.length && <tr><td colSpan={5 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noUnits}</td></tr>}
+            {!list.length && <tr><td colSpan={6 + STAT_FIELDS.length + 2} className="dimtext" style={{ textAlign: "center", padding: 24 }}>{t.noUnits}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1226,6 +1249,16 @@ export default function App() {
     catch (err) { showToast(t.exportFail(err && err.message)); }
   };
 
+  /* 收了哪几个城市,数出来 —— 从前这一句写死是「上海」,而表里九成是北京 */
+  const coverageCities = useMemo(() => {
+    const tally = {};
+    data.units.forEach((u) => {
+      const c = cityLabel(u.city, lang);
+      if (c) tally[c] = (tally[c] || 0) + 1;
+    });
+    return Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([c]) => c);
+  }, [data.units, lang]);
+
   const selU = sel ? byId[sel] : null;
   const TABS = ["map", "lineage", "products", "directory"];
 
@@ -1258,7 +1291,7 @@ export default function App() {
           ))}
         </nav>
         <div className="hdr-right">
-          <span className="chip mono dimchip">{t.coverage(data.counts.units)}</span>
+          <span className="chip mono dimchip">{t.coverage(coverageCities, data.counts.units)}</span>
           {preview && (
             <button className="chip mono storchip" onClick={() => { setOverride(null); setPreview(null); }}
               title={t.previewTitle}>
