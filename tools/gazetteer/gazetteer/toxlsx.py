@@ -6,6 +6,7 @@
 也不会串行(见 src/xlsxio.js 的读法)。
 """
 
+import io
 import os
 import re
 import shutil
@@ -512,6 +513,44 @@ def _year_trouble(v, label):
     return None
 
 
+def accepted_path(xlsx_path):
+    """《已核》摆在工作簿旁边,同名 —— 两个一起提交,记录才跟着数据走。"""
+    return os.path.splitext(xlsx_path)[0] + ".已核.tsv"
+
+
+def load_accepted(xlsx_path):
+    """从前看过、认下了的那些毛病 —— 再报一遍只会把新的埋掉。"""
+    path = accepted_path(xlsx_path)
+    if not os.path.exists(path):
+        return set()
+    out = set()
+    with io.open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            col = line.rstrip("\n").split("\t")
+            if len(col) >= 2:
+                out.add((col[0], col[1]))
+    return out
+
+
+def save_accepted(xlsx_path, findings):
+    """把眼下报的这些一律记作「看过了」。
+
+    写的是当下的全部,所以已经改好、不再报的那些会自己掉出去 ——
+    《已核》不会越积越长,始终只是「此刻认下的这些」。"""
+    path = accepted_path(xlsx_path)
+    rows = sorted({(k, key, why) for k, _w, why, key in findings})
+    with io.open(path, "w", encoding="utf-8", newline="") as f:
+        f.write("# 看过了、认下了的毛病 —— gaz verify 不再报。\n")
+        f.write("# 要全部重看一遍:gaz verify --all\n")
+        f.write("# 改好一条,它自己就不报了;这份名单在下次 --accept 时重写。\n")
+        f.write("# 哪一类\t记号\t当时报的是什么\n")
+        for kind, key, why in rows:
+            f.write("%s\t%s\t%s\n" % (kind, key, why.replace("\t", " ")))
+    return path, len(rows)
+
+
 def verify(xlsx_path):
     """手改过工作簿之后,看看有没有改坏。只报,一个格子也不动。
 
@@ -519,8 +558,9 @@ def verify(xlsx_path):
     整机的研制单位打错一个字 —— 站点照读不误,只是那条连线从此连不上,
     而表面上什么也看不出来。
 
-    返回 [(哪一类, 哪一行, 怎么了)]。分类是为了让「出处空着」这种
-    成片的旧账,别把「研制单位打错字」这种一处一处的伤埋掉。"""
+    返回 [(哪一类, 哪一行, 怎么了, 记号)]。分类是为了让「出处空着」这种
+    成片的旧账,别把「研制单位打错字」这种一处一处的伤埋掉。「记号」是这条
+    毛病的身份,不含行号 —— 行会挪,毛病还是那个毛病,拿它跟《已核》比对。"""
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     bad = []
@@ -535,6 +575,7 @@ def verify(xlsx_path):
         nm = str(nm).strip()
         names |= _names_of(nm, ws.cell(row=r, column=h["别名"]).value if "别名" in h else "")
         where = "%s 第%d行" % (nm, r)
+        key = nm
 
         for label in ("Start Date", "End Date"):
             if label not in h:
@@ -544,21 +585,22 @@ def verify(xlsx_path):
                 continue
             why = _year_trouble(v, label)
             if why:
-                bad.append(("日期", where, why))
+                bad.append(("日期", where, why, "%s·%s" % (key, label)))
 
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
         if (lat in (None, "")) != (lng in (None, "")):
-            bad.append(("坐标", where, "经纬度只填了一半 —— 两个都填,或者都空着"))
+            bad.append(("坐标", where, "经纬度只填了一半 —— 两个都填,或者都空着", key))
         else:
             try:
                 if lat not in (None, "") and not (3 <= float(lat) <= 54 and 73 <= float(lng) <= 136):
-                    bad.append(("坐标", where, "经纬度不在中国范围内:%s, %s(是不是填反了?)" % (lat, lng)))
+                    bad.append(("坐标", where,
+                                "经纬度不在中国范围内:%s, %s(是不是填反了?)" % (lat, lng), key))
             except (TypeError, ValueError):
-                bad.append(("坐标", where, "经纬度不是数字:%r, %r" % (lat, lng)))
+                bad.append(("坐标", where, "经纬度不是数字:%r, %r" % (lat, lng), key))
 
         if "Source" in h and not str(ws.cell(row=r, column=h["Source"]).value or "").strip():
-            bad.append(("出处", where, "没写出处"))
+            bad.append(("出处", where, "没写出处", key))
 
     # 沿革表:年份不像话的、以及孤零零一条「自己改名叫自己」的
     if SHEET_NAMES in wb.sheetnames:
@@ -578,10 +620,10 @@ def verify(xlsx_path):
             if f not in (None, ""):
                 why = _year_trouble(f, "启用年")
                 if why:
-                    bad.append(("日期", where, why))
+                    bad.append(("日期", where, why, key))
             # 「甲厂 → 甲厂」是改名链的末一段,前头得有段别的名字才立得住
             if n == u and per.get(u, 0) < 2:
-                bad.append(("沿革", where, "只此一条,却是「改名叫自己」—— 不载信息"))
+                bad.append(("沿革", where, "只此一条,却是「改名叫自己」—— 不载信息", key))
 
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),
@@ -606,5 +648,6 @@ def verify(xlsx_path):
                         miss.append(one)
             if miss:
                 bad.append(("名录", "%s 第%d行 %s" % (sheet, r, who or ""),
-                            "、".join(miss)))
+                            "、".join(miss),
+                            "%s·%s·%s" % (sheet, who or "", "、".join(miss))))
     return bad

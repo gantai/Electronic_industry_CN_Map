@@ -3,7 +3,7 @@
 """gaz —— 把一本地方志变成这张地图上的数据。
 
     gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
-    gaz verify                    手改过工作簿之后验一验(只报,不动手)
+    gaz verify                    验一验(只报,不动手;默认只报新的)
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
@@ -252,15 +252,32 @@ VERIFY_NOTE = {
 
 
 def cmd_verify(args):
-    """手改过工作簿之后验一验 —— 只报,一个格子也不动。"""
+    """手改过工作簿之后验一验 —— 只报,一个格子也不动。
+
+    默认只报**新的**。从前看过、认下的那些记在《已核》里,不再翻出来 ——
+    二十八条「没写出处」的旧账每回都摆在头里,新伤就没人看得见了。"""
     bad = toxlsx.verify(args.xlsx)
-    if not bad:
-        print("没看出问题。")
+
+    if args.accept:
+        path, n = toxlsx.save_accepted(args.xlsx, bad)
+        print("这 %d 处都记作看过了,写进 %s" % (n, os.path.basename(path)))
+        print("往后 %s verify 只报新的;要全部重看,加 --all。" % SELF)
+        return 0
+
+    seen = set() if args.all else toxlsx.load_accepted(args.xlsx)
+    fresh = [t for t in bad if (t[0], t[3]) not in seen]
+    old_n = len(bad) - len(fresh)
+
+    if not fresh:
+        if old_n:
+            print("没有新的。(另有 %d 处是从前认过的,要看加 --all)" % old_n)
+        else:
+            print("没看出问题。")
         return 0
     by = {}
-    for kind, where, why in bad:
+    for kind, where, why, _key in fresh:
         by.setdefault(kind, []).append((where, why))
-    print("%d 处可疑:" % len(bad))
+    print("%d 处可疑:" % len(fresh))
     for kind in ("名录", "沿革", "日期", "坐标", "出处"):
         rows = by.pop(kind, [])
         if not rows:
@@ -270,6 +287,9 @@ def cmd_verify(args):
             print("   %s%s%s" % (where, " " * max(1, 30 - _w(where)), why))
         if len(rows) > 30:
             print("   …… 还有 %d 处" % (len(rows) - 30))
+    if old_n:
+        print("\n(另有 %d 处是从前认过的,没再报 —— 要看加 --all)" % old_n)
+    print("\n看过了、都认了:%s verify --accept —— 往后只报新的。" % SELF)
     return 0
 
 
@@ -640,8 +660,12 @@ def main(argv=None):
     p.add_argument("--all", action="store_true", help="不问 keep,全部写出")
     p.set_defaults(func=cmd_notes)
 
-    p = sub.add_parser("verify", help="手改过工作簿之后验一验(只报,不动手)",
+    p = sub.add_parser("verify", help="验一验(只报,不动手;默认只报新的)",
                        parents=[common])
+    p.add_argument("--all", action="store_true",
+                   help="连从前认过的一并报")
+    p.add_argument("--accept", action="store_true",
+                   help="眼下这些都看过了,记下来,往后不再报")
     p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("dups", help="找出工作簿里疑似重复的行(只报,不动手)", parents=[common])

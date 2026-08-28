@@ -782,6 +782,52 @@ def test_drafts_default():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_accepted():
+    """看过、认下的毛病不再翻出来 —— 二十八条旧账压着,新伤就没人看得见。"""
+    print("《已核》")
+    tmp = tempfile.mkdtemp(prefix="gaz-acc-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+
+        eq(toxlsx.load_accepted(x), set(), "还没记过,一条也没有")
+        base = toxlsx.verify(x)
+        _p, n = toxlsx.save_accepted(x, base)
+        eq(n, len({(t[0], t[3]) for t in base}), "眼下这些一律记下")
+
+        seen = toxlsx.load_accepted(x)
+        fresh = [t for t in toxlsx.verify(x) if (t[0], t[3]) not in seen]
+        eq(fresh, [], "再验一遍,一条新的也没有")
+
+        # 新伤照报不误
+        wb = openpyxl.load_workbook(x)
+        ws = wb[toxlsx.SHEET_UNITS]
+        h = toxlsx._headers(ws, 2)
+        ws.cell(row=3, column=h["Start Date"]).value = 1961
+        wb.save(x)
+        fresh = [t for t in toxlsx.verify(x) if (t[0], t[3]) not in seen]
+        eq(len(fresh), 1, "手改坏的那一处,认过的旧账压不住它")
+        eq(fresh[0][0], "日期", "报的是日期这一类")
+
+        # 行号会挪,记号不含行号 —— 插一行不该把旧账变成新账
+        ws.cell(row=3, column=h["Start Date"]).value = None
+        ws.insert_rows(3)
+        ws.cell(row=3, column=1).value = "试验插进来的一行"
+        ws.cell(row=3, column=h["Source"]).value = "试·一页"
+        wb.save(x)
+        fresh = [t for t in toxlsx.verify(x) if (t[0], t[3]) not in seen]
+        eq(fresh, [], "插一行,底下行号全挪,认过的还是认过的")
+
+        # 改好一条,--accept 重写时它自己掉出去
+        ws.cell(row=4, column=h["Source"]).value = "试·补的出处"
+        wb.save(x)
+        _p, n2 = toxlsx.save_accepted(x, toxlsx.verify(x))
+        check(n2 < n, "改好的那条不再记进《已核》,名单不会越积越长")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_verify():
     """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
     print("手改之后验一验")
@@ -794,11 +840,11 @@ def test_verify():
             {"Unit": "辽阳试验计算技术研究所", "City": "Beijing", "Source": "试·一页"}])
 
         def kinds(where_has):
-            return sorted({k for k, w, _ in toxlsx.verify(x) if where_has in w})
+            return sorted({k for k, w, _, _kk in toxlsx.verify(x) if where_has in w})
 
         base = toxlsx.verify(x)
         n0 = len(base)
-        check(all(len(t) == 3 for t in base), "每一条都带着「哪一类」")
+        check(all(len(t) == 4 for t in base), "每一条都带着「哪一类」与「记号」")
 
         wb = openpyxl.load_workbook(x)
         ws = wb[toxlsx.SHEET_UNITS]
@@ -855,7 +901,7 @@ def test_verify():
         c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所、查无此厂"
         wb.save(x)
         eq(kinds("试验机零号"), ["名录"], "同一格里混着一个查无此人的,报出来")
-        why = [w for k, wh, w in toxlsx.verify(x) if "试验机零号" in wh][0]
+        why = [w for k, wh, w, _kk in toxlsx.verify(x) if "试验机零号" in wh][0]
         eq(why, "查无此厂", "只点名查不到的那个,认得出的不跟着一起报")
 
         c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所"
@@ -871,7 +917,7 @@ def test_verify():
         c.cell(row=rr, column=hh["Remark"]).value = "上海电子仪表工业志·第一章"
         c.cell(row=rr, column=hh["Factory"]).value = "查无此厂"
         wb.save(x)
-        wh = [wh for k, wh, w in toxlsx.verify(x) if "试验机零号" in wh][0]
+        wh = [wh for k, wh, w, _kk in toxlsx.verify(x) if "试验机零号" in wh][0]
         check("〔上海电子仪表工业志〕" in wh, "报的时候带上是哪本志抄来的")
         c.cell(row=rr, column=hh["Remark"]).value = None
         c.cell(row=rr, column=hh["Factory"]).value = "辽阳试验计算技术研究所"
@@ -943,7 +989,8 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_verify, test_later_rename):
+               test_drafts_default, test_verify, test_accepted,
+               test_later_rename):
         fn()
     print()
     if FAILED:
