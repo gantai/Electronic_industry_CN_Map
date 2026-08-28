@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """gaz —— 把一本地方志变成这张地图上的数据。
 
-    gaz guide   --vault D:\\Archive  两份《流程》:建档与核对、有厂址的章怎么落点
+    gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
     gaz verify                    手改过工作簿之后验一验(只报,不动手)
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
@@ -274,9 +274,8 @@ def cmd_verify(args):
 
 
 def cmd_guide(args):
-    """把两份《流程》写进库里 —— 照着办的那几份,该跟笔记摆在一处。"""
-    docs = [("流程.md", "地方志建档流程.md"),
-            ("电子工业地图流程.md", "电子工业地图流程.md")]
+    """把《流程》写进库里 —— 照着办的那一份,该跟笔记摆在一处。"""
+    docs = [("电子工业地图流程.md", "电子工业地图流程.md")]
     vault = args.vault or os.environ.get("GAZ_VAULT")
     if not vault:
         for src, _name in docs:
