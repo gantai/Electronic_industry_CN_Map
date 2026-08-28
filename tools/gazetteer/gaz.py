@@ -291,20 +291,36 @@ def cmd_volume(args):
     if not root:
         sys.exit("要指出转换稿放在哪:--dir …,或设个环境变量,以后就不必写了:\n"
                  "  Windows  [Environment]::SetEnvironmentVariable("
-                 "\"GAZ_DRAFTS\", \"D:\\Archive\\转换稿\", \"User\")\n"
+                 "\"GAZ_DRAFTS\", \"D:\\Coding\\CN_Map\\转换稿\", \"User\")\n"
                  "  其他     export GAZ_DRAFTS=~/转换稿")
     if not os.path.isdir(root):
         sys.exit("找不到目录:%s" % root)
-    hits = []
+    # 关键词可以写好几截,不必加引号 —— 志书的文件名带空格、带《》,
+    # PowerShell 会把它拆成好几个词送进来。几截都在名字里,才算这一份。
+    terms = [t for t in args.key if t.strip()]
+    shown = " ".join(terms)
+    mds = []
     for dirpath, _d, files in os.walk(root):
         for fn in files:
-            if fn.lower().endswith(".md") and args.key in fn:
-                hits.append(os.path.join(dirpath, fn))
-    hits.sort()
+            if fn.lower().endswith(".md"):
+                mds.append(os.path.join(dirpath, fn))
+    hits = sorted(p for p in mds if all(t in os.path.basename(p) for t in terms))
     if not hits:
-        sys.exit("在 %s 底下,名字里带「%s」的 .md 一份也没有。" % (root, args.key))
+        miss = [t for t in terms
+                if not any(t in os.path.basename(p) for p in mds)]
+        why = ""
+        if miss:
+            why = "\n没有一份稿子的名字里带「%s」。" % "」「".join(miss)
+            stray = [t for t in miss if re.fullmatch(r"[A-Za-z]+", t)]
+            if stray:
+                why += ("\n「%s」看着像城市 —— 城市要写成 --city %s,"
+                        "不是当关键词写。" % (stray[0], stray[0]))
+        elif len(terms) > 1:
+            why = "\n这几截分开都有,凑在一起没有 —— 是不是记串了两份稿子?"
+        sys.exit("在 %s 底下,%d 份 .md 里没有对上「%s」的。%s"
+                 % (root, len(mds), shown, why))
     if len(hits) > 1:
-        print("名字里带「%s」的稿子有 %d 份:" % (args.key, len(hits)))
+        print("名字里带「%s」的稿子有 %d 份:" % (shown, len(hits)))
         for h in hits:
             print("   " + h)
         sys.exit("关键词说得再准一点。")
@@ -614,7 +630,8 @@ def main(argv=None):
 
     p = sub.add_parser("volume", help="按关键词找稿子跑一本 —— 每本志一条命令",
                        parents=[common])
-    p.add_argument("key", help="稿子名里的一截,如「第三章」")
+    p.add_argument("key", nargs="+",
+                   help="稿子名里的一截,如「第三章」;写好几截也行,不必加引号")
     p.add_argument("--dir", help="转换稿放在哪(也可设 GAZ_DRAFTS 环境变量)")
     _book_opts(p)
     p.set_defaults(func=cmd_volume)

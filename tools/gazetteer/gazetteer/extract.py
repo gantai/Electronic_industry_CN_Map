@@ -103,13 +103,19 @@ STAT_PATTERNS = [
 ]
 
 # 地址照原表体例,只取路名门牌(如「虹桥路951弄2号」),不带区名
-ADDR_MARK = re.compile(r"(?:厂址|所址|地址|位于|坐落|设|迁至|迁往|迁入)\s*(?:在|于)?\s*")
+# 「位子」是「位于」的形近误认,转换稿里成篇地出 —— 不认它,那几家的厂址
+# 就会退到后头去抓「子东环北路42号」这样连着错字的一截
+ADDR_MARK = re.compile(r"(?:厂址|所址|地址|位于|位子|坐落|座落|设|迁至|迁往|迁入)\s*(?:在|于)?\s*")
 # 路名里不会有「区」「址」「在」这些字,逐字排除,免得把「厂址在闸北区中华新路」整段抓走
 # 「路」前头是这些字的,说的不是马路:集成电路、印刷线路、思路、销路……
 NOT_STREET = r"(?<![电线回网管通思销出销门套])"
-ADDR_RE = re.compile(r"((?:(?![区县址在于设迁坐落位])[一-鿿A-Za-z0-9]){1,10}"
-                     r"(?:" + NOT_STREET + r"路|街|大道|弄|巷|里|村|浜|桥|坊)"
-                     r"(?:[0-9]{1,4}弄)?(?:[0-9]{1,4}号)?)")
+# 上海写「路、弄」,北京写「胡同、N条、甲N号」—— 只认上海那几样,
+# 「德胜门外塔院胡同8号」这类整章都抓不着。「作坊」的「坊」不是街坊。
+ADDR_CH = r"(?:(?![区县址在于设迁坐落位])[一-鿿A-Za-z0-9])"
+STREET = ("(?:" + NOT_STREET + r"路|大街|街|大道|弄|巷|胡同|里|村|浜|桥"
+          r"|(?<=[一二三四五六七八九十])条|(?<!作)坊)")
+ADDR_RE = re.compile(r"(" + ADDR_CH + r"{1,12}?" + STREET
+                     + r"(?:" + ADDR_CH + r"{0,8}?[甲乙丙丁]?[0-9]{1,4}[号弄])?)")
 # 区名单独记一栏 —— 地址照原表体例不带区,但 src/geocode.js 的落点表要用
 DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
                          r"(?![^,,。;;]{0,4}(?:政府|工业局|人民政府))")
@@ -151,6 +157,18 @@ HEAD_RANK = [(re.compile(r"^第[〇零一二三四五六七八九十百]+篇"), 
              (re.compile(r"^第[〇零一二三四五六七八九十百]+节"), 3),
              (re.compile(r"^[一二三四五六七八九十]+[、.．]"), 4),
              (re.compile(r"^[（(][一二三四五六七八九十]+[)）]"), 5)]
+
+
+HEAD_MARKER = re.compile(r"^第[〇零一二三四五六七八九十百]+[篇章节]\s*")
+
+
+def head_name(text):
+    """标题里那个单位叫什么 —— 「第十二节」不是名字的一部分。
+
+    转换稿把序号与厂名连着写、不留空格(`## 第十二节北京东光电工厂`),
+    整条拿去认名字,就会认出「第十二节北京东光电工厂」来:它以「厂」收尾,
+    过得了关,于是同一家厂在名录里占两行 —— 一行干净的,一行带着节次。"""
+    return HEAD_MARKER.sub("", str(text or "").strip(), count=1)
 
 
 def head_rank(text, fallback):
@@ -315,20 +333,26 @@ def find_district(sents):
     return ""
 
 
+ADDR_SURE = re.compile(r"^(?:厂址|所址|地址)")
+
+
 def find_address(sents):
     for want_mark in (True, False):
         for s in sents:
-            hay = s
+            hay, sure = s, False
             if want_mark:
                 m = ADDR_MARK.search(s)
                 if not m:
                     continue
+                # 「厂址」「所址」明说是地址,没门牌号也算(「厂址位于朝阳区深沟村」);
+                # 「设」「位于」什么都能领,那就还得有门牌号才作数
+                sure = bool(ADDR_SURE.match(m.group(0)))
                 hay = s[m.end():]
             m = ADDR_RE.search(hay)
             # 没有「厂址」一类字样领着的那一遍,还得有个门牌号才算 —— 不然
             # 但凡带个「路」「村」的词都成了地址
             ok = ("号" in m.group(1) or "弄" in m.group(1)) if m else False
-            if m and (ok if want_mark else re.search(r"[0-9]", m.group(1))):
+            if m and (ok or sure if want_mark else re.search(r"[0-9]", m.group(1))):
                 return m.group(1), s
     return "", ""
 
@@ -700,6 +724,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
     for b in blocks:
         owners = []
         for h in b["heads"]:
+            h = head_name(h)          # 出处照旧写全,认名字时不要那个「第十二节」
             for nm in unit_names(h) + known_in(h, kidx):
                 nm = kidx.get(nm, nm)
                 if nm not in owners:

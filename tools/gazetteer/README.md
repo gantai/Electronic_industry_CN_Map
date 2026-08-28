@@ -62,10 +62,10 @@ pip install paddleocr "paddlex[ocr]==3.7.2"  # 识别引擎,zhiconv 不自带
 cd /d D:\path\to\Electronic_industry_CN_Map
 
 REM 先看一眼这份稿子:标题层级、页码写法、志书套语的多寡
-python tools\gazetteer\gaz.py inspect "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.md"
+python tools\gazetteer\gaz.py inspect "D:\Coding\CN_Map\转换稿\《北京工业志·电子志》2001 第三章.md"
 
 REM 抽,并在同一个目录下落一份 Excel
-python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.md" ^
+python tools\gazetteer\gaz.py book "D:\Coding\CN_Map\转换稿\《北京工业志·电子志》2001 第三章.md" ^
        --city Beijing --book "北京工业志·电子志"
 ```
 
@@ -87,7 +87,7 @@ python tools\gazetteer\gaz.py book "D:\Archive\转换稿\地方志\《北京工�
 不必横拉。名字认错的当场改,要的行「取否」写 `y`,核完:
 
 ```bat
-python tools\gazetteer\gaz.py xlsx --from "D:\Archive\转换稿\地方志\《北京工业志·电子志》2001 第三章.xlsx"
+python tools\gazetteer\gaz.py xlsx --from "D:\Coding\CN_Map\转换稿\《北京工业志·电子志》2001 第三章.xlsx"
 ```
 
 它读的是**你改过的那份工作簿**,不是 `review/` 里的 TSV(那份只当留底)。
