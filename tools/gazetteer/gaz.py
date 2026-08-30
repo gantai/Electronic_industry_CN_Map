@@ -3,6 +3,7 @@
 """gaz —— 把一本地方志变成这张地图上的数据。
 
     gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
+    gaz version                   手里这一份工具是什么时候的、该不该更新
     gaz verify                    验一验(只报,不动手;默认只报新的)
     gaz tidy                      把沿革表理顺:按单位与年份排好,编序号、补「至」
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
@@ -59,6 +60,9 @@ def _self():
 
 
 SELF = _self()
+
+# 认得哪些子命令 —— gaz version 拿它对照:少了哪一个,手里这份就是旧的
+SUBCOMMANDS = []
 
 # 扫描件 → Markdown 不在这个仓里。同一批 PDF 另一个项目也要转,那边把转换
 # 单拆成了 zhiconv 一个包,专门伺候这两处;这边再写一份只会更差。
@@ -217,6 +221,54 @@ def cmd_notes(args):
     NOTES.write_vault(rows, args.out or os.path.join(wd, "vault"),
                       book=args.book or args.slug,
                       book_note=args.book_note or args.slug)
+    return 0
+
+
+def cmd_version(args):
+    """手里这一份工具是什么时候的 —— 拿旧版跑,少的那道关卡不会吭声。"""
+    import subprocess
+
+    def git(*a):
+        try:
+            out = subprocess.run(("git", "-C", REPO) + a,
+                                 capture_output=True, text=True, timeout=15)
+            return out.stdout.strip() if out.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    head = git("log", "-1", "--format=%h  %cd  %s", "--date=format:%Y-%m-%d %H:%M")
+    if not head:
+        print("这儿不像个 git 仓库,认不出版本。")
+        return 1
+    print("仓库   %s" % REPO)
+    print("版本   %s" % head)
+    print("分支   %s" % (git("rev-parse", "--abbrev-ref", "HEAD") or "?"))
+
+    dirty = git("status", "--porcelain")
+    if dirty:
+        n = len([x for x in dirty.splitlines() if x.strip()])
+        print("改动   本地有 %d 个文件改过没提交" % n)
+        for line in dirty.splitlines()[:6]:
+            print("         %s" % line)
+    else:
+        print("改动   干净")
+
+    up = git("rev-parse", "--abbrev-ref", "@{u}")
+    if up:
+        behind = git("rev-list", "--count", "HEAD..@{u}")
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        if behind and int(behind):
+            print("落后   比 %s 少 %s 个提交 —— 该更新了(见下)" % (up, behind))
+        elif ahead and int(ahead):
+            print("领先   比 %s 多 %s 个提交(还没推)" % (up, ahead))
+        else:
+            print("同步   与 %s 齐平" % up)
+        print("       (这是上次 git fetch 时的账;要看准数,先 git fetch)")
+
+    print("\n认得的命令:%s" % "、".join(SUBCOMMANDS))
+    print("少了哪一个,就是这一份旧了。更新:")
+    print("  git -C %s pull origin %s"
+          % (REPO, git("rev-parse", "--abbrev-ref", "HEAD") or "<分支>"))
     return 0
 
 
@@ -645,6 +697,7 @@ def main(argv=None):
     common.add_argument("--xlsx", default=argparse.SUPPRESS)
 
     sub = ap.add_subparsers(dest="cmd", required=True)
+    global SUBCOMMANDS
 
     p = sub.add_parser("check", help="看看本机装了什么", parents=[common])
     p.set_defaults(func=cmd_check)
@@ -683,6 +736,9 @@ def main(argv=None):
     p.add_argument("--accept", action="store_true",
                    help="眼下这些都看过了,记下来,往后不再报")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("version", help="手里这一份工具是什么时候的", parents=[common])
+    p.set_defaults(func=cmd_version)
 
     p = sub.add_parser("tidy", help="把沿革表理顺:按单位与年份排好,编序号、补「至」",
                        parents=[common])
@@ -764,6 +820,7 @@ def main(argv=None):
     p.add_argument("--auto-keep", type=float)
     p.set_defaults(func=cmd_run)
 
+    SUBCOMMANDS = list(sub.choices)
     args = ap.parse_args(argv)
     return args.func(args) or 0
 

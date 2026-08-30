@@ -828,6 +828,20 @@ def test_accepted():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_version():
+    """gaz version 要答得出「手里这份是什么时候的」—— 拿旧版跑,少的那道关卡不吭声。"""
+    print("版本自报")
+    import subprocess
+    out = subprocess.run([sys.executable, os.path.join(HERE, "..", "gaz.py"), "version"],
+                         capture_output=True, text=True, cwd=REPO)
+    said = out.stdout + out.stderr
+    for want in ("版本", "分支", "认得的命令"):
+        check(want in said, "报得出「%s」" % want)
+    # 命令列表是拿来对照的:少了哪一个,手里那份就是旧的
+    for cmd in ("verify", "tidy", "volume", "version"):
+        check(cmd in said, "命令列表里有 %s" % cmd)
+
+
 def test_tidy_names():
     """沿革表要一眼看得出谁先谁后:同一单位挨在一处,按年份排,编上序号,补上「至」。"""
     print("理沿革表")
@@ -1052,7 +1066,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_tidy_names, test_verify, test_accepted,
+               test_drafts_default, test_version, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
     print()
