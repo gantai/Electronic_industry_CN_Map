@@ -336,7 +336,9 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
                           "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], res["comp"])
     # 待核那份的沿革表也照总表的次序摆:序、单位、名称、起、至、关系
     nh = wb.create_sheet("Name-History")
-    nh.append(["取否", "序", "Unit", "Name", "From", "Remark", "Source"])
+    # 表头写成中文,把话说死:「Unit」看着像「这一行这家单位叫什么」,而它其实
+    # 是钥匙 —— 一家单位的几行都写同一个今名。改叫「单位(今名)」就不会看岔。
+    nh.append(["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"])
     for c in range(1, 8):
         nh.cell(row=1, column=c).font = Font(bold=True)
     # 同一单位的几段挨在一处、按年份排好、编上序号 —— 抽取顺序堆着的话,
@@ -357,9 +359,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     # 「序」是这张表最容易看岔的一格 —— 它不是行号,是这家单位的第几个名字。
     # 不写明白,谁也不知道那个 1、2、3 从哪儿来。
     nh_note = nh.cell(row=1, column=9,
-                      value="↑ 一行 = 某单位某一段时间里叫什么。"
-                            "「Unit」是它如今的正名(一家单位的几行都写同一个,那是钥匙);"
-                            "「Name」才是那段时间里的名字;"
+                      value="↑ 一行 = 某单位某一段时间里叫什么。念法:"
+                            "「自哪年起」那一年起,这家单位叫「当时名称」那个名字,到下一行那年为止。"
+                            "「单位(今名)」是它如今的正名,一家单位的几行都写同一个 —— 那是钥匙,"
+                            "不是它当时的名字。"
                             "「序」是这家单位的第几个名字,1 最早 —— 不是行号。"
                             "两家单位并成一家,不在这张表里,写进「待核」表的「创办」列。")
     nh_note.font = Font(italic=True, color="996600")
@@ -436,6 +439,7 @@ KEEP_YES = {"y", "yes", "true", "1", "是", "要", "✓", "√"}
 # 「待核」表头 → 抽取时用的字段名
 REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页": "page",
                "序": None,
+               "单位(今名)": "Unit", "当时名称": "Name", "自哪年起": "From",
                "别名": "别名",
                "单位": "Unit", "行业": "Industry", "产品": "Product",
                "始建": "Start Date", "终止": "End Date", "创办": "Founder",
@@ -481,6 +485,9 @@ def _sheet_rows(ws):
         r = {}
         for h, v in zip(head, row):
             if not h:
+                continue
+            # 表头行末尾那句以「↑」起头的话是写给人看的注,不是一列数据
+            if str(h).startswith("↑"):
                 continue
             k = REVIEW_COLS.get(h, h)
             if k is None:      # 「序」是给人看的次序,不是字段

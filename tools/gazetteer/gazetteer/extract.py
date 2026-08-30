@@ -620,6 +620,13 @@ def renames_this(sent, at, unit, owner=False):
     if owner:
         return True
     head = sent[:at]
+    # 「1990年,北京半导体设备一厂并入北京显像管厂,改名为北京显像管总厂」——
+    # 主语在最前头这条,遇上「并入」就反了:被并进去的那家排在前,改名的是
+    # 承接的那一家。有「并入」时,认它后头那一家。
+    into = re.search(r"并入\s*([一-鿿A-Za-z0-9]{4,24}?" + UNIT_TAIL + r")", head)
+    if into:
+        got = unit_names(into.group(1))
+        return (got[0] if got else into.group(1)) == unit
     others = unit_names(head)
     if others:
         return others[0] == unit
@@ -649,9 +656,20 @@ def chain_from(sents, start=None, unit="", owner=False):
         if m:
             if unit and not renames_this(s, m.start(), unit, owner):
                 continue
-            steps.append((near_date(s, m.start()) or date, m.group(1), "前身", s))
-            continue
+            # 「北京显像管总厂前身是北京呢绒服装厂,1970年改为北京市半导体器件五厂」
+            # —— 那个 1970 是**改掉**呢绒服装厂那一年,不是它启用那一年。所以
+            # 前身只认写在它前头的日期;后头还有别的日子的,宁可不系。
+            when = near_date(s, m.start())
+            if when is None and not DATEISH.search(s[m.end():]):
+                when = date
+            steps.append((when, m.group(1), "前身", s))
+            # 不 continue:同一句里往往还接着一句改名,那也要记
         m = re.search(RENAME + r"\s*([一-鿿A-Za-z0-9]{4,24})", s)
+        # 「改为」也是改名的说法(「1970年改为北京市半导体器件五厂」),可它同样
+        # 领得住别的事(「改为民用」「改为全民所有制」「改为三班制」)—— 所以单开
+        # 一条,后头必须像个单位名才认。
+        if not m:
+            m = re.search(r"(?:改为|转为)\s*([一-鿿A-Za-z0-9]{4,24}?" + UNIT_TAIL + r")", s)
         if m:
             if unit and not renames_this(s, m.start(), unit, owner):
                 continue
@@ -691,7 +709,7 @@ def chain_from(sents, start=None, unit="", owner=False):
     return "->".join(parts), evid, ordered, terminal
 
 
-def name_history(ordered, unit, page, head, src):
+def name_history(ordered, unit, page, head, src, start=None):
     """沿革里凡「改名为 X」的一步,单独登记成 Name-History 的一行。
        与从 Founder 列推定不同,这里的出处是志书原文,可以直接写页码。"""
     rows = []
@@ -700,8 +718,11 @@ def name_history(ordered, unit, page, head, src):
             rows.append(dict(Unit=unit, Name=body.replace("改名", "", 1).strip(), From=date,
                              Remark=s[:120], Source=src(page, head), page=page,
                              evidence=s, confidence=0.7, keep="?"))
-        elif kind == "前身" and date:
-            rows.append(dict(Unit=unit, Name=body, From=date,
+        elif kind == "前身" and (date or start):
+            # 前身那一段没系上日子的,它的起点就是这家单位的始建年 —— 原名从
+            # 建厂那天用起。拿句子里那个日子去补是不对的:「前身是甲厂,1970年
+            # 改为乙厂」里的 1970,是甲厂**用到**那一年,不是它启用那一年。
+            rows.append(dict(Unit=unit, Name=body, From=date or start,
                              Remark="始建时名称。" + s[:100], Source=src(page, head),
                              page=page, evidence=s, confidence=0.6, keep="?"))
     return rows
@@ -802,7 +823,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         if founder:
             ev["Founder"] = fev[0] if fev else ""
             signals += 1
-        names.extend(name_history(ordered, nm, page0, head0, src))
+        names.extend(name_history(ordered, nm, page0, head0, src, start=start))
 
         # 数字连它是哪一年的一起记。从前不是 stats_year 的一概丢掉,只在备注里
         # 留一句「非1990年数字:staff=1499(1995年)」—— 数字本身没了,图上、

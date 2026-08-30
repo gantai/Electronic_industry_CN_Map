@@ -842,6 +842,78 @@ def test_version():
         check(cmd in said, "命令列表里有 %s" % cmd)
 
 
+def test_review_name_sheet():
+    """待核那张沿革表:表头要说得死,表头行末那句注不许当成一列数据读回来。"""
+    print("待核沿革表的表头")
+    tmp = tempfile.mkdtemp(prefix="gaz-nh-")
+    try:
+        import openpyxl
+        md, _enc = bookmd.read_text(os.path.join(HERE, "fixture", "上海电子仪表工业志.md"))
+        res = EX.extract(md, book="试")
+        x = os.path.join(tmp, "核.xlsx")
+        bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        nh = wb["Name-History"]
+        head = [nh.cell(row=1, column=c).value for c in range(1, 8)]
+        eq(head, ["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"],
+           "表头写成中文,「Unit」不再看着像「这一行这家叫什么」")
+        note = str(nh.cell(row=1, column=9).value or "")
+        check(note.startswith("↑") and "不是它当时的名字" in note, "表头行末缀着念法")
+
+        nh.cell(row=2, column=1).value = "y"
+        want = (nh.cell(row=2, column=3).value, nh.cell(row=2, column=4).value)
+        wb.save(x)
+        bundle, _city, _seen = bookmd.read_review(x)
+        got = bundle["names"][0]
+        eq(sorted(got.keys()), ["From", "Name", "Remark", "Source", "Unit"],
+           "读回来还是原来那几个字段名 —— 那句注没混成一列")
+        eq((got["Unit"], got["Name"]), want, "中文表头照样对得上原字段")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_rename_verbs():
+    """《北京工业志》第十八节那一段,一句话里三处漏 —— 逐条钉住。"""
+    print("改名的几种说法")
+    SENT = ("北京显像管总厂前身是北京呢绒服装厂，1970年改为北京市半导体器件五厂，"
+            "生产低频大功率管。1972年11月，改名为北京显像管厂。"
+            "1990年，北京半导体设备一厂并入北京显像管厂，改名为北京显像管总厂。")
+
+    def nh(md, unit):
+        r = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+        return [(n["Name"], n["From"]) for n in r["names"] if n["Unit"] == unit]
+
+    got = nh("## 第十八节北京显像管总厂\n\n" + SENT + "\n", "北京显像管总厂")
+    check(("北京市半导体器件五厂", "19700000") in got,
+          "「1970年改为…」—— 改为也是改名的说法")
+    check(("北京显像管厂", "19721100") in got, "同一节里没写主语的那一句,归本节这家")
+    check(("北京呢绒服装厂", "19700000") not in got,
+          "呢绒服装厂不该系上 1970 —— 那是它被改掉那年,不是启用那年")
+
+    # 「改为」后头不像单位名的,不算改名
+    for tail in ("民用产品", "全民所有制", "三班制"):
+        r = EX.extract("## 一、厂\n\n1970年，北京某某厂改为%s。\n" % tail,
+                       book="试", city="Beijing", min_mentions=1)
+        eq([n["Name"] for n in r["names"]], [], "「改为%s」不是改名" % tail)
+
+    # 「A并入B,改名为C」:改的是 B
+    got = nh("## 一、厂\n\n1990年，北京半导体设备一厂并入北京显像管厂，"
+             "改名为北京显像管总厂。\n", "北京半导体设备一厂")
+    eq(got, [], "被并进去的那家没有改名")
+    got = nh("## 一、厂\n\n1990年，北京半导体设备一厂并入北京显像管厂，"
+             "改名为北京显像管总厂。\n", "北京显像管厂")
+    eq(got, [("北京显像管总厂", "19900000")], "改名记在承接的那一家名下")
+
+    # 一句话既讲前身又讲改名,两步都要记 —— 从前认下前身就 continue,改名那半句
+    # 再也走不到,而志书正是这么写的
+    r = EX.extract("## 一、辽阳无线电厂\n\n1958年建厂。辽阳无线电厂前身是辽阳电子厂，"
+                   "1966年改名为辽阳仪器厂。\n", book="试", city="Beijing", min_mentions=1)
+    f = [u.get("Founder", "") for u in r["units"] if u["Unit"] == "辽阳无线电厂"]
+    check(f and "辽阳电子厂" in f[0] and "辽阳仪器厂" in f[0],
+          "前身与改名同在一句,两步都进了沿革链(得 %r)" % (f[0] if f else None))
+
+
 def test_diff_workbooks():
     """`.xlsx` 是二进制,git 只说「变了」—— 得有人说得出变了什么。"""
     print("比两份工作簿")
@@ -1118,7 +1190,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
+               test_drafts_default, test_version, test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
     print()
