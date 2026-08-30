@@ -354,6 +354,15 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     nh.freeze_panes = "C2"
     for i, wid in enumerate([6, 5, 24, 26, 11, 34, 30], start=1):
         nh.column_dimensions[get_column_letter(i)].width = wid
+    # 「序」是这张表最容易看岔的一格 —— 它不是行号,是这家单位的第几个名字。
+    # 不写明白,谁也不知道那个 1、2、3 从哪儿来。
+    nh_note = nh.cell(row=1, column=9,
+                      value="↑ 一行 = 某单位某一段时间里叫什么。"
+                            "「Unit」是它如今的正名(一家单位的几行都写同一个,那是钥匙);"
+                            "「Name」才是那段时间里的名字;"
+                            "「序」是这家单位的第几个名字,1 最早 —— 不是行号。"
+                            "两家单位并成一家,不在这张表里,写进「待核」表的「创办」列。")
+    nh_note.font = Font(italic=True, color="996600")
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
