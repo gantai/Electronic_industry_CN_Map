@@ -1063,6 +1063,143 @@ function StatCell({ value, year }) {
   );
 }
 
+/* 出处串里那一部书:「北京工业志·电子志·第三章…」→《北京工业志·电子志》。
+   两处要当心:「志」可能不止一个(工业志·电子志),所以切在「·第」之前,
+   不是头一个「·」;而备注里出处前头往往还有一句话(「型号据字面认出,
+   研制单位未详。北京工业志·电子志·第三章…」),所以书名不许跨过句读。 */
+const BOOK_RE = /([^\s。；;，,、（）()]{2,24}志)(?:[·・]第|\s*p\.|$)/;
+
+function bookOf(text) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  const m = s.match(BOOK_RE);
+  return m ? m[1] : "";
+}
+
+/* 待撰的段落 —— 版式先摆出来,字你自己写。留白处不放假字。 */
+function Blank({ hint, lines = 3 }) {
+  return (
+    <div className="ab-blank" role="note">
+      <span className="ab-blank-tag mono">{hint}</span>
+      {Array.from({ length: lines }, (_, i) => <span key={i} className="ab-blank-rule" />)}
+    </div>
+  );
+}
+
+function AboutView({ data, t, lang }) {
+  const books = useMemo(() => {
+    const tally = {};
+    data.units.forEach((u) => {
+      const b = bookOf(u.source);
+      if (b) tally[b] = (tally[b] || 0) + 1;
+    });
+    [...data.comp, ...data.semi].forEach((r) => {
+      const b = bookOf(r.remark);
+      if (b) tally[b] = (tally[b] || 0) + 1;
+    });
+    return Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  }, [data]);
+  const noSource = data.units.filter((u) => !String(u.source || "").trim()).length;
+
+  return (
+    <div className="pagepad">
+      <div className="aboutwrap">
+        <h1 className="ab-title">{t.aboutTitle}</h1>
+        <div className="ab-sub">{t.aboutSub}</div>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abIntro}</h2>
+          <Blank hint={t.abBlankIntro} lines={5} />
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abScope}</h2>
+          <div className="ab-facts">
+            <div><b className="mono">{data.counts.units}</b><span>{t.abFactUnits}</span></div>
+            <div><b className="mono">{data.counts.comp}</b><span>{t.abFactComp}</span></div>
+            <div><b className="mono">{data.counts.semi}</b><span>{t.abFactSemi}</span></div>
+            <div><b className="mono">{data.yearMin}–{data.yearMax}</b><span>{t.abFactSpan}</span></div>
+          </div>
+          <div className="ab-note small">{t.abScopeNote}</div>
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abCiteThis}</h2>
+          <div className="ab-cite">
+            <div className="ab-cite-line">
+              <span className="ab-slot">{t.abSlotAuthor}</span>{lang === "en" ? ". " : ":"}
+              <i>{t.aboutTitleFull}</i>{lang === "en" ? ". " : ","}
+              <span className="ab-slot">{t.abSlotVersion}</span>{lang === "en" ? ". " : ","}
+              <span className="ab-slot">{t.abSlotUrl}</span>{lang === "en" ? ". " : ","}
+              <span className="ab-slot">{t.abSlotAccessed}</span>.
+            </div>
+          </div>
+          <div className="ab-note small">{t.abCiteNote}</div>
+          <h3 className="ab-h3">{t.abBibtex}</h3>
+          <pre className="ab-pre mono">{`@misc{________,
+  author  = {____________},
+  title   = {${t.aboutTitleFull}},
+  year    = {____},
+  version = {____},
+  url     = {____________},
+  note    = {${t.abBibNote}}
+}`}</pre>
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abSources}</h2>
+          <div className="ab-note small">{t.abSourcesNote}</div>
+          <ul className="ab-books">
+            {books.map(([b, n]) => (
+              <li key={b}>
+                <span className="ab-book">《{b}》</span>
+                <span className="ab-slot ab-slot-sm">{t.abSlotImprint}</span>
+                <span className="dimtext mono small">{t.abCitedIn(n)}</span>
+              </li>
+            ))}
+            {!books.length && <li className="dimtext">{t.abNoBooks}</li>}
+          </ul>
+          {noSource > 0 && <div className="ab-warn small">{t.abNoSourceWarn(noSource)}</div>}
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abMethod}</h2>
+          <Blank hint={t.abBlankMethod} lines={4} />
+          <div className="ab-rules">
+            {t.abRules.map((r, i) => (
+              <div key={i} className="ab-rule">
+                <b>{r.k}</b>
+                <span className="dimtext">{r.v}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abData}</h2>
+          <ul className="ab-plain">
+            <li>{t.abDataWorkbook(SOURCE_FILE)}</li>
+            <li>{t.abDataBoundary}</li>
+            <li>{t.abDataCoord}</li>
+          </ul>
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abThanks}</h2>
+          <Blank hint={t.abBlankThanks} lines={2} />
+        </section>
+
+        <section className="ab-sec">
+          <h2 className="ab-h">{t.abContact}</h2>
+          <Blank hint={t.abBlankContact} lines={2} />
+        </section>
+
+        <div className="ab-foot dimtext small">{t.abFoot}</div>
+      </div>
+    </div>
+  );
+}
+
 function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState({ key: "start", dir: 1 });
@@ -1260,7 +1397,7 @@ export default function App() {
   }, [data.units, lang]);
 
   const selU = sel ? byId[sel] : null;
-  const TABS = ["map", "lineage", "products", "directory"];
+  const TABS = ["map", "lineage", "products", "directory", "about"];
 
   if (boot.error) {
     return (
@@ -1340,6 +1477,8 @@ export default function App() {
 
         {tab === "products" && <ProductsView data={data} byId={byId} gotoUnit={gotoUnit} t={t} lang={lang} />}
 
+        {tab === "about" && <AboutView data={data} t={t} lang={lang} />}
+
         {tab === "directory" && (
           <DirectoryView data={data} gotoUnit={gotoUnit} onImportFile={onImportFile} onExport={onExport}
             t={t} lang={lang} />
@@ -1393,6 +1532,44 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 /* layout */
 .content{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
 .pagepad{padding:16px 18px;overflow:auto;flex:1;min-height:0}
+
+/* ---- 关于页 ---- */
+.aboutwrap{max-width:760px;margin:0 auto;padding:10px 4px 60px}
+.ab-title{font-family:var(--serif);font-size:25px;letter-spacing:2px;font-weight:600;margin:8px 0 2px}
+.ab-sub{color:var(--dim);font-size:12.5px;letter-spacing:1px;margin-bottom:8px}
+.ab-sec{margin-top:26px;border-top:1px solid var(--line);padding-top:14px}
+.ab-h{font-family:var(--serif);font-size:16.5px;letter-spacing:1.5px;font-weight:600;margin:0 0 9px}
+.ab-h3{font-size:12px;letter-spacing:1.5px;color:var(--paper2);margin:16px 0 6px}
+.ab-note{color:var(--dim);margin-top:8px;text-align:justify}
+.ab-warn{color:#E0B25A;margin-top:9px}
+.ab-blank{display:flex;flex-direction:column;gap:9px;border:1px dashed var(--line);border-radius:2px;
+  padding:12px 13px 14px;background:rgba(10,24,43,.28)}
+.ab-blank-tag{font-size:10.5px;color:var(--dim);letter-spacing:.5px}
+.ab-blank-rule{height:1px;background:var(--line);opacity:.55}
+.ab-blank-rule:last-child{width:52%}
+.ab-facts{display:flex;flex-wrap:wrap;gap:10px 26px;margin:4px 0 2px}
+.ab-facts div{display:flex;flex-direction:column;gap:1px}
+.ab-facts b{font-size:19px;letter-spacing:1px}
+.ab-facts span{font-size:11px;color:var(--dim);letter-spacing:.5px}
+.ab-cite{border-left:2px solid var(--line);padding:2px 0 2px 13px;margin-top:4px}
+.ab-cite-line{font-family:var(--serif);font-size:14px;line-height:2.1}
+.ab-slot{display:inline-block;border:1px dashed var(--line);border-radius:2px;padding:0 8px;margin:0 2px;
+  font-family:var(--mono);font-size:11px;color:var(--dim);background:rgba(10,24,43,.35)}
+.ab-slot-sm{font-size:10.5px;padding:0 6px}
+.ab-pre{border:1px solid var(--line);border-radius:2px;padding:11px 13px;font-size:11.5px;
+  color:var(--paper2);background:rgba(10,24,43,.45);overflow-x:auto;white-space:pre}
+.ab-books{list-style:none;padding:0;margin:10px 0 0}
+.ab-books li{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;padding:7px 0;
+  border-bottom:1px dotted var(--line)}
+.ab-book{font-family:var(--serif);font-size:14px}
+.ab-rules{margin-top:14px;display:flex;flex-direction:column;gap:9px}
+.ab-rule{display:grid;grid-template-columns:minmax(150px,auto) 1fr;gap:4px 14px;align-items:baseline}
+.ab-rule b{font-size:12.5px;letter-spacing:.5px}
+.ab-rule span{font-size:12px;text-align:justify}
+.ab-plain{margin:6px 0 0;padding-left:18px}
+.ab-plain li{margin:6px 0;color:var(--paper2);font-size:12.5px;text-align:justify}
+.ab-foot{margin-top:30px;border-top:1px dashed var(--line);padding-top:12px}
+@media (max-width:620px){.ab-rule{grid-template-columns:1fr}}
 
 /* map */
 .maparea{position:relative;flex:1;min-height:0;cursor:grab}
