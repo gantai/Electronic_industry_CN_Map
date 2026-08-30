@@ -6,3 +6,9 @@ gaz-work/
 *.backup-*.xlsx
 __pycache__/
 *.pyc
+
+# 全国 ADM3 几十 MB,git 会把它永远留在历史里 —— 先用
+# tools/geo/添底图.py --save-subset 切成一市,再提交那一份小的
+底图源/geoBoundaries-*
+底图源/*_simplified.geojson
+底图源/*_ADM*.geojson

@@ -46,6 +46,13 @@ export const DISTRICT_EN = {
   "闵行": "Minhang", "嘉定": "Jiading", "宝山": "Baoshan", "松江": "Songjiang",
   "青浦": "Qingpu", "金山": "Jinshan", "奉贤": "Fengxian", "崇明": "Chongming",
   "浦东新": "Pudong",
+  /* 北京 —— 崇文、宣武 2010 年并入东城、西城,而这张图管的是那之前的年头,
+     所以两个名字都留着 */
+  "东城": "Dongcheng", "西城": "Xicheng", "崇文": "Chongwen", "宣武": "Xuanwu",
+  "朝阳": "Chaoyang", "海淀": "Haidian", "丰台": "Fengtai", "石景山": "Shijingshan",
+  "门头沟": "Mentougou", "房山": "Fangshan", "通州": "Tongzhou", "顺义": "Shunyi",
+  "昌平": "Changping", "大兴": "Daxing", "怀柔": "Huairou", "平谷": "Pinggu",
+  "密云": "Miyun", "延庆": "Yanqing",
 };
 export const CITY_ZH = {
   Shanghai: "上海", shanghai: "上海", 上海: "上海",
