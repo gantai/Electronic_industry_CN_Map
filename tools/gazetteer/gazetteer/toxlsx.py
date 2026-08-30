@@ -413,6 +413,78 @@ def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
     return len(rows)
 
 
+# ---------------------------------------------------------------- 比两份工作簿
+
+# 每张表拿什么当钥匙认「同一行」
+DIFF_KEYS = {
+    SHEET_UNITS: (("Unit",), 3, 2),
+    SHEET_COMP: (("Product", "Time"), 2, 1),
+    SHEET_SEMI: (("Product", "Factory", "Time"), 2, 1),
+    SHEET_NAMES: (("Unit", "Name", "From"), 2, 1),
+}
+
+
+def _sheet_rows(wb, sheet, key_cols, first_row, header_rows):
+    """{钥匙: {表头: 值}} —— 认不出钥匙的那些行另存一份,免得默默丢掉。"""
+    if sheet not in wb.sheetnames:
+        return {}, []
+    ws = wb[sheet]
+    h = _headers(ws, header_rows)
+    name_col = 1 if sheet == SHEET_UNITS else None
+    out, odd = {}, []
+    for r in range(first_row, ws.max_row + 1):
+        rec = {}
+        for label, c in h.items():
+            v = ws.cell(row=r, column=c).value
+            if v not in (None, ""):
+                rec[label] = str(v).strip()
+        if name_col:
+            v = ws.cell(row=r, column=name_col).value
+            if v not in (None, ""):
+                rec["Unit"] = str(v).strip()
+        if not rec:
+            continue
+        key = tuple(_bare(rec.get(c, "")) for c in key_cols)
+        if not any(key):
+            odd.append(rec)
+            continue
+        out.setdefault(key, rec)
+    return out, odd
+
+
+def diff_workbooks(old_path, new_path, skip_cols=("序", "至")):
+    """两份工作簿差在哪儿 —— `.xlsx` 是二进制,git 只会说「变了」,不说变了什么。
+
+    按钥匙认同一行(厂所认名字,产品认型号+年份),逐格比。「序」「至」是
+    算出来的,不算数据变动,默认略过。"""
+    import openpyxl
+    a = openpyxl.load_workbook(old_path, data_only=True)
+    b = openpyxl.load_workbook(new_path, data_only=True)
+    out = {}
+    for sheet, (key_cols, first_row, header_rows) in DIFF_KEYS.items():
+        ao, a_odd = _sheet_rows(a, sheet, key_cols, first_row, header_rows)
+        bo, b_odd = _sheet_rows(b, sheet, key_cols, first_row, header_rows)
+        added = [bo[k] for k in bo if k not in ao]
+        gone = [ao[k] for k in ao if k not in bo]
+        changed = []
+        for k in ao:
+            if k not in bo:
+                continue
+            fields = []
+            for label in sorted(set(ao[k]) | set(bo[k])):
+                if label in skip_cols:
+                    continue
+                x, y = ao[k].get(label, ""), bo[k].get(label, "")
+                if x != y:
+                    fields.append((label, x, y))
+            if fields:
+                changed.append(("·".join(x for x in k if x), fields))
+        if added or gone or changed:
+            out[sheet] = {"added": added, "gone": gone, "changed": changed,
+                          "odd": len(a_odd) + len(b_odd)}
+    return out
+
+
 # ---------------------------------------------------------------- 理沿革表
 
 def _ymd(v):

@@ -842,6 +842,58 @@ def test_version():
         check(cmd in said, "命令列表里有 %s" % cmd)
 
 
+def test_diff_workbooks():
+    """`.xlsx` 是二进制,git 只说「变了」—— 得有人说得出变了什么。"""
+    print("比两份工作簿")
+    tmp = tempfile.mkdtemp(prefix="gaz-diff-")
+    try:
+        import openpyxl
+        a = os.path.join(tmp, "旧.xlsx")
+        b = os.path.join(tmp, "新.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), a)
+        shutil.copy(a, b)
+        eq(toxlsx.diff_workbooks(a, b), {}, "一模一样的两份,报「没有分别」")
+
+        wb = openpyxl.load_workbook(b)
+        ws = wb[toxlsx.SHEET_UNITS]
+        h = toxlsx._headers(ws, 2)
+        # 钥匙是去掉括号的样子:「上海电子计算机厂（上无十三）」→ 上海电子计算机厂
+        who = toxlsx._bare(ws.cell(row=3, column=1).value)
+        ws.cell(row=3, column=h["Source"]).value = "试·补的出处"
+        r = ws.max_row + 1
+        ws.cell(row=r, column=1).value = "辽阳试验新厂"
+        wb[toxlsx.SHEET_NAMES].delete_rows(2)
+        wb.save(b)
+
+        d = toxlsx.diff_workbooks(a, b)
+        u = d[toxlsx.SHEET_UNITS]
+        eq([x["Unit"] for x in u["added"]], ["辽阳试验新厂"], "添的那家认得出")
+        eq(u["gone"], [], "没有谁凭空消失")
+        chg = dict((k, dict((f[0], (f[1], f[2])) for f in v)) for k, v in u["changed"])
+        check(who in chg and "Source" in chg[who], "改过的那一格,指名道姓")
+        eq(chg[who]["Source"][1], "试·补的出处", "新值报得准")
+        check(toxlsx.SHEET_NAMES in d and len(d[toxlsx.SHEET_NAMES]["gone"]) == 1,
+              "删掉的那一段沿革,报作「消失」")
+
+        # 「序」「至」是算出来的,不算数据变动:把 a 那份的这两列抹掉,
+        # 再把 b 理一遍 —— 两份只差这两列
+        shutil.copy(a, b)
+        wb = openpyxl.load_workbook(a)
+        nh = wb[toxlsx.SHEET_NAMES]
+        hn = toxlsx._headers(nh, 1)
+        check("序" in hn and "至" in hn, "现表已经有「序」「至」两列")
+        for i in range(2, nh.max_row + 1):
+            for lab in ("序", "至"):
+                nh.cell(row=i, column=hn[lab]).value = None
+        wb.save(a)
+        toxlsx.tidy_names(b)
+        eq(toxlsx.diff_workbooks(a, b), {}, "只差算出来的那两列,数据上没有分别")
+        d2 = toxlsx.diff_workbooks(a, b, skip_cols=())
+        check(toxlsx.SHEET_NAMES in d2, "要连算出来的列一起比,那就报得出来")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_tidy_names():
     """沿革表要一眼看得出谁先谁后:同一单位挨在一处,按年份排,编上序号,补上「至」。"""
     print("理沿革表")
@@ -1066,7 +1118,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_tidy_names, test_verify, test_accepted,
+               test_drafts_default, test_version, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
     print()

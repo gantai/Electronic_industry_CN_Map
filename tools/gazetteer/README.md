@@ -309,6 +309,7 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 
 ```
 gaz version                   手里这一份工具是什么时候的、该不该更新
+gaz diff                      工作簿跟 git 里那份差在哪儿  --against/--rev/--all-cols
 gaz verify                    验一验(只报,不动手;默认只报新的)
                                                     --all（连认过的一并报）
                                                     --accept（这些都看过了）

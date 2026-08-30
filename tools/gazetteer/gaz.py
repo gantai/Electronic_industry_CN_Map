@@ -4,6 +4,7 @@
 
     gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
     gaz version                   手里这一份工具是什么时候的、该不该更新
+    gaz diff                      工作簿跟 git 里那份差在哪儿(二进制,git 只说「变了」)
     gaz verify                    验一验(只报,不动手;默认只报新的)
     gaz tidy                      把沿革表理顺:按单位与年份排好,编序号、补「至」
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
@@ -269,6 +270,68 @@ def cmd_version(args):
     print("少了哪一个,就是这一份旧了。更新:")
     print("  git -C %s pull origin %s"
           % (REPO, git("rev-parse", "--abbrev-ref", "HEAD") or "<分支>"))
+    return 0
+
+
+def cmd_diff(args):
+    """两份工作簿差在哪儿 —— 默认拿手里这份跟 git 里那份比。
+
+    `.xlsx` 是二进制,git 只会说「变了」,不说变了什么。于是 pull 撞车时,
+    没人答得上「我本地那点改动到底是什么、值不值得留」。"""
+    import subprocess
+    import tempfile
+
+    new_path = args.xlsx
+    old_path, tmp = args.against, None
+    if old_path is None:
+        rev = args.rev or "HEAD"
+        rel = os.path.relpath(os.path.abspath(new_path), REPO).replace(os.sep, "/")
+        try:
+            out = subprocess.run(("git", "-C", REPO, "show", "%s:%s" % (rev, rel)),
+                                 capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.exit("取不到 git 里那一份:%s" % e)
+        if out.returncode != 0:
+            sys.exit("取不到 %s:%s 的那一份 —— %s"
+                     % (rev, rel, out.stderr.decode("utf-8", "replace").strip()))
+        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp.write(out.stdout)
+        tmp.close()
+        old_path = tmp.name
+        print("比:%s 里那一份  →  手里这一份" % rev)
+    else:
+        print("比:%s  →  %s" % (os.path.basename(old_path), os.path.basename(new_path)))
+
+    try:
+        d = toxlsx.diff_workbooks(old_path, new_path,
+                                  skip_cols=() if args.all_cols else ("序", "至"))
+    finally:
+        if tmp:
+            os.unlink(tmp.name)
+
+    if not d:
+        print("\n一样 —— 数据上没有分别。")
+        print("(「序」「至」是算出来的,不算数据变动;要连它们一起比,加 --all-cols)")
+        return 0
+
+    for sheet, r in d.items():
+        print("\n【%s】新增 %d、消失 %d、改过 %d"
+              % (sheet, len(r["added"]), len(r["gone"]), len(r["changed"])))
+        for x in r["added"][:12]:
+            print("   + %s" % (x.get("Unit") or x.get("Product") or "?"))
+        if len(r["added"]) > 12:
+            print("     …… 还有 %d 条" % (len(r["added"]) - 12))
+        for x in r["gone"][:12]:
+            print("   - %s" % (x.get("Unit") or x.get("Product") or x.get("Name") or "?"))
+        if len(r["gone"]) > 12:
+            print("     …… 还有 %d 条" % (len(r["gone"]) - 12))
+        for who, fields in r["changed"][:12]:
+            for lab, a, b in fields[:4]:
+                print("   ~ %s  %s:%s → %s"
+                      % (who, lab, ("（空）" if a == "" else a)[:30],
+                         ("（空）" if b == "" else b)[:30]))
+        if len(r["changed"]) > 12:
+            print("     …… 还有 %d 行改过" % (len(r["changed"]) - 12))
     return 0
 
 
@@ -736,6 +799,14 @@ def main(argv=None):
     p.add_argument("--accept", action="store_true",
                    help="眼下这些都看过了,记下来,往后不再报")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("diff", help="两份工作簿差在哪儿(默认跟 git 里那份比)",
+                       parents=[common])
+    p.add_argument("--against", help="跟指定的另一个 .xlsx 比")
+    p.add_argument("--rev", help="跟哪个提交里的那份比(默认 HEAD)")
+    p.add_argument("--all-cols", action="store_true",
+                   help="连「序」「至」这些算出来的列也比")
+    p.set_defaults(func=cmd_diff)
 
     p = sub.add_parser("version", help="手里这一份工具是什么时候的", parents=[common])
     p.set_defaults(func=cmd_version)
