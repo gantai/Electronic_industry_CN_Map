@@ -4,6 +4,7 @@
 
     gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
     gaz verify                    验一验(只报,不动手;默认只报新的)
+    gaz tidy                      把沿革表理顺:按单位与年份排好,编序号、补「至」
     gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
     gaz check                     看看本机装了什么、缺什么
     gaz inspect 某某志.md          现成的转换稿:看一眼标题、页码、套语
@@ -216,6 +217,21 @@ def cmd_notes(args):
     NOTES.write_vault(rows, args.out or os.path.join(wd, "vault"),
                       book=args.book or args.slug,
                       book_note=args.book_note or args.slug)
+    return 0
+
+
+def cmd_tidy(args):
+    """把沿革表理一理 —— 同一单位的几段挨在一处,按年份排好,编上序号。"""
+    r = toxlsx.tidy_names(args.xlsx, dry_run=args.dry_run)
+    if not r["rows"]:
+        print("沿革表是空的,没什么可理。")
+        return 0
+    print("%d 段名称,%d 行挪过位置。" % (r["rows"], r["moved"]))
+    print("  「序」是同一单位里的第几个名字,「至」是这个名字用到哪一年"
+          "(下一段启用那年)。")
+    print("  两列都是算出来的 —— 手工插过行就再跑一遍。")
+    if args.dry_run:
+        print("  (--dry-run:一个格子也没动)")
     return 0
 
 
@@ -667,6 +683,11 @@ def main(argv=None):
     p.add_argument("--accept", action="store_true",
                    help="眼下这些都看过了,记下来,往后不再报")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("tidy", help="把沿革表理顺:按单位与年份排好,编序号、补「至」",
+                       parents=[common])
+    p.add_argument("--dry-run", action="store_true", help="只看会怎么排,不写回")
+    p.set_defaults(func=cmd_tidy)
 
     p = sub.add_parser("dups", help="找出工作簿里疑似重复的行(只报,不动手)", parents=[common])
     p.set_defaults(func=cmd_dups)

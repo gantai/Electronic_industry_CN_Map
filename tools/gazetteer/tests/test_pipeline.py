@@ -828,6 +828,69 @@ def test_accepted():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_tidy_names():
+    """沿革表要一眼看得出谁先谁后:同一单位挨在一处,按年份排,编上序号,补上「至」。"""
+    print("理沿革表")
+    tmp = tempfile.mkdtemp(prefix="gaz-tidy-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = wb[toxlsx.SHEET_NAMES]
+        h = toxlsx._headers(ws, 1)
+        # 三段名称故意打乱着写进去,中间还夹一家别的
+        r = ws.max_row + 1
+        for unit, name, frm in (("辽阳试验所", "辽阳试验所", "19800000"),
+                                ("别家厂", "别家旧名", "19600000"),
+                                ("辽阳试验所", "辽阳甲厂", "19520000"),
+                                ("辽阳试验所", "辽阳乙厂", "19650000")):
+            ws.cell(row=r, column=h["Unit"]).value = unit
+            ws.cell(row=r, column=h["Name"]).value = name
+            ws.cell(row=r, column=h["From"]).value = frm
+            r += 1
+        wb.save(x)
+
+        out = toxlsx.tidy_names(x)
+        check(out["rows"] >= 4, "行数点得出来")
+
+        ws = openpyxl.load_workbook(x)[toxlsx.SHEET_NAMES]
+        h = toxlsx._headers(ws, 1)
+        eq([ws.cell(row=1, column=c).value for c in range(1, 6)],
+           ["序", "Unit", "Name", "From", "至"], "读起来顺的次序:序在最前,至挨着起")
+
+        got = []
+        for i in range(2, ws.max_row + 1):
+            if ws.cell(row=i, column=h["Unit"]).value == "辽阳试验所":
+                got.append((ws.cell(row=i, column=h["序"]).value,
+                            ws.cell(row=i, column=h["Name"]).value,
+                            str(ws.cell(row=i, column=h["From"]).value),
+                            ws.cell(row=i, column=h["至"]).value))
+        eq([g[0] for g in got], [1, 2, 3], "同一单位的三段,序号 1、2、3")
+        eq([g[1] for g in got], ["辽阳甲厂", "辽阳乙厂", "辽阳试验所"], "按年份先后排,不按写进去的顺序")
+        eq([g[2] for g in got], ["19520000", "19650000", "19800000"], "起用年跟着名字走")
+        eq([g[3] for g in got], ["19650000", "19800000", None],
+           "「至」是下一段启用那年;末一段空着 —— 那是现在的名字")
+
+        # 该空的那一格要真空:openpyxl 里 cell(..., value=None) 是「没给值」,清不掉
+        idx = [i for i in range(2, ws.max_row + 1)
+               if ws.cell(row=i, column=h["Unit"]).value == "辽阳试验所"][-1]
+        check(ws.cell(row=idx, column=h["至"]).value is None, "末一段的「至」真的是空的,没留着旧字")
+
+        # 手工改坏了,verify 报得出来,并指向 gaz tidy
+        wb = openpyxl.load_workbook(x)
+        wb[toxlsx.SHEET_NAMES].cell(row=2, column=1).value = 9
+        wb.save(x)
+        why = [w for k, _wh, w, _kk in toxlsx.verify(x) if k == "沿革"]
+        check(any("gaz tidy" in w for w in why), "序号改坏了,verify 指着 gaz tidy 说")
+
+        toxlsx.tidy_names(x)
+        why = [w for k, _wh, w, _kk in toxlsx.verify(x) if k == "沿革" and "tidy" in w]
+        eq(why, [], "理过一遍就不再报")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_verify():
     """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
     print("手改之后验一验")
@@ -989,7 +1052,7 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_verify, test_accepted,
+               test_drafts_default, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
     print()

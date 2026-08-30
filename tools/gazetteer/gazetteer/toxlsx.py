@@ -10,6 +10,8 @@ import io
 import os
 import re
 import shutil
+
+from openpyxl.utils import get_column_letter
 from datetime import datetime
 
 SHEET_UNITS = "Fact and Comp-Shanghai"
@@ -209,9 +211,13 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     # Name-History 的 From 一列,原表存的是文本(见 src/xlsxio.js 的 exportWorkbook),照旧
     _append_flat(SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"],
                  names, "names", text_cols=("From",), dedup_on=("Unit", "Name", "From"))
+    _tidy_after = report["names"] > 0
 
     try:
         wb.save(xlsx_path)
+        # 追加是往表尾堆,新来的几段跟同一单位原有的隔着几十行 —— 存完就地理一遍
+        if _tidy_after:
+            tidy_names(xlsx_path)
     except PermissionError:
         # 这一份是总表,不能改名另存 —— 换了名字就不是那本工作簿了
         raise SystemExit(
@@ -405,6 +411,91 @@ def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
                     value=(None if v in ("", None) else (str(v) if label == "From" else _num(v))))
     wb.save(xlsx_path)
     return len(rows)
+
+
+# ---------------------------------------------------------------- 理沿革表
+
+def _ymd(v):
+    """八位日期 → 可比的整数;认不出的排在最后。"""
+    t = re.sub(r"\D", "", str(v or ""))
+    return int(t.ljust(8, "0")[:8]) if t else 99999999
+
+
+def _fmt_ym(v):
+    """19501100 → 1950.11;只知道年的写 1950。"""
+    t = re.sub(r"\D", "", str(v or ""))
+    if len(t) != 8:
+        return str(v or "")
+    y, m, d = t[:4], t[4:6], t[6:]
+    if m == "00":
+        return y
+    return "%s.%s" % (y, m) if d == "00" else "%s.%s.%s" % (y, m, d)
+
+
+def tidy_names(xlsx_path, dry_run=False):
+    """把沿革表理一理:同一单位的几段挨在一处,按年份先后排好,重编「序」,
+    并按下一段的启用年补上「至」。
+
+    这张表一行是一个**名段**:某单位从某年起叫什么。可原先只有 Unit/Name/From
+    三列,行又是按抽取顺序堆着的 —— 一家单位的五个名字散在表里,谁先谁后
+    全靠自己比对那串八位数字。「序」与「至」都是算出来的,手工插过行就会
+    对不上,所以单拎出这一道,随时可以再理一遍。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path)
+    if SHEET_NAMES not in wb.sheetnames:
+        return {"moved": 0, "rows": 0}
+    ws = wb[SHEET_NAMES]
+    h = _headers(ws, 1)
+    if "Unit" not in h or "From" not in h:
+        return {"moved": 0, "rows": 0}
+
+    ncol = ws.max_column
+    body = []
+    for r in range(2, ws.max_row + 1):
+        vals = [ws.cell(row=r, column=c).value for c in range(1, ncol + 1)]
+        if any(v not in (None, "") for v in vals):
+            body.append(vals)
+    before = [tuple(x) for x in body]
+
+    ui, fi = h["Unit"] - 1, h["From"] - 1
+    body.sort(key=lambda v: (str(v[ui] or ""), _ymd(v[fi])))
+
+    # 读起来顺的次序:序 | 单位 | 名称 | 起 | 至 | 关系 | 其余照旧
+    head = [ws.cell(row=1, column=c).value for c in range(1, ncol + 1)]
+    lead = ["序", "Unit", "Name", "From", "至", "关系"]
+    order = [head.index(x) if x in head else None for x in lead]
+    order += [i for i, v in enumerate(head) if v not in lead]
+    rows = []
+    for v in body:
+        rows.append([None if i is None else (v[i] if i < len(v) else None) for i in order])
+    head = [lead[i] if i < len(lead) else head[order[i]] for i in range(len(order))]
+
+    si, ui2, fi2, ti = 0, 1, 3, 4
+    for i, v in enumerate(rows):
+        same = [j for j, w in enumerate(rows) if str(w[ui2] or "") == str(v[ui2] or "")]
+        v[si] = same.index(i) + 1
+        nxt = [j for j in same if j > i]
+        # 「至」是下一段启用那一年 —— 名字换在那一天,前一个名字用到那一天为止
+        v[ti] = rows[nxt[0]][fi2] if nxt else None
+
+    # 一律写 .value,不走 cell(..., value=x):openpyxl 里 value=None 当作
+    # 「没给值」,格子里的旧字原样留着 —— 该空的那一格于是留着上一轮的内容
+    for c, label in enumerate(head, start=1):
+        ws.cell(row=1, column=c).value = label
+    for i, v in enumerate(rows):
+        for c in range(1, len(head) + 1):
+            ws.cell(row=i + 2, column=c).value = v[c - 1]
+    for r in range(len(rows) + 2, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            ws.cell(row=r, column=c).value = None
+    for c, wid in zip(range(1, len(head) + 1), (5, 24, 26, 10, 10, 8, 34, 30)):
+        ws.column_dimensions[get_column_letter(c)].width = wid
+    ws.freeze_panes = "C2"
+
+    moved = sum(1 for a, b in zip(before, [tuple(x) for x in body]) if a != b) if before else 0
+    if not dry_run:
+        wb.save(xlsx_path)
+    return {"moved": moved, "rows": len(rows)}
 
 
 # ---------------------------------------------------------------- 找重复
@@ -631,6 +722,25 @@ def verify(xlsx_path):
             # 「甲厂 → 甲厂」是改名链的末一段,前头得有段别的名字才立得住
             if n == u and per.get(u, 0) < 2:
                 bad.append(("沿革", where, "只此一条,却是「改名叫自己」—— 不载信息", key))
+
+        # 「序」「至」是算出来的:手工插过行、改过年份,就跟实际对不上了
+        if "序" in hh and rows:
+            fresh = sorted(rows, key=lambda t: (t[1], _ymd(t[3])))
+            stale = 0
+            for i, (r, u, n, f) in enumerate(fresh):
+                same = [x for x in fresh if x[1] == u]
+                want_no = same.index((r, u, n, f)) + 1
+                pos = same.index((r, u, n, f))
+                want_to = same[pos + 1][3] if pos + 1 < len(same) else None
+                got_no = w.cell(row=r, column=hh["序"]).value
+                got_to = w.cell(row=r, column=hh["至"]).value if "至" in hh else None
+                if (str(got_no or "") != str(want_no)
+                        or _ymd(got_to) != _ymd(want_to)):
+                    stale += 1
+            if stale:
+                bad.append(("沿革", "%s 全表" % SHEET_NAMES,
+                            "「序」或「至」有 %d 行对不上 —— 跑一遍 gaz tidy 就理好了" % stale,
+                            "序至失准"))
 
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),

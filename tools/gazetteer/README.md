@@ -312,6 +312,8 @@ gaz verify                    验一验(只报,不动手;默认只报新的)
                                                     --all（连认过的一并报）
                                                     --accept（这些都看过了）
 gaz dups                      工作簿里哪些行像是重复的(只报,不动手)
+gaz tidy                      把沿革表理顺:按单位与年份排好,编序号、补「至」
+                                                    --dry-run（只看不写）
 gaz guide  --vault D:\Archive  《电子工业地图流程》写进这个目录(不给就打印)
 gaz check                     本机环境自检
 gaz inspect <某某志.md>        看一眼转换稿:标题、页码、套语、断行

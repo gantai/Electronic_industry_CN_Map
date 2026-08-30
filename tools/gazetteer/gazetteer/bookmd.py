@@ -334,14 +334,26 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
                           "Personnel", "Remark"], res["semi"])
     flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                           "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], res["comp"])
+    # 待核那份的沿革表也照总表的次序摆:序、单位、名称、起、至、关系
     nh = wb.create_sheet("Name-History")
-    nh.append(["取否", "Unit", "Name", "From", "Remark", "Source"])
-    for c in range(1, 7):
+    nh.append(["取否", "序", "Unit", "Name", "From", "Remark", "Source"])
+    for c in range(1, 8):
         nh.cell(row=1, column=c).font = Font(bold=True)
-    for r in res["names"]:
-        nh.append(["", r.get("Unit", ""), r.get("Name", ""), str(r.get("From", "")),
+    # 同一单位的几段挨在一处、按年份排好、编上序号 —— 抽取顺序堆着的话,
+    # 一家单位的五个名字散在表里,谁先谁后全靠自己比对那串八位数字
+    def _key(r):
+        t = re.sub(r"\D", "", str(r.get("From", "")))
+        return (str(r.get("Unit", "")), int(t.ljust(8, "0")[:8]) if t else 99999999)
+
+    seq = {}
+    for r in sorted(res["names"], key=_key):
+        who = str(r.get("Unit", ""))
+        seq[who] = seq.get(who, 0) + 1
+        nh.append(["", seq[who], who, r.get("Name", ""), str(r.get("From", "")),
                    r.get("Remark", ""), r.get("Source", "")])
-    nh.freeze_panes = "B2"
+    nh.freeze_panes = "C2"
+    for i, wid in enumerate([6, 5, 24, 26, 11, 34, 30], start=1):
+        nh.column_dimensions[get_column_letter(i)].width = wid
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
@@ -414,6 +426,7 @@ KEEP_YES = {"y", "yes", "true", "1", "是", "要", "✓", "√"}
 
 # 「待核」表头 → 抽取时用的字段名
 REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页": "page",
+               "序": None,
                "别名": "别名",
                "单位": "Unit", "行业": "Industry", "产品": "Product",
                "始建": "Start Date", "终止": "End Date", "创办": "Founder",
@@ -461,6 +474,8 @@ def _sheet_rows(ws):
             if not h:
                 continue
             k = REVIEW_COLS.get(h, h)
+            if k is None:      # 「序」是给人看的次序,不是字段
+                continue
             r[k] = date_cell(v) if k in DATE_COLS else ("" if v is None else v)
         out.append(r)
     return out
