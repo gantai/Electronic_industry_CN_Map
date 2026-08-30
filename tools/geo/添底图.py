@@ -33,6 +33,63 @@ CITY_ALIASES = {
     "广州": ["广州", "Guangzhou"],
 }
 
+# geoBoundaries 的 CHN ADM3 只有一个英文 shapeName(「Chaoyang District」),
+# 既不写省市,也没有上级编号 —— 属性里根本找不到「北京」二字。所以退一步
+# 按地理认:图形落在这个方框里的,就算这个市的。方框宽松些无妨,后头还有
+# 名字对照把关。(西南角经度, 纬度, 东北角经度, 纬度)
+CITY_BOX = {
+    "北京": (115.35, 39.40, 117.55, 41.10),
+    "上海": (120.80, 30.65, 122.30, 31.95),
+    "天津": (116.65, 38.50, 118.10, 40.30),
+    "重庆": (105.20, 28.10, 110.25, 32.25),
+}
+
+# 英文名 → 中文名。`city.geo.json` 存中文,站点的 DISTRICT_EN 再翻回英文。
+EN_TO_ZH = {
+    "北京": {
+        "Dongcheng": "东城", "Xicheng": "西城", "Chongwen": "崇文", "Xuanwu": "宣武",
+        "Chaoyang": "朝阳", "Haidian": "海淀", "Fengtai": "丰台", "Shijingshan": "石景山",
+        "Mentougou": "门头沟", "Fangshan": "房山", "Tongzhou": "通州", "Shunyi": "顺义",
+        "Changping": "昌平", "Daxing": "大兴", "Huairou": "怀柔", "Pinggu": "平谷",
+        "Miyun": "密云", "Yanqing": "延庆",
+    },
+    "上海": {
+        "Huangpu": "黄浦", "Jing'an": "静安", "Jingan": "静安", "Hongkou": "虹口",
+        "Yangpu": "杨浦", "Putuo": "普陀", "Changning": "长宁", "Xuhui": "徐汇",
+        "Pudong": "浦东", "Minhang": "闵行", "Jiading": "嘉定", "Baoshan": "宝山",
+        "Songjiang": "松江", "Qingpu": "青浦", "Jinshan": "金山", "Fengxian": "奉贤",
+        "Chongming": "崇明",
+    },
+}
+
+# 「Chaoyang District」「Funing County」—— 通名去掉,只留专名
+EN_GENERIC = re.compile(r"\s+(District|County|City|Qu|Xian|Shi|Autonomous\s+\w+)$", re.I)
+
+
+def _centroid(geom):
+    """图形的大致中心 —— 只为判断落在哪个市,取第一圈的均值就够。"""
+    pts = []
+
+    def walk(x):
+        if isinstance(x, list):
+            if x and isinstance(x[0], (int, float)) and len(x) >= 2:
+                pts.append((float(x[0]), float(x[1])))
+            else:
+                for v in x:
+                    walk(v)
+    walk(geom.get("coordinates"))
+    if not pts:
+        return None
+    return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+
+def _in_box(geom, box):
+    c = _centroid(geom)
+    if not c:
+        return False
+    x0, y0, x1, y1 = box
+    return x0 <= c[0] <= x1 and y0 <= c[1] <= y1
+
 DROP_SUFFIX = re.compile(r"(区|县|市辖区|市)$")
 
 
@@ -45,14 +102,25 @@ def _texts(props):
     return out
 
 
-def _pick_name(props, city_words):
-    """挑一个当区名:优先带「区/县」的中文,其次最短的那个非市名字符串。"""
+def _pick_name(props, city_words, city=""):
+    """挑一个当区名:有中文用中文;只有英文的,按对照表翻成中文。"""
     cands = _texts(props)
     zh = [t for t in cands if re.search(r"[一-鿿]", t)]
-    named = [t for t in zh if DROP_SUFFIX.search(t)]
-    pool = named or zh or cands
-    pool = [t for t in pool if t not in city_words] or pool
-    return min(pool, key=len) if pool else ""
+    if zh:
+        named = [t for t in zh if DROP_SUFFIX.search(t)]
+        pool = [t for t in (named or zh) if t not in city_words] or (named or zh)
+        return min(pool, key=len)
+    # 只有英文:「Chaoyang District」→ Chaoyang → 朝阳
+    table = EN_TO_ZH.get(city, {})
+    for t in sorted(cands, key=len):
+        bare = EN_GENERIC.sub("", t).strip()
+        if bare in table:
+            return table[bare]
+    for t in sorted(cands, key=len):
+        bare = EN_GENERIC.sub("", t).strip()
+        if bare and not bare.isdigit() and bare not in ("CHN", "ADM3", "ADM2"):
+            return bare          # 表里没有的,原样留着英文,免得默默丢掉
+    return ""
 
 
 def _round_coords(geom, nd=4):
@@ -71,15 +139,24 @@ def load_city(path):
         return json.load(f)
 
 
-def find_city(doc, city):
-    """挑出属于这个市的 feature。认值不认字段名。"""
+def find_city(doc, city, box=None):
+    """挑出属于这个市的 feature。
+
+    两条路,先按名字,认不出再按地理:
+    - **名字** —— 属性里哪一格带着市名(有些数据源写着省市,那最省事)
+    - **地理** —— 图形中心落在这个市的方框里(geoBoundaries 只给一个英文
+      区名,属性里压根没有「北京」二字,只能这么认)
+    """
     words = CITY_ALIASES.get(city, [city])
-    hit = []
-    for ft in doc.get("features", []):
-        blob = " ".join(_texts(ft.get("properties")))
-        if any(w in blob for w in words):
-            hit.append(ft)
-    return hit, words
+    feats = doc.get("features", [])
+    hit = [ft for ft in feats
+           if any(w in " ".join(_texts(ft.get("properties"))) for w in words)]
+    if hit:
+        return hit, words, "名字"
+    box = box or CITY_BOX.get(city)
+    if not box:
+        return [], words, "名字"
+    return [ft for ft in feats if _in_box(ft.get("geometry") or {}, box)], words, "地理"
 
 
 def main(argv=None):
@@ -95,17 +172,19 @@ def main(argv=None):
     if not os.path.exists(args.src):
         sys.exit("找不到文件:%s" % args.src)
     doc = load_city(args.src)
-    feats, words = find_city(doc, args.city)
-    print("%s 里共 %d 个 feature,认出属于「%s」的 %d 个。"
+    feats, words, how = find_city(doc, args.city)
+    print("%s 里共 %d 个 feature,按%s认出属于「%s」的 %d 个。"
           % (os.path.basename(args.src), len(doc.get("features", [])),
-             args.city, len(feats)))
+             how, args.city, len(feats)))
+    if how == "地理":
+        print("   (属性里没有市名,只好按图形落点认 —— 名字由英文对照表翻成中文)")
     if not feats:
         print("\n一个也没认出来。看一眼属性长什么样,再告诉我该按哪个字段找:")
         for ft in doc.get("features", [])[:3]:
             print("   %s" % json.dumps(ft.get("properties"), ensure_ascii=False)[:160])
         return 1
 
-    named = [(_pick_name(ft.get("properties"), words), ft) for ft in feats]
+    named = [(_pick_name(ft.get("properties"), words, args.city), ft) for ft in feats]
     for nm, _ft in sorted(named, key=lambda x: x[0]):
         print("   %s" % (nm or "(认不出名字)"))
 
