@@ -46,9 +46,15 @@ pip install openpyxl                         # 必装:回写工作簿
 竖排、统计表都归它管,这边再写一份只会更差。要转扫描件才装:
 
 ```bash
-pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"
+pip install "git+https://github.com/gantai/Historian_Archive_Management@claude/historian-archive-obsidian-9impe4"
 pip install paddleocr "paddlex[ocr]==3.7.2"  # 识别引擎,zhiconv 不自带
 ```
+
+> 装的是整个 `historian-archive-management`,`zhiconv` 是它里头的一个包。
+> 从前写作 `pip install "zhiconv @ git+…"`,如今 pip 会拿 `zhiconv` 这个名字
+> 跟包自报的名字(`historian-archive-management`)对,对不上就不肯装。分支
+> 也得写明 —— 那边的 `main` 眼下只剩一个 LICENSE,活都在 `claude/historian-archive-obsidian-9impe4` 这一支上。
+> 那边把这一支并回 main 之后,`@` 后头这一截就可以去掉了。
 
 引擎这一步在 Windows 上常装不上。装不上也不要紧 —— **已经转好的 `.md`
 根本用不着 zhiconv**,`gaz book` 直接读。

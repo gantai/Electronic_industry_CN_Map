@@ -68,7 +68,10 @@ SUBCOMMANDS = []
 # 扫描件 → Markdown 不在这个仓里。同一批 PDF 另一个项目也要转,那边把转换
 # 单拆成了 zhiconv 一个包,专门伺候这两处;这边再写一份只会更差。
 ZHICONV_INSTALL = (
-    'pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"\n'
+    # 装的是整个 historian-archive-management(zhiconv 是它里头的一个包)。
+    # 别写成 "zhiconv @ git+…" —— pip 会拿这个名字跟包自报的名字对,对不上就不装。
+    # 分支也得写明:那边的 main 眼下只剩一个 LICENSE,活都在这一支上。
+    'pip install "git+https://github.com/gantai/Historian_Archive_Management@claude/historian-archive-obsidian-9impe4"\n'
     '       再装识别引擎:pip install paddleocr "paddlex[ocr]==3.7.2"')
 ZHICONV_MISSING = (
     "没装 zhiconv —— 扫描件转 Markdown 归它管:\n"
