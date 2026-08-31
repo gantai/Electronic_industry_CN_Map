@@ -597,7 +597,13 @@ def near_date(sent, at, window=14):
     近处没写年份,返回 None,由调用者决定退不退回整句。"""
     # 只在同一个小句里找 ——「1966年,北京开关厂平谷分厂(后更名为…」中间隔着
     # 逗号与括号,那个 1966 是整句的年份(接受成果那年),不是改名那年。
-    head = re.split(r"[，,。；;：:（(]", sent[:at])[-1]
+    parts = re.split(r"[，,。；;：:（(]", sent[:at])
+    head = parts[-1]
+    # 「…1988年,改名为北京北大方正集团公司」—— 年份自成一小句,动词前头那一截
+    # 是空的。这时往前再看一句;再往前就不看了,免得把整句的年份拽过来
+    # (「1966年,北京开关厂平谷分厂(后更名为…」里的 1966 就不是改名那年)。
+    if not DATEISH.search(head) and len(head) <= 6 and len(parts) >= 2:
+        head = parts[-2]
     best = None
     for m in DATEISH.finditer(head):
         if len(head) - m.end() <= window:
@@ -617,9 +623,13 @@ def renames_this(sent, at, unit, owner=False):
     认第一家,不认最后一家 —— 「为兰州炼油厂」正夹在主语与动词之间。
     有专条的单位另说:那一节整节都在讲它,改名自然是它的事。
     前头一家也没点到(「该厂改名为…」),那也是它,照收。"""
-    if owner:
-        return True
     head = sent[:at]
+    if owner:
+        # 「那一节整节都在讲它」只在没别人作主语时才作数。牡丹集团那一节里
+        # 写着「北京电视机厂前身为北京无线电精密元件厂」—— 主语明明是电视机厂,
+        # 不能因为这一节归牡丹,就把电视机厂的来历记到牡丹名下。
+        first = unit_names(head)
+        return (not first) or first[0] == unit
     # 「1990年,北京半导体设备一厂并入北京显像管厂,改名为北京显像管总厂」——
     # 主语在最前头这条,遇上「并入」就反了:被并进去的那家排在前,改名的是
     # 承接的那一家。有「并入」时,认它后头那一家。
@@ -653,16 +663,42 @@ def chain_from(sents, start=None, unit="", owner=False):
             continue
         m = re.search(r"(?:前身(?:为|是|系)?|原名(?:为)?|原(?:为|系))\s*"
                       r"([一-鿿A-Za-z0-9]{4,20}" + UNIT_TAIL + r"|[一-鿿]{4,20}(?:室|部|组|站|馆))", s)
-        if m:
-            if unit and not renames_this(s, m.start(), unit, owner):
-                continue
-            # 「北京显像管总厂前身是北京呢绒服装厂,1970年改为北京市半导体器件五厂」
-            # —— 那个 1970 是**改掉**呢绒服装厂那一年,不是它启用那一年。所以
-            # 前身只认写在它前头的日期;后头还有别的日子的,宁可不系。
-            when = near_date(s, m.start())
-            if when is None and not DATEISH.search(s[m.end():]):
-                when = date
-            steps.append((when, m.group(1), "前身", s))
+        if m and (not unit or renames_this(s, m.start(), unit, owner)):
+            # 捕到的那一截还得过一道名字的关:「该厂前身**之一的**北京电子仪器厂」
+            # 「前身是**全市第一家专门生产收音机的工厂**」—— 前者粘着定语,
+            # 后者压根不是名字,是一句描述。
+            # 「前身**之一的**北京电子仪器厂」「前身是1941年9月由日本人开办**的**
+            # 华北电信电话股份有限公司」—— 定语连着名字一起捕了进来。「的」后头
+            # 那一截若自己就站得住,就只要那一截。
+            raw = m.group(1)
+            if "的" in raw:
+                tail = raw.rsplit("的", 1)[1].strip()
+                if len(tail) >= 4 and re.search(UNIT_TAIL + r"$", tail):
+                    raw = tail
+            nm = clean_unit_name(raw)
+            if not nm and re.search(r"(?:室|部|组|站|馆)$", raw):
+                # 「上海市计算技术研究室」这类以室/部/组收尾的,不在 UNIT_TAIL
+                # 之列,clean_unit_name 不收 —— 可前身正名本就常是这个样子。
+                # 只剥掉领头的定语,再看它像不像个名字。
+                t = raw.strip("　 ·、,，")
+                if "的" not in t and 4 <= len(t) <= 20:
+                    nm = t
+            if nm:
+                # 「北京显像管总厂前身是北京呢绒服装厂,1970年改为北京市半导体
+                # 器件五厂」—— 那个 1970 是**改掉**呢绒服装厂那一年,不是它启用
+                # 那一年。所以前身只认写在它前头的日期;后头写明「创建于1954年」
+                # 一类的,那才是前身自己的生年。
+                when = near_date(s, m.start())
+                if when is None:
+                    # 「建于1966年」「创建于1954年」—— BIRTH 里没有光杆的「建」,
+                    # 而志书写前身的生年,十有八九就是这个写法
+                    born = re.search(r"(?:" + BIRTH + r"|建|创立)于\s*("
+                                     + DATEISH.pattern + r")", s)
+                    if born:
+                        when = cndate.parse(born.group(1))
+                    elif not DATEISH.search(s[m.end():]):
+                        when = date
+                steps.append((when, nm, "前身", s))
             # 不 continue:同一句里往往还接着一句改名,那也要记
         m = re.search(RENAME + r"\s*([一-鿿A-Za-z0-9]{4,24})", s)
         # 「改为」也是改名的说法(「1970年改为北京市半导体器件五厂」),可它同样

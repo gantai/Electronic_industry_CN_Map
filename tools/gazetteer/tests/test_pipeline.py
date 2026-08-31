@@ -763,11 +763,14 @@ def test_drafts_default():
     gaz = os.path.join(HERE, "..", "gaz.py")
     env = dict(os.environ)
     env.pop("GAZ_DRAFTS", None)
-    out = subprocess.run([sys.executable, gaz, "volume", "查无此稿"],
+    # 指到一个不存在的目录:错误话里要点出默认去处,免得人不知道稿子该往哪儿放
+    out = subprocess.run([sys.executable, gaz, "volume", "--dir",
+                          os.path.join(tempfile.gettempdir(), "没有这个目录"),
+                          "查无此稿"],
                          capture_output=True, text=True, env=env, cwd=REPO)
     said = out.stdout + out.stderr
-    check(os.path.join(REPO, "转换稿") in said, "说得出默认去处是仓库里的 转换稿")
-    check("--dir" in said, "也说得出放在别处该怎么指")
+    check("转换稿" in said, "说得出默认去处是仓库里的 转换稿")
+    check("找不到目录" in said, "说得出是哪个目录找不到")
 
     tmp = tempfile.mkdtemp(prefix="gaz-drafts-")
     try:
@@ -904,6 +907,32 @@ def test_rename_verbs():
     got = nh("## 一、厂\n\n1990年，北京半导体设备一厂并入北京显像管厂，"
              "改名为北京显像管总厂。\n", "北京显像管厂")
     eq(got, [("北京显像管总厂", "19900000")], "改名记在承接的那一家名下")
+
+    # 前身那一截,定语不能连着捕进来
+    r = EX.extract("## 一、辽阳无线电仪器二厂\n\n该厂前身之一的辽阳电子仪器厂，"
+                   "1959年开始生产测量仪器。\n", book="试", city="Beijing", min_mentions=1)
+    f = [u.get("Founder", "") for u in r["units"] if u["Unit"] == "辽阳无线电仪器二厂"]
+    check(f and "之一的" not in f[0] and "辽阳电子仪器厂" in f[0],
+          "「前身之一的X」剥掉定语,只留 X(得 %r)" % (f[0] if f else None))
+    r = EX.extract("## 一、辽阳无线电厂\n\n该厂前身是全市第一家专门生产收音机的工厂。\n",
+                   book="试", city="Beijing", min_mentions=1)
+    check(not any("收音机的工厂" in u.get("Founder", "") for u in r["units"]),
+          "「全市第一家专门生产收音机的工厂」是描述,不是名字")
+
+    # 前身的生年:句子里写明「建于/创建于X」的,以它为准,不拿本厂的始建年顶替
+    def pre(md, who):
+        r = EX.extract(md, book="试", city="Beijing", min_mentions=1)
+        return [(n["Name"], n["From"]) for n in r["names"] if n["Unit"] == who]
+    eq(pre("## 一、辽阳配件三厂\n\n1990年建厂。辽阳配件三厂前身为辽阳塑料制品厂，建于1966年。\n",
+           "辽阳配件三厂"), [("辽阳塑料制品厂", "19660000")],
+       "前身系着它自己的生年 1966,不是本厂的 1990")
+
+    # 有专条也不能一手遮天:句子里明写着别家作主语
+    got = [(n["Unit"], n["Name"]) for n in EX.extract(
+        "## 第十三节辽阳牡丹集团\n\n辽阳电视机厂前身为辽阳精密元件厂，创建于1965年。\n",
+        book="试", city="Beijing", min_mentions=1)["names"]]
+    check(all(u != "辽阳牡丹集团" for u, _n in got),
+          "主语是电视机厂,这一段来历不记到本节那家名下(得 %r)" % got)
 
     # 一句话既讲前身又讲改名,两步都要记 —— 从前认下前身就 continue,改名那半句
     # 再也走不到,而志书正是这么写的

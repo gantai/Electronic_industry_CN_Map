@@ -787,7 +787,12 @@ def verify(xlsx_path):
             per[u] = per.get(u, 0) + 1
         for r, u, n, f in rows:
             where = "%s 第%d行 %s" % (SHEET_NAMES, r, u)
-            if f not in (None, ""):
+            if f in (None, ""):
+                # 一段名字没有启用年,就不知道它管哪一截 —— 站点按年份挑名字,
+                # 挑不着它;这一行等于没写。前身没丢,它在「创办」列里。
+                bad.append(("沿革", where, "没有启用年 —— 一段名字系不上年份,"
+                            "这一行立不住(前身仍在「创办」列里)", key))
+            else:
                 why = _year_trouble(f, "启用年")
                 if why:
                     bad.append(("日期", where, why, key))
