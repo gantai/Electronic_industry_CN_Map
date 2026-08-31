@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, cityAt } from "./geocode.js";
+import CITY_GEO from "./city.geo.json";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
 import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitChain,
          stripLeadingDate } from "./utils.js";
@@ -61,6 +62,52 @@ function headerIndex(rows, needle) {
     if ((rows[i] || []).some((c) => norm(c) === needle)) return i;
   }
   return 0;
+}
+
+/* 区界多边形的形心 —— 只知道在哪个区、查不到门牌的单位,落在那个区中央。
+   比「一市之内一百多家全叠在市中心那一个点上」强得多,而且不冒充精确:
+   界面上照旧标作「区级」。 */
+const DISTRICT_CENTER = (() => {
+  const out = {};
+  (CITY_GEO.features || []).forEach((f) => {
+    const p = f.properties || {};
+    if (!p.name) return;
+    const pts = [];
+    const walk = (x) => {
+      if (!Array.isArray(x)) return;
+      if (typeof x[0] === "number") pts.push(x);
+      else x.forEach(walk);
+    };
+    walk((f.geometry || {}).coordinates);
+    if (!pts.length) return;
+    out[(p.city || "") + "·" + p.name] = {
+      lng: pts.reduce((a, q) => a + q[0], 0) / pts.length,
+      lat: pts.reduce((a, q) => a + q[1], 0) / pts.length,
+    };
+  });
+  return out;
+})();
+
+/* 撤销了的老区,落点借用今区 —— 界线图是当代政区,没有它们。
+   记的名字仍是志书写的那个:一九七〇年的厂在崇文区,说它在东城区是错的;
+   可要在图上给它一个位置,今东城的中央离它当年所在处最近。 */
+const GONE_DISTRICT = {
+  "北京·崇文": "东城",   // 2010 并入东城
+  "北京·宣武": "西城",   // 2010 并入西城
+  "上海·南市": "黄浦",   // 2000 并入黄浦
+  "上海·卢湾": "黄浦",   // 2011 并入黄浦
+  "上海·闸北": "静安",   // 2015 并入静安
+};
+
+/** 「朝阳区」「朝阳」都认;认不出返回 null。city 用中文市名(cityAt 的 label)。 */
+export function districtAt(city, district) {
+  const d = String(district || "").trim().replace(/[区县]$/, "");
+  if (!d) return null;
+  const key = String(city || "") + "·" + d;
+  const now = GONE_DISTRICT[key];
+  return DISTRICT_CENTER[key]
+    || (now ? DISTRICT_CENTER[String(city || "") + "·" + now] : null)
+    || null;
 }
 
 function colFinder(...headerRows) {
@@ -197,6 +244,8 @@ function parseUnits(ws) {
   /* 统计数字是哪一年的 —— 志书按「1995年末,职工总数…」整段报,一行一个年份。
      没这一列就退回表头那个总年份(表头 `1990` 那一格)。 */
   const cStatsYear = col("统计年", "Stats Year", "数据年份");
+  /* 志书写明的区。查不到门牌时,靠它落到区一级,不必全挤在市中心 */
+  const cDistrict = col("区", "District", "区县");
   const cLat = col("Lat", "Latitude", "纬度");
   const cLng = col("Lng", "Lon", "Longitude", "经度");
   /* A 列无表头,即单位名称 */
@@ -243,6 +292,8 @@ function parseUnits(ws) {
     const lngOverride = cLng >= 0 ? numCell(r, cLng) : null;
     const hasOwn = latOverride != null && lngOverride != null;
     const hasPlace = place.lat != null && place.lng != null;
+    const zone = cDistrict >= 0 ? String(cell(r, cDistrict) || "").trim() : "";
+    const atZone = hasOwn || hasPlace ? null : districtAt(fallback.label, zone);
 
     units.push({
       id: "u" + (units.length + 1),
@@ -263,10 +314,12 @@ function parseUnits(ws) {
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
       statsYear: (cStatsYear >= 0 ? parseInt(cell(r, cStatsYear), 10) : NaN) || statsYear,
-      lat: hasOwn ? latOverride : hasPlace ? place.lat : fallback.lat,
-      lng: hasOwn ? lngOverride : hasPlace ? place.lng : fallback.lng,
-      precision: hasOwn ? "given" : hasPlace ? place.precision || "district" : "city",
-      district: hasPlace || hasOwn ? place.district || "" : "",
+      lat: hasOwn ? latOverride : hasPlace ? place.lat : atZone ? atZone.lat : fallback.lat,
+      lng: hasOwn ? lngOverride : hasPlace ? place.lng : atZone ? atZone.lng : fallback.lng,
+      precision: hasOwn ? "given"
+        : hasPlace ? place.precision || "district"
+          : atZone ? "district" : "city",
+      district: hasPlace || hasOwn ? place.district || "" : (atZone ? zone : ""),
       locNote: place.note || "",
       stats,
       hasStats,

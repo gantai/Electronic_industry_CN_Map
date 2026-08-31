@@ -542,6 +542,12 @@ def cmd_book(args):
     slug = args.slug or stem
     print("读入 %s（%s,%d 字）" % (os.path.basename(args.md), enc, len(text)))
 
+    # 型号里的连字符被认成汉字「一」是转换的通病(TQ一16、DJS一131)。不改,
+    # 型号认不出来,更要紧的是跟总表里的 DJS-131 对不上,判重拦不住。
+    text, dashes = BOOK.fix_model_dash(text)
+    if dashes:
+        print("型号里的「一」改回连字符 %d 处(TQ一16 → TQ-16)" % dashes)
+
     fixes = BOOK.load_fixes(args.fixes)
     if fixes:
         text, ledger = BOOK.apply_fixes(text, fixes)

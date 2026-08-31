@@ -117,7 +117,8 @@ STREET = ("(?:" + NOT_STREET + r"路|大街|街|大道|弄|巷|胡同|里|村|�
 ADDR_RE = re.compile(r"(" + ADDR_CH + r"{1,12}?" + STREET
                      + r"(?:" + ADDR_CH + r"{0,8}?[甲乙丙丁]?[0-9]{1,4}[号弄])?)")
 # 区名单独记一栏 —— 地址照原表体例不带区,但 src/geocode.js 的落点表要用
-DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
+# 「子」也排除:「位子」是「位于」的形近误认,不排就切出「子西城」「子海淀」
+DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位子厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
                          r"(?![^,,。;;]{0,4}(?:政府|工业局|人民政府))")
 
 # 产品:一律从「试制/研制/生产」之后取,免得把动词连着抓进名字
@@ -376,6 +377,13 @@ def find_products(sents):
             tail = re.split(r"[，,。；;：:（(]", s[m.end():])[0]
             for piece in tail.split("、"):
                 p = PROD_LEAD.sub("", piece.strip()).strip("的等")
+                # 定语连着机器名一起录了进来:「运载火箭**的**箭载计算机」
+                # 「并投产**的**JS系列工业控制机」「运算速度达100万次**的**大型
+                # 计算机」。「的」后头那一截自己站得住,就只要那一截。
+                if "的" in p:
+                    tail2 = p.rsplit("的", 1)[1].strip()
+                    if 3 <= len(tail2) and PROD_RE.match(tail2):
+                        p = tail2
                 if 3 <= len(p) <= 24 and PROD_RE.match(p) and p not in out:
                     out.append(p)
     return out

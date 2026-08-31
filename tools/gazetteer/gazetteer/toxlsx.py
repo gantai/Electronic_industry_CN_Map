@@ -145,6 +145,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             for key, label in STAT_LABELS:
                 if label in h and r.get(key) not in (None, ""):
                     ws.cell(row=row, column=h[label], value=_num(r[key]))
+            # 区名一直是抽出来了却没写下 —— 于是一市之内所有的点都落在市中心,
+            # 叠成一坨。有了区,至少能落到区一级(见 src/xlsxio.js 的 district 兜底)
+            if r.get("district") not in (None, ""):
+                _ensure_column(ws, "区", header_row=1)
+                h = _headers(ws, 2)
+                ws.cell(row=row, column=h["区"]).value = str(r["district"]).strip()
             # 数字是哪一年的 —— 志书各章截取的年份不一致(上海多是 1990,
             # 北京第四篇是 1995),不记下来,一个数字就等于没说
             if r.get("统计年") not in (None, ""):
@@ -312,6 +318,7 @@ def read_units_full(xlsx_path):
         for key, label in STAT_LABELS:
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
         rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
+        rec["district"] = ws.cell(row=r, column=h["区"]).value if "区" in h else None
         out.append(rec)
     return out
 

@@ -845,6 +845,36 @@ def test_version():
         check(cmd in said, "命令列表里有 %s" % cmd)
 
 
+def test_model_dash():
+    """型号里的连字符被认成汉字「一」—— 一篇 117 处,不改就跟总表对不上。"""
+    print("型号里的「一」")
+    got, n = bookmd.fix_model_dash("TQ一16中型通用计算机,DJS一131,X一2型,JDK一331型")
+    eq(n, 4, "四处都改了")
+    eq(got, "TQ-16中型通用计算机,DJS-131,X-2型,JDK-331型", "改成连字符")
+    # 中文里的「一」照旧
+    for keep in ("第一台103型电子管数字计算机", "一九六五年", "全国第一家", "一五时期"):
+        eq(bookmd.fix_model_dash(keep)[1], 0, "「%s」里的「一」不动" % keep)
+    eq(bookmd.fix_model_dash("上海一厂")[1], 0, "汉字之间的「一」不动")
+
+
+def test_product_attributive():
+    """机器名前头的定语,不该连着录进来。"""
+    print("机器名里的定语")
+    # find_products 收的是**句子的列表**,不是一整串 —— 传字符串它会按字拆开,
+    # 结果永远是空的,断言便句句落空
+    P = lambda *sents: EX.find_products(list(sents))
+    got = P("华东计算技术研究所从1969年开始研制运载火箭的箭载计算机，"
+            "于1972年研制出KS-1箭载计算机。")
+    check("箭载计算机" in got, "「运载火箭的箭载计算机」→ 箭载计算机(得 %r)" % got)
+    check(not any("的" in x for x in got), "剥干净了,没留下带「的」的")
+
+    got = P("1975年，该厂研制并投产的JS系列工业控制机。")
+    check(got and not any("的" in x for x in got), "「并投产的」剥掉(得 %r)" % got)
+    got = P("1980年，研制成功运算速度达100万次的大型计算机。")
+    check(got and not any("的" in x for x in got),
+          "「运算速度达100万次的」剥掉(得 %r)" % got)
+
+
 def test_review_name_sheet():
     """待核那张沿革表:表头要说得死,表头行末那句注不许当成一列数据读回来。"""
     print("待核沿革表的表头")
@@ -1219,7 +1249,8 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
+               test_drafts_default, test_version, test_model_dash, test_product_attributive,
+               test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
     print()
