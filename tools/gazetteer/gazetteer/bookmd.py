@@ -382,7 +382,7 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     # ---- 待核:核对用的那一张,原文摆在最后一列
     rv = wb.create_sheet("待核")
     rv_head = (["取否", "单位", "别名", "置信", "出处", "据以立论的原文", "行业", "产品",
-                "始建", "终止", "创办", "地址"] + stat_labels
+                "始建", "终止", "创办", "地址", "区"] + stat_labels
                + ["统计年", "备注", "来路", "页"])
     rv.append(rv_head)
     for c in range(1, len(rv_head) + 1):
@@ -392,12 +392,12 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
                    r.get("confidence", ""), r.get("Source", ""),
                    r.get("evidence", ""), r.get("Industry", ""), r.get("Product", ""),
                    num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
-                   r.get("Add.", "")]
+                   r.get("Add.", ""), r.get("district", "")]
                   + [num(r.get(k)) for k in stat_keys]
                   + [r.get("统计年", ""), r.get("Remark", ""),
                      r.get("role", ""), r.get("page", "")])
     rv.freeze_panes = "D2"
-    for i, wid in enumerate([6, 28, 24, 6, 30, 90, 10, 22, 11, 11, 30, 20] + [9] * 8 + [8]
+    for i, wid in enumerate([6, 28, 24, 6, 30, 90, 10, 22, 11, 11, 30, 20, 7] + [9] * 8 + [8]
                             + [30, 6, 6], start=1):
         rv.column_dimensions[get_column_letter(i)].width = wid
     for row in rv.iter_rows(min_row=2, min_col=6, max_col=6):
@@ -455,7 +455,8 @@ REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页"
                "别名": "别名",
                "单位": "Unit", "行业": "Industry", "产品": "Product",
                "始建": "Start Date", "终止": "End Date", "创办": "Founder",
-               "地址": "Add.", "备注": "Remark", "出处": "Source", "统计年": "统计年",
+               "地址": "Add.", "区": "district",
+               "备注": "Remark", "出处": "Source", "统计年": "统计年",
                "据以立论的原文": "evidence"}
 REVIEW_COLS.update({label: key for key, label in STAT_COLS})
 
