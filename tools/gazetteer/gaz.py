@@ -96,6 +96,27 @@ COMP_COLS = ["keep", "confidence", "page", "Product", "字长", "内存", "Speed
 NAME_COLS = ["keep", "confidence", "page", "Unit", "Name", "From", "Remark", "Source", "evidence"]
 
 
+def run_out(*cmd, **kw):
+    """跑一条外部命令,拿它的输出;跑不起来、或返回非零,就是 None。
+
+    **编码写死 UTF-8,不许跟着本机的。** subprocess 的 text=True 是按本地编码
+    解的 —— 简体中文 Windows 上那是 GBK,而 git 吐出来的提交说明是 UTF-8。
+    里头但凡有一个 GBK 认不得的字节(破折号、间隔号、⊂ 都够),读输出的那个
+    线程当场就炸,stdout 成了 None,底下再 .strip() 就是一句莫名其妙的
+    AttributeError。errors="replace" 是第二道保险:认不得的字换成 �,
+    不让一个字符拦住整条命令。
+    """
+    import subprocess
+    try:
+        out = subprocess.run(cmd, capture_output=True, timeout=15,
+                             encoding="utf-8", errors="replace", **kw)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or out.stdout is None:
+        return None
+    return out.stdout.strip()
+
+
 def workdir(args, slug=None):
     slug = slug or args.slug
     if not slug:
@@ -127,14 +148,7 @@ def cmd_check(args):
 
     # 底下这两样不归 pip 管,却是真绊过人的:没设 user.name 提交会被拒,
     # 没装 Node 看不了本地那张图
-    import subprocess
-
-    def run(*cmd):
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            return out.stdout.strip() if out.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            return None
+    run = run_out
 
     print("\n仓库这一头:\n")
     if run("git", "--version") is None:
@@ -230,15 +244,9 @@ def cmd_notes(args):
 
 def cmd_version(args):
     """手里这一份工具是什么时候的 —— 拿旧版跑,少的那道关卡不会吭声。"""
-    import subprocess
 
     def git(*a):
-        try:
-            out = subprocess.run(("git", "-C", REPO) + a,
-                                 capture_output=True, text=True, timeout=15)
-            return out.stdout.strip() if out.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            return None
+        return run_out("git", "-C", REPO, *a)
 
     head = git("log", "-1", "--format=%h  %cd  %s", "--date=format:%Y-%m-%d %H:%M")
     if not head:

@@ -866,6 +866,30 @@ def test_version():
         check(cmd in said, "命令列表里有 %s" % cmd)
 
 
+def test_run_out_encoding():
+    """外部命令的输出按 UTF-8 解,不跟本机的编码走。
+
+    简体中文 Windows 的本地编码是 GBK。subprocess 的 text=True 按本地编码解,
+    而 git 吐出来的提交说明是 UTF-8 —— 里头一个 GBK 认不得的字节,读输出那个
+    线程就当场炸掉,stdout 变成 None,底下 .strip() 报一句莫名其妙的
+    AttributeError。真绊过人:gaz version 在中文提交说明上整个跑不动。"""
+    print("外部命令的输出怎么解")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gaz_mod", os.path.join(HERE, "..", "gaz.py"))
+    gaz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gaz)
+
+    # 「」『』—— 这几个字的 UTF-8 字节 GBK 解不开,正是绊住的那一类
+    zh = "判重加一道「抽字缩的简称」"
+    got = gaz.run_out(sys.executable, "-c",
+                      "import sys;sys.stdout.buffer.write(%r)" % zh.encode("utf-8"))
+    eq(got, zh, "中文输出原样拿得回来")
+    eq(gaz.run_out(sys.executable, "-c", "raise SystemExit(3)"), None,
+       "命令返回非零,报 None,不是半截输出")
+    eq(gaz.run_out("这个命令根本不存在-xyz"), None, "命令不存在,报 None,不抛异常")
+
+
 def test_model_dash():
     """型号里的连字符被认成汉字「一」—— 一篇 117 处,不改就跟总表对不上。"""
     print("型号里的「一」")
@@ -1335,7 +1359,8 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_dups_near_names,
+               test_drafts_default, test_version, test_run_out_encoding,
+               test_dups_near_names,
                test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
