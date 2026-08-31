@@ -860,13 +860,19 @@ def test_model_dash():
 def test_product_attributive():
     """机器名前头的定语,不该连着录进来。"""
     print("机器名里的定语")
-    P = EX.find_products
-    check("箭载计算机" in P("华东计算技术研究所从1969年开始研制运载火箭的箭载计算机，"
-                        "于1972年研制出KS-1箭载计算机。"),
-          "「运载火箭的箭载计算机」→ 箭载计算机")
-    check(not any("的" in x for x in P("并投产的JS系列工业控制机。")), "「并投产的」剥掉")
-    check(not any("的" in x for x in P("研制运算速度达100万次的大型计算机。")),
-          "「运算速度达100万次的」剥掉")
+    # find_products 收的是**句子的列表**,不是一整串 —— 传字符串它会按字拆开,
+    # 结果永远是空的,断言便句句落空
+    P = lambda *sents: EX.find_products(list(sents))
+    got = P("华东计算技术研究所从1969年开始研制运载火箭的箭载计算机，"
+            "于1972年研制出KS-1箭载计算机。")
+    check("箭载计算机" in got, "「运载火箭的箭载计算机」→ 箭载计算机(得 %r)" % got)
+    check(not any("的" in x for x in got), "剥干净了,没留下带「的」的")
+
+    got = P("1975年，该厂研制并投产的JS系列工业控制机。")
+    check(got and not any("的" in x for x in got), "「并投产的」剥掉(得 %r)" % got)
+    got = P("1980年，研制成功运算速度达100万次的大型计算机。")
+    check(got and not any("的" in x for x in got),
+          "「运算速度达100万次的」剥掉(得 %r)" % got)
 
 
 def test_review_name_sheet():
