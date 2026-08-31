@@ -59,6 +59,10 @@ export const CITY_ZH = {
   Beijing: "北京", beijing: "北京", 北京: "北京",
   Tianjin: "天津", tianjin: "天津", 天津: "天津",
   Nanjing: "南京", nanjing: "南京", 南京: "南京",
+  Tangshan: "唐山", 唐山: "唐山",
+  Harbin: "哈尔滨", 哈尔滨: "哈尔滨",
+  Lanzhou: "兰州", 兰州: "兰州",
+  Changsha: "长沙", 长沙: "长沙",
 };
 
 /* ---------- 界面文字 ---------- */

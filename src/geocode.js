@@ -24,12 +24,22 @@ export const CITY_FALLBACK = {
   Beijing: { lat: 39.9042, lng: 116.4074, label: "北京" },     // 天安门
   Tianjin: { lat: 39.1088, lng: 117.2008, label: "天津" },
   Nanjing: { lat: 32.0603, lng: 118.7969, label: "南京" },
+  /* 志书里点到的外地协作单位 —— 兰州炼油厂、唐山陡河发电总厂之流。
+     没有这几条,它们会掉进 DEFAULT_FALLBACK,给扔到上海人民广场去。 */
+  Tangshan: { lat: 39.6304, lng: 118.1804, label: "唐山" },
+  Harbin: { lat: 45.8038, lng: 126.5350, label: "哈尔滨" },
+  Lanzhou: { lat: 36.0611, lng: 103.8343, label: "兰州" },
+  Changsha: { lat: 28.2282, lng: 112.9388, label: "长沙" },
 };
 /* 中文写法一并挂上,表里写「北京」或「Beijing」都认 */
 CITY_FALLBACK["上海"] = CITY_FALLBACK.Shanghai;
 CITY_FALLBACK["北京"] = CITY_FALLBACK.Beijing;
 CITY_FALLBACK["天津"] = CITY_FALLBACK.Tianjin;
 CITY_FALLBACK["南京"] = CITY_FALLBACK.Nanjing;
+CITY_FALLBACK["唐山"] = CITY_FALLBACK.Tangshan;
+CITY_FALLBACK["哈尔滨"] = CITY_FALLBACK.Harbin;
+CITY_FALLBACK["兰州"] = CITY_FALLBACK.Lanzhou;
+CITY_FALLBACK["长沙"] = CITY_FALLBACK.Changsha;
 
 export const DEFAULT_FALLBACK = CITY_FALLBACK.Shanghai;
 

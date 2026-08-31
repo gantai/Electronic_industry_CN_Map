@@ -787,6 +787,25 @@ def make_source(book, page, head=""):
     return book or ""
 
 
+# 志书按城市成书,凡书里点到的单位都随手记作本市 —— 可外地的协作单位不是本市的。
+# 名字冠了别的市名就照名字算。只认这张表里的市:图上没有落点的市认出来也没用,
+# 反而会掉进上海的兜底里(见 src/geocode.js 的 cityAt)。要添市,两处一起添。
+OTHER_CITY = OrderedDict([
+    ("哈尔滨", "Harbin"),                          # 长的排前头,免得被短的截和
+    ("北京", "Beijing"), ("上海", "Shanghai"), ("天津", "Tianjin"),
+    ("南京", "Nanjing"), ("唐山", "Tangshan"), ("兰州", "Lanzhou"),
+    ("长沙", "Changsha"),
+])
+
+
+def city_of(name, book_city):
+    """单位名冠了别的市名就归那个市,否则跟着志书走。"""
+    for zh, en in OTHER_CITY.items():
+        if str(name or "").startswith(zh):
+            return en
+    return book_city
+
+
 def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             min_mentions=2, auto_keep=None):
     blocks = read_blocks(md_text)
@@ -926,7 +945,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["Start Date"] = start
         row["End Date"] = end
         row["Founder"] = founder
-        row["City"] = city
+        row["City"] = city_of(nm, city)
         row["Add."] = addr
         row["district"] = find_district([addr_ev] if addr_ev else sents)
         for key, _ in STAT_PATTERNS:

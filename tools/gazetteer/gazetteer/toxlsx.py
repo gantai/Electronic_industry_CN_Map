@@ -607,13 +607,18 @@ def report_dups(xlsx_path):
     ws = wb[SHEET_UNITS]
     h = _headers(ws, 2)
     seen = {}
+    primary, alias_rows, seen_name = [], [], {}
     for r in range(3, ws.max_row + 1):
         nm = ws.cell(row=r, column=1).value
         if not nm:
             continue
         alias = ws.cell(row=r, column=h["别名"]).value if "别名" in h else ""
+        primary.append((r, _bare(nm)))
+        seen_name[r] = str(nm)
         for one in _names_of(nm, alias):
             seen.setdefault(one, []).append((r, str(nm)))
+            if one != _bare(nm):
+                alias_rows.append((r, one))
     for one, rows in seen.items():
         if len(rows) > 1:
             who = sorted({x[1] for x in rows})
@@ -641,6 +646,21 @@ def report_dups(xlsx_path):
                 continue
             out["similar"].append(("厂所", "%s ⊂ %s" % (a, b), sorted(ra | rb),
                                    "%s ｜ %s —— 名字差一截,是不是同一家?" % (wa, wb_)))
+
+    # 简称与全称各占一行 ——「上无十三」是「上海无线电十三厂」抽字缩的,
+    # 既不同名,也不是掐头去尾差一截,上面两道都拦不住。抽字缩的照抽字查:
+    # 简称的字若按原序都落在另一家的正名里,且头一个字对得上,就提出来问一句。
+    for r, one in alias_rows:
+        if len(one) < 4:
+            continue
+        for r2, full in primary:
+            if r2 == r or len(full) <= len(one) or full[0] != one[0]:
+                continue
+            it = iter(full)
+            if all(ch in it for ch in one):
+                out["similar"].append(
+                    ("厂所", "%s ⊂ %s" % (one, full), sorted({r, r2}),
+                     "%s ｜ %s —— 简称抽字对得上,是不是同一家?" % (seen_name[r], full)))
 
     for sheet, key_cols, label in (
             (SHEET_COMP, ("Product", "Time"), "Product"),

@@ -24,6 +24,12 @@ from gazetteer import (bookmd, cndate, extract as EX, notes,  # noqa: E402
 
 FAILED = []
 
+# geocode.js 里 CITY_FALLBACK 收了哪几个市 —— extract.OTHER_CITY 不能比它多,
+# 多出来的市在图上没有落点,认出来反而会掉进上海的兜底里
+GEOCODE_CITIES = set(re.findall(
+    r"^  ([A-Z][a-zA-Z]+): \{ lat:",
+    open(os.path.join(REPO, "src", "geocode.js"), encoding="utf-8").read(), re.M))
+
 
 def check(cond, what):
     print(("  ✓ " if cond else "  ✗ ") + what)
@@ -287,7 +293,10 @@ def test_vault():
 
         # 改三样:普通字段、宽写的日期、自填坐标;再改一行沿革的出处
         s0 = _read(note)
-        s0 = s0.replace('城市: ""', "城市: Shanghai")
+        # 城市这一格从前空着,如今表里填好了 —— 改动要作数就得换个值,
+        # 别再赌工作簿里哪一格是空的
+        newcity = "Nanjing"          # 只要与表里那格不同即可
+        s0 = re.sub(r"(?m)^城市: .*$", "城市: " + newcity, s0)
         s0 = s0.replace("始建: 19501100", "始建: 1950年11月")
         s0 = s0.replace('纬度: ""', "纬度: 31.2701").replace('经度: ""', "经度: 121.3481")
         s0 = s0.replace("| 上海仪表铜厂 | 19610000 |  |  | 据 Founder 列推定,待核 |",
@@ -325,7 +334,7 @@ def test_vault():
         eq(rep["skipped"], [], "刚 pull 过,不该跳过")
         check("我的札记在此。" in _read(note), "自己写的札记,push 不动它")
         fm = vault.parse_fm(vault.split_note(_read(note))[0])
-        eq(fm["城市"], "Shanghai", "改动已在工作簿里,推回来还是它")
+        eq(fm["城市"], newcity, "改动已在工作簿里,推回来还是它")
 
         # 真有未推的改动时,push 要拦住
         other = os.path.join(vdir, "上海元件五厂.md")
@@ -830,8 +839,12 @@ def test_accepted():
         fresh = [t for t in toxlsx.verify(x) if (t[0], t[3]) not in seen]
         eq(fresh, [], "插一行,底下行号全挪,认过的还是认过的")
 
-        # 改好一条,--accept 重写时它自己掉出去
-        ws.cell(row=4, column=h["Source"]).value = "试·补的出处"
+        # 改好一条,--accept 重写时它自己掉出去。
+        # 挑一条眼下真报着「没出处」的来补 —— 哪一家缺出处会随补录而变,不认死行号
+        blank = next(r for r in range(3, ws.max_row + 1)
+                     if ws.cell(row=r, column=1).value
+                     and not ws.cell(row=r, column=h["Source"]).value)
+        ws.cell(row=blank, column=h["Source"]).value = "试·补的出处"
         wb.save(x)
         _p, n2 = toxlsx.save_accepted(x, toxlsx.verify(x))
         check(n2 < n, "改好的那条不再记进《已核》,名单不会越积越长")
@@ -1121,6 +1134,46 @@ def test_dups_near_names():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_dups_abbrev():
+    """抽字缩的简称与全称各占一行:「上无十三」即「上海无线电十三厂」。
+       既不同名,也不是掐头去尾差一截 —— 上面两道都拦不住,得照抽字查。"""
+    print("简称与全称的重复")
+    tmp = tempfile.mkdtemp(prefix="gaz-abbr-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = wb[toxlsx.SHEET_UNITS]
+        h = toxlsx._headers(ws, 2)
+        r = ws.max_row + 1
+        ws.cell(row=r, column=1).value = "辽阳电子仪器公司"
+        ws.cell(row=r, column=h["别名"]).value = "辽无二厂、辽阳仪器"
+        ws.cell(row=r + 1, column=1).value = "辽阳无线电二厂"
+        ws.cell(row=r + 2, column=1).value = "抚顺辽阳仪器修配所"
+        wb.save(x)
+        pairs = [k for _s, k, _rows, _w in toxlsx.report_dups(x)["similar"] if " ⊂ " in k]
+        check("辽无二厂 ⊂ 辽阳无线电二厂" in pairs,
+              "抽字缩的简称,对得上全称就报出来")
+        check("辽阳仪器 ⊂ 抚顺辽阳仪器修配所" not in pairs,
+              "头一个字对不上的不报,不然满纸都是似是而非的对子")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_city_of():
+    """志书按城市成书,书里点到的外地协作单位却不属本市 —— 名字冠了别的市名就照名字算。"""
+    print("外地协作单位的城市")
+    eq(EX.city_of("北京市半导体器件六厂", "Beijing"), "Beijing", "本市的照旧")
+    eq(EX.city_of("唐山陡河发电总厂", "Beijing"), "Tangshan", "唐山的厂不算北京的")
+    eq(EX.city_of("哈尔滨军事工程学院", "Beijing"), "Harbin", "长市名先比,不叫「哈」字截和")
+    eq(EX.city_of("上海无线电七厂", "Beijing"), "Shanghai", "北京志里点到的上海厂归上海")
+    eq(EX.city_of("华东计算技术研究所", "Shanghai"), "Shanghai", "名字不冠市名的,跟着志书走")
+    for _zh, en in EX.OTHER_CITY.items():
+        check(en in GEOCODE_CITIES,
+              "%s 在 geocode.js 里有落点(没有就会掉进上海的兜底)" % en)
+
+
 def test_verify():
     """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
     print("手改之后验一验")
@@ -1283,6 +1336,7 @@ def main():
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
                test_drafts_default, test_version, test_dups_near_names,
+               test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
