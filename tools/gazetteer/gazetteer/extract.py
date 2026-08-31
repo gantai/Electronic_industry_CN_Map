@@ -376,6 +376,13 @@ def find_products(sents):
             tail = re.split(r"[，,。；;：:（(]", s[m.end():])[0]
             for piece in tail.split("、"):
                 p = PROD_LEAD.sub("", piece.strip()).strip("的等")
+                # 定语连着机器名一起录了进来:「运载火箭**的**箭载计算机」
+                # 「并投产**的**JS系列工业控制机」「运算速度达100万次**的**大型
+                # 计算机」。「的」后头那一截自己站得住,就只要那一截。
+                if "的" in p:
+                    tail2 = p.rsplit("的", 1)[1].strip()
+                    if 3 <= len(tail2) and PROD_RE.match(tail2):
+                        p = tail2
                 if 3 <= len(p) <= 24 and PROD_RE.match(p) and p not in out:
                     out.append(p)
     return out

@@ -50,6 +50,18 @@ _CJK = "\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef"
 CJK_GAP = re.compile("(?<=[%s]) +(?=[%s])" % (_CJK, _CJK))
 
 
+# 型号里的连字符被认成了汉字「一」:TQ一16、DJS一131、X一2型、JDK一331。
+# 《上海电子仪表工业志》第一章一篇就 117 处。夹在拉丁字母与数字之间的「一」,
+# 中文里没有这种写法,一律是连字符认岔了 —— 不改,型号认不出来,更要紧的是
+# 跟总表里的 DJS-131 对不上,判重拦不住,同一台机器要收两遍。
+DASH_ONE = re.compile(r"(?<=[A-Za-z])[一―−](?=[0-9])")
+
+
+def fix_model_dash(text):
+    """把型号里认成「一」的连字符改回来。返回 (改过的文本, 改了几处)。"""
+    return DASH_ONE.subn("-", text)
+
+
 def squeeze_cjk_spaces(text):
     """去掉汉字中间的空格。
 
