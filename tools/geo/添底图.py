@@ -102,6 +102,19 @@ def _texts(props):
     return out
 
 
+def _en_key(props, table):
+    """这个 feature 的英文名在不在对照表里 —— 在,就返回对应的中文。"""
+    for t in sorted(_texts(props), key=len):
+        bare = EN_GENERIC.sub("", t).strip()
+        if bare in table:
+            return table[bare]
+    return ""
+
+
+# 「62558664B8491700699883」这样的一串是 shapeID,不是名字
+ID_LIKE = re.compile(r"^[0-9A-F]{8,}$", re.I)
+
+
 def _pick_name(props, city_words, city=""):
     """挑一个当区名:有中文用中文;只有英文的,按对照表翻成中文。"""
     cands = _texts(props)
@@ -118,7 +131,8 @@ def _pick_name(props, city_words, city=""):
             return table[bare]
     for t in sorted(cands, key=len):
         bare = EN_GENERIC.sub("", t).strip()
-        if bare and not bare.isdigit() and bare not in ("CHN", "ADM3", "ADM2"):
+        if (bare and not bare.isdigit() and not ID_LIKE.match(bare)
+                and bare not in ("CHN", "ADM3", "ADM2", "ADM1")):
             return bare          # 表里没有的,原样留着英文,免得默默丢掉
     return ""
 
@@ -156,7 +170,16 @@ def find_city(doc, city, box=None):
     box = box or CITY_BOX.get(city)
     if not box:
         return [], words, "名字"
-    return [ft for ft in feats if _in_box(ft.get("geometry") or {}, box)], words, "地理"
+    # 方框只能圈出个大概:北京四面都是河北,框里必然混进宝坻、三河、涿州、
+    # 怀来这些邻县。所以框子之外还要过一道名册 —— 对照表里有名有姓的才算。
+    table = EN_TO_ZH.get(city, {})
+    inbox = [ft for ft in feats if _in_box(ft.get("geometry") or {}, box)]
+    if not table:
+        return inbox, words, "地理"
+    keep, drop = [], []
+    for ft in inbox:
+        (keep if _en_key(ft.get("properties"), table) else drop).append(ft)
+    return keep, words, ("地理", drop)
 
 
 def main(argv=None):
@@ -173,11 +196,21 @@ def main(argv=None):
         sys.exit("找不到文件:%s" % args.src)
     doc = load_city(args.src)
     feats, words, how = find_city(doc, args.city)
+    dropped = []
+    if isinstance(how, tuple):
+        how, dropped = how
     print("%s 里共 %d 个 feature,按%s认出属于「%s」的 %d 个。"
           % (os.path.basename(args.src), len(doc.get("features", [])),
              how, args.city, len(feats)))
     if how == "地理":
-        print("   (属性里没有市名,只好按图形落点认 —— 名字由英文对照表翻成中文)")
+        print("   (属性里没有市名,只好按图形落点认;再拿英文对照表过一道,"
+              "把邻县剔出去)")
+    if dropped:
+        names = sorted(filter(None,
+                              (_pick_name(f.get("properties"), words) for f in dropped)))
+        print("   落在方框里、但不在「%s」名册上的 %d 个,没收:%s"
+              % (args.city, len(dropped), "、".join(names[:14])))
+        print("   (北京四面是河北,方框必然圈进邻县。真有该收而漏掉的,告诉我补进对照表)")
     if not feats:
         print("\n一个也没认出来。看一眼属性长什么样,再告诉我该按哪个字段找:")
         for ft in doc.get("features", [])[:3]:
