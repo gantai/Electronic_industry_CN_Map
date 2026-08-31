@@ -620,6 +620,28 @@ def report_dups(xlsx_path):
             kind = "exact" if len(who) == 1 else "similar"
             out[kind].append(("厂所", one, [x[0] for x in rows], "、".join(who)))
 
+    # 名字差一截的两家 ——「北大方正集团公司」与「北京北大方正集团公司」、
+    # 「联想计算机集团公司」与「北京联想计算机集团公司」。判重只比名字是否相同,
+    # 这种一个是另一个的一截,两边都过关,于是同一家在名录里坐了两行。
+    # 多出来的这一截若是「分厂」「分公司」一类,那本就是另一家,不算重复
+    BRANCH = re.compile(r"(分厂|分公司|分所|附属工厂|实习厂|车间|工场)$")
+    short = sorted({(one, who) for one, rows in seen.items() for _r, who in rows},
+                   key=lambda x: len(x[0]))
+    for i, (a, wa) in enumerate(short):
+        if len(a) < 5:
+            continue
+        for b, wb_ in short[i + 1:]:
+            if a == b or not (b.endswith(a) or b.startswith(a)):
+                continue
+            if len(b) - len(a) > 4 or BRANCH.search(b):
+                continue
+            ra = {x[0] for x in seen.get(a, [])}
+            rb = {x[0] for x in seen.get(b, [])}
+            if ra == rb:          # 同一行的正名与别名,不是两家
+                continue
+            out["similar"].append(("厂所", "%s ⊂ %s" % (a, b), sorted(ra | rb),
+                                   "%s ｜ %s —— 名字差一截,是不是同一家?" % (wa, wb_)))
+
     for sheet, key_cols, label in (
             (SHEET_COMP, ("Product", "Time"), "Product"),
             (SHEET_SEMI, ("Product", "Factory", "Time"), "Product"),

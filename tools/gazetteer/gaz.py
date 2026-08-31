@@ -360,7 +360,11 @@ def cmd_dups(args):
     if rep["similar"]:
         print("\n像是一回事的 %d 处 —— 得你自己看:" % len(rep["similar"]))
         for sheet, key, rows, who in rep["similar"]:
-            print("   %-22s %-10s 行 %-14s %s" % (sheet, key[:10], str(rows), who[:44]))
+            # 厂所那一类的钥匙就是两个厂名,截到 10 个字什么也看不出
+            wide = sheet == "厂所"
+            print("   %-14s %-*s 行 %-12s %s"
+                  % (sheet, 34 if wide else 10, key[:34 if wide else 10],
+                     str(rows), who[:46]))
         print("\n   (「DJS-130」与「DJS-130B」型号内核一样,却是两台机器 —— 别一律并掉)")
     if not rep["exact"] and not rep["similar"]:
         print("没找到重复。")

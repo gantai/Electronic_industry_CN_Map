@@ -264,18 +264,26 @@ def test_vault():
         eq(len(got["changes"]), 0, "刚推出来,没有该改的")
         # 沿革表里没有、而 Founder 链里有的,collect 会把它补出来 —— 那是它的本分。
         # 要紧的是一条也不能少。
-        nh_now = {(r["Unit"], r["Name"], str(r["From"])) for r in toxlsx.read_name_history(xlsx)}
+        # 比「名称+启用年」,不比 Unit 那一格的写法:笔记按名录里的正名立,
+        # 推回来时 Unit 会归到正名(「上海电子计算机厂」→「上海电子计算机厂（上无十三）」),
+        # 那是归一,不是丢失
+        nh_now = {(r["Name"], str(r["From"])) for r in toxlsx.read_name_history(xlsx)}
         if got["name_history"] is not None:
-            back = {(r["Unit"], r["Name"], str(r["From"])) for r in got["name_history"]}
-            check(nh_now <= back, "推出来的沿革不该丢掉原表已有的行")
+            back = {(r["Name"], str(r["From"])) for r in got["name_history"]}
+            miss = sorted(nh_now - back)
+            check(not miss, "推出来的沿革不该丢掉原表已有的行(丢了 %r)" % miss[:3])
 
         # 产品表混进名称沿革 —— 曾经真出过这个岔子
         big = os.path.join(vdir, "上海电子计算机厂.md")
         managed, _ = vault.split_managed(vault.split_note(_read(big))[1])
         check("整机" in managed, "整机表在 managed 段里")
         segs = vault.parse_nh_table(managed)
-        check(all("计算机" not in s["Name"] for s in segs),
-              "只读的产品表没被当成名称沿革(DJS-130 不是厂名)")
+        # 从前拿「名字里有没有『计算机』」当判据,可「上海电子计算机厂」本就带着
+        # 这三个字 —— 该问的是:有没有哪一段名称其实是产品表里的型号
+        models = {toxlsx._bare(r["Product"]) for r in toxlsx.read_comp(xlsx)
+                  if r.get("Product")}
+        hit = [x["Name"] for x in segs if toxlsx._bare(x["Name"]) in models]
+        check(not hit, "只读的产品表没被当成名称沿革(混进来的:%r)" % hit[:3])
 
         # 改三样:普通字段、宽写的日期、自填坐标;再改一行沿革的出处
         s0 = _read(note)
@@ -1088,6 +1096,31 @@ def test_tidy_names():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_dups_near_names():
+    """名字差一截的两家:「北大方正集团公司」与「北京北大方正集团公司」。
+       判重只比名字相不相同,这种一个是另一个的一截,两边都过关。"""
+    print("名字差一截的重复")
+    tmp = tempfile.mkdtemp(prefix="gaz-near-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = wb[toxlsx.SHEET_UNITS]
+        r = ws.max_row + 1
+        for nm in ("辽阳无线电器材厂", "辽阳无线电器材厂平谷分厂", "沈阳辽阳无线电器材厂"):
+            ws.cell(row=r, column=1).value = nm
+            r += 1
+        wb.save(x)
+        pairs = [k for _s, k, _rows, _w in toxlsx.report_dups(x)["similar"] if " ⊂ " in k]
+        check(any("辽阳无线电器材厂 ⊂ 沈阳辽阳无线电器材厂" == k for k in pairs),
+              "差一个前缀的,报出来")
+        check(not any("平谷分厂" in k for k in pairs),
+              "分厂本就是另一家,不报(得 %r)" % [k for k in pairs if "辽阳" in k])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_verify():
     """手改之后的验一验:只报,一个格子也不动 —— 也不能漏报。"""
     print("手改之后验一验")
@@ -1249,7 +1282,8 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_model_dash, test_product_attributive,
+               test_drafts_default, test_version, test_dups_near_names,
+               test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_later_rename):
         fn()
