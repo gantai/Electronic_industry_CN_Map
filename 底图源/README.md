@@ -12,7 +12,9 @@ geoBoundaries 的 **CHN ADM3(simplified)** —— `src/city.geo.json` 里现有�
 
     https://www.geoboundaries.org/  →  China → ADM3 → simplified
 
-下载到的若是 zip,解开取里头的 `.geojson`,原样丢进这个目录即可。
+下载到的是一个 zip,里头除了 `.geojson`,还有 shapefile(`.shp/.dbf/.shx/.prj`)、
+topojson、预览图 —— **整包几十上百 MB,一样也别提交**。解开,只取
+`geoBoundaries-CHN-ADM3_simplified.geojson` 那一个,丢进这个目录。
 
 > [!important] 先切一刀再提交
 > 全国 ADM3 有两千多个区县,几十 MB。**git 会把它永远留在历史里** ——
@@ -27,11 +29,11 @@ geoBoundaries 的 **CHN ADM3(simplified)** —— `src/city.geo.json` 里现有�
 > 再提交。留下的那份小的既是原料,也是出处的凭据。
 
 > [!bug] 大文件是**故意**挡在 git 之外的,不是出错
-> `.gitignore` 里列着这几种名字:
+> `.gitignore` 里列着这几种名字,**不限目录** —— 下载落在仓库哪一层都挡得住:
 > ```
-> 底图源/geoBoundaries-*
-> 底图源/*_simplified.geojson
-> 底图源/*_ADM*.geojson
+> geoBoundaries-*/
+> geoBoundaries-*.zip
+> **/geoBoundaries-CHN-ADM*
 > ```
 > 所以原样下载的那一份 `git status` 里根本看不见,提交也带不上 —— 这是拦着
 > 它进历史。切出一市之后那份 `北京-区界.geojson` 不在此列,照常提交。

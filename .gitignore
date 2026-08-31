@@ -7,8 +7,15 @@ gaz-work/
 __pycache__/
 *.pyc
 
-# 全国 ADM3 几十 MB,git 会把它永远留在历史里 —— 先用
-# tools/geo/添底图.py --save-subset 切成一市,再提交那一份小的
-底图源/geoBoundaries-*
+# geoBoundaries 原样下载的那一包几十上百 MB(还带着 shapefile 与 zip),
+# git 会把它永远留在历史里 —— 删掉也还在。先用
+# tools/geo/添底图.py --save-subset 切成一市,再提交那一份小的。
+# 不限目录:下载落在哪儿都挡得住。
+geoBoundaries-*/
+geoBoundaries-*.zip
+**/geoBoundaries-CHN-ADM*
 底图源/*_simplified.geojson
 底图源/*_ADM*.geojson
+
+# 更新前另存的那一份(见《更新工具》)—— 对完就删,不入库
+我的改动*.xlsx
