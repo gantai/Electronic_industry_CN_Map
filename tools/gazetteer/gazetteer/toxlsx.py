@@ -835,6 +835,17 @@ def verify(xlsx_path, geocode_js=None):
             if why:
                 bad.append(("日期", where, why, "%s·%s" % (key, label)))
 
+        # 沿革链里也写年份,而且是同一个来路 ——「1965年（后改名…」被切开,
+        # 算出来就是 1905。只查 Start/End 两栏,这种年份就一直躺在链子里没人看见
+        if "Founder" in h:
+            chain = str(ws.cell(row=r, column=h["Founder"]).value or "")
+            for y in set(re.findall(r"(?<!\d)(1[89]\d{2})(?=\d{4})", chain)):
+                if int(y) in SLICED_YEAR:
+                    bad.append(("日期", where,
+                                "沿革链里有个 %s 年 —— 电子工业里没有这个年份,"
+                                "多半是「19xx年（后改名…」被切开算出来的,回稿子上核" % y,
+                                "%s·沿革·%s" % (key, y)))
+
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
         if (lat in (None, "")) != (lng in (None, "")):

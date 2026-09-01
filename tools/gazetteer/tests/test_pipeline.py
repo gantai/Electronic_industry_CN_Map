@@ -1359,6 +1359,38 @@ def test_verify_knows_geocode_aliases():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_verify_founder_years():
+    """沿革链里的年份也得查 —— 从前只查 Start/End 两栏。
+
+    「1966年（后改名…」被切开算成 1906,写进哪一栏都是错的。可 verify 只盯
+    始建、终止两栏,写在 Founder 链里的就一直躺着没人看见 —— 现表里躺着两个。"""
+    print("沿革链里的年份")
+    tmp = tempfile.mkdtemp(prefix="gaz-fy-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.units_sheet(wb)
+        h = toxlsx._headers(ws, 2)
+        r = ws.max_row + 1
+        ws.cell(row=r, column=1).value = "辽阳试验电子厂"
+        ws.cell(row=r, column=h["Founder"]).value = "19030000改名辽阳无线电厂"
+        ws.cell(row=r, column=h["Source"]).value = "试·一页"
+        wb.save(x)
+        hit = [w for kind, w, why, _k in toxlsx.verify(x)
+               if kind == "日期" and "1903" in why]
+        check(hit, "链子里那个 1903 报出来了")
+        # 正经年份不报,不然满纸都是
+        ws.cell(row=r, column=h["Founder"]).value = "19630000改名辽阳无线电厂"
+        wb.save(x)
+        hit = [w for kind, w, why, _k in toxlsx.verify(x)
+               if kind == "日期" and "辽阳试验电子厂" in w]
+        eq(hit, [], "1963 是正经年份,不报")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_old_sheet_name():
     """标签改叫「厂所名录」了,手里的旧工作簿还得读得动。
 
@@ -1429,7 +1461,8 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_old_sheet_name, test_later_rename):
+               test_old_sheet_name, test_verify_founder_years,
+               test_later_rename):
         fn()
     print()
     if FAILED:
