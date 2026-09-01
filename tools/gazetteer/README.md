@@ -221,7 +221,7 @@ git add -A && git commit -m "补录上海电子仪表工业志" && git push
 
 | TSV | 工作表 | 抽的是 |
 | --- | --- | --- |
-| `units.tsv` | `Fact and Comp-Shanghai` | 厂名、行业、产品、始建 / 终止、沿革、门牌、1990 年统计块八项 |
+| `units.tsv` | `厂所名录` | 厂名、行业、产品、始建 / 终止、沿革、门牌、1990 年统计块八项 |
 | `semi.tsv` | `Semi-Product` | 器件投产:产品、厂、年份、人员 |
 | `comp.tsv` | `Comp-Product` | 整机研制:字长、内存、运算速度、研制单位、协作厂 |
 | `names.tsv` | `Name-History` | 名称沿革,一行一段,出处是**志书页码**而非「据 Founder 列推定」 |

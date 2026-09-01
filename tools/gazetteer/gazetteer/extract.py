@@ -3,7 +3,7 @@
 
 抽出来的东西对着 CN_Electronic_Industry.xlsx 的四张表:
 
-    units  -> Fact and Comp-Shanghai   厂所名录
+    units  -> 厂所名录（旧名 Fact and Comp-Shanghai，两个都认）
     semi   -> Semi-Product             器件投产
     comp   -> Comp-Product             整机研制
     names  -> Name-History             名称沿革

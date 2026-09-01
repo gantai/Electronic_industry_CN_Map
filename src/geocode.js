@@ -11,7 +11,7 @@
    这些坐标只用于制图定位,不可当作测绘成果引用。若要用实测坐标,
    有两种改法,任选其一:
      1. 直接改本文件 PLACES 里的 lat / lng / precision;
-     2. 在 CN_Electronic_Industry.xlsx 的「Fact and Comp-Shanghai」表
+     2. 在 CN_Electronic_Industry.xlsx 的「厂所名录」表
         末尾新增 Lat / Lng 两列并填入数值 —— 表里的值优先级更高,
         会覆盖这里的推定值(见 xlsxio.js)。
    ============================================================ */

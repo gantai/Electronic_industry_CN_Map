@@ -9,7 +9,7 @@ import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitCha
    CN_Electronic_Industry.xlsx 解析器
    ------------------------------------------------------------
    工作簿即本站唯一数据源,四张表:
-     Fact and Comp-Shanghai  厂所名录(含 1990 年统计块,两行表头)
+     厂所名录                含 1990 年统计块,两行表头(旧名「Fact and Comp-Shanghai」仍认)
      Semi-Product            半导体器件投产记录
      Comp-Product            计算机整机研制记录
      Name-History            名称沿革(可选,有则名称以此表为准)
@@ -19,7 +19,7 @@ import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitCha
    ============================================================ */
 
 const SHEET_HINTS = {
-  units: ["fact and comp-shanghai", "fact", "厂所", "units"],
+  units: ["厂所名录", "fact and comp-shanghai", "fact", "厂所", "units"],
   semi: ["semi-product", "semi", "半导体"],
   comp: ["comp-product", "comp", "整机", "计算机"],
   names: ["name-history", "names", "名称沿革", "名称"],
@@ -516,7 +516,7 @@ export const EMPTY_DATA = {
 export function parseWorkbook(buf) {
   const wb = XLSX.read(buf, { type: "array" });
   const { units, statsYear } = parseUnits(pickSheet(wb, "units"));
-  if (!units.length) throw new Error("未找到「Fact and Comp-Shanghai」厂所名录表");
+  if (!units.length) throw new Error("未找到「厂所名录」表(旧名「Fact and Comp-Shanghai」也认)");
 
   const match = buildMatcher(units);
   const explicitNames = parseNameHistory(pickSheet(wb, "names"), match, units);
@@ -601,7 +601,7 @@ export function exportWorkbook(data, filename) {
   const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Name EN", "Remark", "Source"], ...nameRows]);
   ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 30 }, { wch: 44 }, { wch: 22 }];
 
-  XLSX.utils.book_append_sheet(wb, ws1, "Fact and Comp-Shanghai");
+  XLSX.utils.book_append_sheet(wb, ws1, "厂所名录");
   XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
   XLSX.utils.book_append_sheet(wb, ws3, "Comp-Product");
   XLSX.utils.book_append_sheet(wb, ws4, "Name-History");

@@ -14,7 +14,21 @@ import shutil
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
-SHEET_UNITS = "Fact and Comp-Shanghai"
+# 这一张从前叫「Fact and Comp-Shanghai」—— 那时只收上海。后来北京、天津的厂所
+# 也都进了这一张,名字没跟着改,于是文档里说的「厂所表」和标签上写的对不上,
+# 找错表是迟早的事。改名归改名,旧工作簿还得认:读的时候两个名字都试。
+SHEET_UNITS = "厂所名录"
+SHEET_UNITS_OLD = "Fact and Comp-Shanghai"
+
+
+def units_sheet(wb):
+    """厂所名录那一张 —— 新名字优先,旧工作簿照旧认得。"""
+    for name in (SHEET_UNITS, SHEET_UNITS_OLD):
+        if name in wb.sheetnames:
+            return wb[name]
+    raise KeyError("这份工作簿里没有「%s」表" % SHEET_UNITS)
+
+
 SHEET_SEMI = "Semi-Product"
 SHEET_COMP = "Comp-Product"
 SHEET_NAMES = "Name-History"
@@ -119,7 +133,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
 
     # ---- 厂所名录(两行表头,正文自第 3 行起)
     if units:
-        ws = wb[SHEET_UNITS]
+        ws = units_sheet(wb)
         h = _headers(ws, 2)
         have = _existing_names(ws, 3, alias_col=h.get("别名"))
         row = _last_row(ws, start=3) + 1
@@ -238,7 +252,7 @@ def read_known(xlsx_path):
     if not os.path.exists(xlsx_path):
         return {}
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     known = {}
     for r in range(3, ws.max_row + 1):
         v = ws.cell(row=r, column=1).value
@@ -305,7 +319,7 @@ UNIT_LABELS = ["Industry", "Product", "Start Date", "End Date", "Founder", "City
 def read_units_full(xlsx_path):
     """厂所名录整本读出,每行带着它在表里的行号,回写时据以定位。"""
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     out = []
     for r in range(3, ws.max_row + 1):
@@ -373,7 +387,7 @@ def update_units(xlsx_path, changes, backup=True, log=print):
     changes: [{"_row": 3, "名称": "...", "fields": {"Industry": "半导体", ...}}]
     只动列出来的格子,别的一律不碰。"""
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     bak = ""
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -433,9 +447,15 @@ DIFF_KEYS = {
 
 def _sheet_rows(wb, sheet, key_cols, first_row, header_rows):
     """{钥匙: {表头: 值}} —— 认不出钥匙的那些行另存一份,免得默默丢掉。"""
-    if sheet not in wb.sheetnames:
+    # 改名前后的两份对着比,一边叫「厂所名录」一边叫「Fact and Comp-Shanghai」——
+    # 认死名字就会当这张表压根不在,于是一整张表的改动悄没声地报不出来。
+    # 「是哪一张」和「标签上写什么」得分开记:底下认钥匙靠的是前者
+    tab = sheet
+    if sheet == SHEET_UNITS and tab not in wb.sheetnames:
+        tab = SHEET_UNITS_OLD
+    if tab not in wb.sheetnames:
         return {}, []
-    ws = wb[sheet]
+    ws = wb[tab]
     h = _headers(ws, header_rows)
     name_col = 1 if sheet == SHEET_UNITS else None
     out, odd = {}, []
@@ -604,7 +624,7 @@ def report_dups(xlsx_path):
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     out = {"exact": [], "similar": []}
 
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     seen = {}
     primary, alias_rows, seen_name = [], [], {}
@@ -793,7 +813,7 @@ def verify(xlsx_path, geocode_js=None):
             elsewhere.add(canon)
             elsewhere |= set(aliases)
 
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     names = set()
     for r in range(3, ws.max_row + 1):

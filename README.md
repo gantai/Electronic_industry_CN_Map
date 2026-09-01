@@ -10,7 +10,7 @@
 
 | 工作表 | 内容 | 关键列 |
 | --- | --- | --- |
-| `Fact and Comp-Shanghai` | 厂所名录 | A 列单位名称、`Industry`(电子计算机 / 半导体 / 外围设备 / 研究所)、`Product`、`Start Date`、`End Date`、`Founder`、`City`、`Add.`、1990 年统计块(职工总数…实现利润)、`Remark`、`Source`;可选 `Name EN`、`Lat` / `Lng` |
+| `厂所名录` | 厂所与院校 | A 列单位名称、`Industry`(电子计算机 / 半导体 / 外围设备 / 研究所)、`Product`、`Start Date`、`End Date`、`Founder`、`City`、`Add.`、1990 年统计块(职工总数…实现利润)、`Remark`、`Source`;可选 `Name EN`、`Lat` / `Lng` |
 | `Semi-Product` | 半导体器件投产记录 | `Product`、`Factory`、`Time`、`Personnel`、`Remark` |
 | `Comp-Product` | 计算机整机研制记录 | `Product`、`字长`、`内存`、`Speed（次秒）`、`Research Insti`、`Factory`、`Time`、`Personnel`、`Remark` |
 | `Name-History` | 名称沿革(可选) | `Unit`、`Name`、`From`、`Remark`、`Source`;可选 `Name EN` |
@@ -29,13 +29,13 @@
 
 翻译的是**界面**:栏目名、表头、图例、说明文字,以及站点自己的分类词表(行业 / 类型 / 沿革事件 / 统计项 / 坐标精度 / 依据)。**数据本身照录原文不译** —— 厂所名、地址、产品名、人员、备注与出处都是史料,擅自英译等于替史料作主。
 
-要英文厂名,在 `Fact and Comp-Shanghai` 表加一列 **`Name EN`** 填上即可,英文界面自会取用,空着就仍显示中文;`Name-History` 表同样支持 `Name EN`,可逐段给出历年名称的英译。这两列都是可选的,不填不影响任何功能。
+要英文厂名,在 `厂所名录` 表加一列 **`Name EN`** 填上即可,英文界面自会取用,空着就仍显示中文;`Name-History` 表同样支持 `Name EN`,可逐段给出历年名称的英译。这两列都是可选的,不填不影响任何功能。
 
 ## 站点上的三类推定
 
 原表没有的东西,站点会算出来,但都在界面上注明依据,不与原始记载混为一谈:
 
-**一、经纬度。** 原表只有门牌地址。`src/geocode.js` 按路名与门牌号人工推定落点,分三档精度:`street`(街段,误差数百米)、`district`(区级)、`city`(原表未著录地址,落在**本市**市中心,节点带红点并虚线描边)。**这些坐标只用于制图定位,不可当作测绘成果引用。** 要换成实测值有两条路:改 `geocode.js` 里的 `PLACES`,或在 `Fact and Comp-Shanghai` 表末尾加 `Lat` / `Lng` 两列——表里的值优先。
+**一、经纬度。** 原表只有门牌地址。`src/geocode.js` 按路名与门牌号人工推定落点,分三档精度:`street`(街段,误差数百米)、`district`(区级)、`city`(原表未著录地址,落在**本市**市中心,节点带红点并虚线描边)。**这些坐标只用于制图定位,不可当作测绘成果引用。** 要换成实测值有两条路:改 `geocode.js` 里的 `PLACES`,或在 `厂所名录` 表末尾加 `Lat` / `Lng` 两列——表里的值优先。
 
 市级兜底按 `City` 列分城,取值见 `geocode.js` 的 `CITY_FALLBACK`(现收上海、北京、天津、南京)。**添别的城要照样式加一行**,否则那一城没有地址的单位会一律落到上海。地图上的聚类按地理距离而非 `City` 列,故新增城市无需另行配置;城市尺度的区界底图目前只有上海。
 

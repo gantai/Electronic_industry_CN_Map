@@ -194,13 +194,13 @@ def test_pipeline():
         target = os.path.join(tmp, "wb.xlsx")
         shutil.copy2(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), target)
         import openpyxl
-        before = openpyxl.load_workbook(target)["Fact and Comp-Shanghai"].max_row
+        before = toxlsx.units_sheet(openpyxl.load_workbook(target)).max_row
         picked = [dict(r, keep="y") for r in res["units"] if r["role"] == "专条"]
         rep = toxlsx.append(target, units=picked, semi=res["semi"], comp=res["comp"],
                             names=res["names"], backup=False, log=lambda *a: None)
         eq(rep["units"], 3, "追加 3 家单位")
         wb = openpyxl.load_workbook(target)
-        ws = wb["Fact and Comp-Shanghai"]
+        ws = toxlsx.units_sheet(wb)
         eq(ws.max_row, before + 3, "名录表多了 3 行")
         row = [c for c in next(ws.iter_rows(min_row=before + 1, max_row=before + 1,
                                             values_only=True))]
@@ -315,7 +315,7 @@ def test_vault():
         check(len(toxlsx.read_name_history(xlsx)) >= nh_before, "沿革行只增不减")
 
         wb = openpyxl.load_workbook(xlsx)
-        heads = [c.value for c in wb["Fact and Comp-Shanghai"][1]]
+        heads = [c.value for c in toxlsx.units_sheet(wb)[1]]
         check("Lat" in heads and "Lng" in heads, "Lat / Lng 两列按需添上")
         nh = [r for r in toxlsx.read_name_history(xlsx)
               if r["Unit"] == "上海微波设备研究所" and r["Name"] == "上海仪表铜厂"]
@@ -323,7 +323,7 @@ def test_vault():
         eq(nh[0]["Source"], "仪表工业志 p.412", "核实过的出处写回去了")
         eq(nh[0]["Name EN"], "Copper Works", "英文名不会因原表没这一列就丢掉")
 
-        wb2 = openpyxl.load_workbook(xlsx)["Fact and Comp-Shanghai"]
+        wb2 = toxlsx.units_sheet(openpyxl.load_workbook(xlsx))
         h = {c.value: i + 1 for i, c in enumerate(wb2[1]) if c.value}
         vals = [wb2.cell(row=r, column=h["Lat"]).value for r in range(3, wb2.max_row + 1)
                 if wb2.cell(row=r, column=1).value == "上海元件五厂"]
@@ -1359,6 +1359,35 @@ def test_verify_knows_geocode_aliases():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_old_sheet_name():
+    """标签改叫「厂所名录」了,手里的旧工作簿还得读得动。
+
+    从前叫「Fact and Comp-Shanghai」—— 那时只收上海,后来北京、天津的厂所
+    也进了这一张,名字就不对了。改名是为了跟文档里说的「厂所表」对得上,
+    可别人手里、git 历史里的旧本子还是旧名字,认死一个就打不开了。"""
+    print("旧标签名还认不认")
+    tmp = tempfile.mkdtemp(prefix="gaz-tab-")
+    try:
+        import openpyxl
+        old = os.path.join(tmp, "旧本子.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), old)
+        wb = openpyxl.load_workbook(old)
+        wb[toxlsx.SHEET_UNITS].title = toxlsx.SHEET_UNITS_OLD
+        wb.save(old)
+        eq(openpyxl.load_workbook(old).sheetnames[0], toxlsx.SHEET_UNITS_OLD,
+           "这一份用的是旧标签名")
+
+        n_new = len(toxlsx.read_units_full(os.path.join(REPO, "CN_Electronic_Industry.xlsx")))
+        eq(len(toxlsx.read_units_full(old)), n_new, "旧标签名照样读得出全部厂所")
+        check(toxlsx.verify(old), "旧本子也验得动")
+        # 一新一旧对着比,不该当成「整张表都没了」
+        d = toxlsx.diff_workbooks(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), old)
+        gone = d.get(toxlsx.SHEET_UNITS, {}).get("gone", [])
+        eq(gone, [], "改名前后两份对着比,厂所不该凭空消失(得 %r)" % gone[:3])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_later_rename():
     """「后更名为」没说是哪一年 —— 宁可不记年份,也不能安上一个。"""
     print("后更名为")
@@ -1399,7 +1428,8 @@ def main():
                test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
-               test_verify_knows_geocode_aliases, test_later_rename):
+               test_verify_knows_geocode_aliases,
+               test_old_sheet_name, test_later_rename):
         fn()
     print()
     if FAILED:
