@@ -113,7 +113,12 @@ const zh = {
   abFoot: "淡框与虚线处为待撰内容,版式先行。",
 
   langLabel: "切换到英文",
-  coverage: (cities, n) => "现有数据:" + (cities.length ? cities.join("、") : "—") + " · " + n + " 家厂所",
+  /* 城市一多,这一行能把标题挤下去 —— 只报大头,其余折成「+N 城」 */
+  coverage: (cities, n) => {
+    const head = cities.slice(0, 2), rest = cities.length - head.length;
+    return "现有数据:" + (head.length ? head.join("、") : "—")
+      + (rest > 0 ? " 等 " + cities.length + " 城" : "") + " · " + n + " 家厂所";
+  },
   previewChip: (f) => "● 本地预览:" + f + " ✕",
   previewTitle: "当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览。",
 
@@ -195,7 +200,7 @@ const zh = {
 
   /* 使用说明 */
   introTitle: "使用说明",
-  intro1: "拖动下方年份标尺或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。首屏已自动套合到现有数据的范围(上海),缩小即可回到全国视野。",
+  intro1: "拖动下方年份标尺或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。首屏自动套合到数据聚集的那一片,缩小即可回到全国视野 —— 志书里顺带点到的外地单位(唐山、哈尔滨、兰州、长沙)在更外围。",
   intro2a: "节点颜色代表行业,形状区分工厂 / 研究所 / 合资企业。",
   intro2b: "经纬度不在原表之中",
   intro2c: ",是按门牌地址人工推定的近似落点(误差数百米至数公里);带红点者原表未著录地址,暂落在市中心。",
@@ -252,7 +257,11 @@ const en = {
   abFoot: "Outlined and dashed areas are still to be written; this is the layout.",
 
   langLabel: "Switch to Chinese",
-  coverage: (cities, n) => "Coverage: " + (cities.length ? cities.join(", ") : "—") + " · " + n + " units",
+  coverage: (cities, n) => {
+    const head = cities.slice(0, 2), rest = cities.length - head.length;
+    return "Coverage: " + (head.length ? head.join(", ") : "—")
+      + (rest > 0 ? " +" + rest + " more" : "") + " · " + n + " units";
+  },
   previewChip: (f) => "● Local preview: " + f + " ✕",
   previewTitle: "You are viewing a file you imported. The published data is unchanged. Click to discard the preview.",
 
@@ -328,7 +337,7 @@ const en = {
   bootHint: (file) => "Check that " + file + " in the repository root still contains the sheets “厂所名录 / 器件 / 整机” (名称沿革 is optional).",
 
   introTitle: "How to use",
-  intro1: "Drag the year slider below or press ▶ to play, and watch the factories being founded, split and merged; scroll to zoom, click a node for details. The opening view is fitted to the extent of the present data (Shanghai); zoom out for the national view.",
+  intro1: "Drag the year slider below or press ▶ to play, and watch the factories being founded, split and merged; scroll to zoom, click a node for details. The opening view is fitted to where the data clusters; zoom out for the national view — a few out-of-town bodies named in passing by the gazetteers (Tangshan, Harbin, Lanzhou, Changsha) sit further out.",
   intro2a: "Node colour shows the industry; the shape distinguishes factories, institutes and joint ventures. ",
   intro2b: "Coordinates are not in the source table",
   intro2c: " — they are approximate positions inferred from street addresses (accurate to a few hundred metres at best). Nodes with a red dot have no address on record and sit at the city centre.",

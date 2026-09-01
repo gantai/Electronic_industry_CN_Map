@@ -281,13 +281,22 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
     (dur ? s.transition().duration(dur) : s).call(zoomRef.current.transform, tr);
   }, [size]);
 
-  /* 数据全在一城时,国界尺度什么也看不清 —— 首屏自动套合到数据范围 */
+  /* 首屏套合到数据上 —— 可要套的是数据的**主体**,不是最远的那几个点。
+     九成六的厂所在京沪两地,而哈尔滨、兰州、长沙、唐山各只有一家;拿最外圈
+     去框,框出来的是整个中国,开屏便是一张几乎空白的图。两头各掐掉 4%,
+     框住的才是真正要看的那一片;那几家远的照画不误,缩一下就见着了。 */
+  const trimmed = (arr) => {
+    const a = arr.slice().sort((p, q) => p - q);
+    if (a.length < 12) return [a[0], a[a.length - 1]];   // 点太少,掐了就没了
+    return [a[Math.floor(a.length * 0.04)], a[Math.ceil(a.length * 0.96) - 1]];
+  };
+
   const fitData = useCallback((dur) => {
     if (!projection || !size.w) return;
     const pts = data.units.map((u) => basePos[u.id]).filter(Boolean);
     if (!pts.length) return;
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const [x0, x1] = trimmed(pts.map((p) => p[0]));
+    const [y0, y1] = trimmed(pts.map((p) => p[1]));
     const spanX = Math.max(x1 - x0, 1e-6), spanY = Math.max(y1 - y0, 1e-6);
     const kk = Math.max(1, Math.min(MAX_K, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
     flyTo((x0 + x1) / 2, (y0 + y1) / 2, kk, dur);
@@ -1514,9 +1523,10 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 :focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
 
 /* header */
-.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:56px;flex:none;
+.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:56px;flex:none;overflow:hidden;
   border-bottom:1px solid var(--line);background:rgba(10,24,43,.75);backdrop-filter:blur(5px);z-index:20}
-.ttl-zh{font-family:var(--serif);font-size:17.5px;letter-spacing:2.5px;font-weight:600}
+.ttl-zh{font-family:var(--serif);font-size:17.5px;letter-spacing:2.5px;font-weight:600;
+  white-space:nowrap}
 .ttl-zh.lat{letter-spacing:.6px;font-size:16.5px}
 .ttl-en{font-size:8px;letter-spacing:.24em;color:var(--dim);margin-top:1px;white-space:nowrap}
 .tabs{display:flex;gap:6px;margin-left:8px}
@@ -1527,7 +1537,8 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .storchip{cursor:pointer;color:var(--yellow);border-color:var(--yellow)}
 .langbtn{cursor:pointer;color:var(--paper);border-color:var(--paper2);letter-spacing:.1em;padding:3px 9px}
 .langbtn:hover{border-color:var(--yellow);color:var(--yellow)}
-.dimchip{color:var(--dim)}
+.dimchip{color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:1180px){.dimchip{display:none}}
 
 /* layout */
 .content{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
@@ -1598,7 +1609,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .icobtn:hover{border-color:var(--yellow);color:var(--yellow)}
 .scalebar{position:absolute;right:14px;bottom:14px;z-index:10;display:flex;align-items:center;gap:7px;
   font-size:10.5px;color:var(--paper2);background:rgba(10,24,43,.8);padding:4px 9px;border:1px solid var(--line);border-radius:2px}
-.legend{position:absolute;bottom:76px;left:12px;background:rgba(10,24,43,.88);border:1px solid var(--line);
+.legend{position:absolute;bottom:76px;left:12px;background:rgba(10,24,43,.97);border:1px solid var(--line);
   padding:8px 11px;border-radius:2px;z-index:13;max-width:min(70%,560px)}
 .lg-title{font-size:9px;letter-spacing:.18em;color:var(--dim);margin-bottom:5px}
 .lg-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:11px;color:var(--paper2)}
