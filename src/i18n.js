@@ -36,7 +36,7 @@ export const PRECISION_EN = {
   city: "city-level (address unrecorded)",
 };
 export const BASIS_EN = {
-  "名称沿革表": "Name-History sheet",
+  "名称沿革表": "the 名称沿革 sheet",
   "原表沿革链": "Founder chain",
   "表内名称": "table name",
 };
@@ -174,7 +174,7 @@ const zh = {
   searchUnits: "检索单位、地址、沿革…", searchUnitsLabel: "检索名录",
   countUnits: (a, b) => a + " / " + b + " 家",
   importExcel: "导入 Excel", exportExcel: "导出 Excel",
-  directoryNote: (file) => "全站数据来自仓库根目录的 " + file + "(厂所名录 / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。",
+  directoryNote: (file) => "全站数据来自仓库根目录的 " + file + "(厂所名录 / 器件 / 整机,另有可选的 名称沿革),构建时编入产物。更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。",
   statsNoteYear: (y) => " 统计数字未标年份的,按 " + y + " 年计;标了的以数字后那一年为准。量纲悉依原表。",
   thUnit: "单位", thIndustry: "行业", thType: "类型", thSpan: "起讫",
   thCity: "城市", thAddress: "地址",
@@ -191,7 +191,7 @@ const zh = {
 
   /* 读取失败 */
   bootFail: "数据表读取失败",
-  bootHint: (file) => "请检查仓库根目录下的 " + file + " 是否仍含「厂所名录 / Semi-Product / Comp-Product」三张表(Name-History 可有可无)。",
+  bootHint: (file) => "请检查仓库根目录下的 " + file + " 是否仍含「厂所名录 / 器件 / 整机」三张表(名称沿革 可有可无)。",
 
   /* 使用说明 */
   introTitle: "使用说明",
@@ -309,7 +309,7 @@ const en = {
   searchUnits: "Search units, addresses, lineage…", searchUnitsLabel: "Search directory",
   countUnits: (a, b) => a + " / " + b + " units",
   importExcel: "Import Excel", exportExcel: "Export Excel",
-  directoryNote: (file) => "All data comes from " + file + " in the repository root (sheets 厂所名录 / Semi-Product / Comp-Product, plus the optional Name-History), compiled into the build. To update: edit the workbook → check it locally with “Import Excel” → overwrite the file in the repository and push; Actions rebuilds automatically. Importing affects only your own browsing session.",
+  directoryNote: (file) => "All data comes from " + file + " in the repository root (sheets 厂所名录 / 器件 / 整机, plus the optional 名称沿革), compiled into the build. To update: edit the workbook → check it locally with “Import Excel” → overwrite the file in the repository and push; Actions rebuilds automatically. Importing affects only your own browsing session.",
   statsNoteYear: (y) => " Undated figures are " + y + "; where a year follows a figure, that year applies. Units follow the source table.",
   thUnit: "Unit", thIndustry: "Industry", thType: "Type", thSpan: "Span",
   thCity: "City", thAddress: "Address",
@@ -325,7 +325,7 @@ const en = {
   exportFail: (m) => "Export failed: " + m,
 
   bootFail: "Could not read the data workbook",
-  bootHint: (file) => "Check that " + file + " in the repository root still contains the sheets “厂所名录 / Semi-Product / Comp-Product” (Name-History is optional).",
+  bootHint: (file) => "Check that " + file + " in the repository root still contains the sheets “厂所名录 / 器件 / 整机” (名称沿革 is optional).",
 
   introTitle: "How to use",
   intro1: "Drag the year slider below or press ▶ to play, and watch the factories being founded, split and merged; scroll to zoom, click a node for details. The opening view is fitted to the extent of the present data (Shanghai); zoom out for the national view.",

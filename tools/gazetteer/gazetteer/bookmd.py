@@ -21,6 +21,12 @@ from collections import Counter
 
 from . import cndate
 from . import extract as EX
+from . import toxlsx
+
+# 待核本子里那张预览表,名字末尾带着城市 —— 城市就是从这个名字上取的。
+# 旧本子作「Fact and Comp-北京」,读的时候两种都认。
+UNITS_PREVIEW = "厂所名录-"
+UNITS_PREVIEW_OLD = "Fact and Comp-"
 
 ENCODINGS = ["utf-8-sig", "utf-8", "gb18030", "big5", "utf-16", "latin-1"]
 
@@ -306,7 +312,7 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
             return s
 
     # ---- 厂所名录:两行表头,与原表一模一样
-    sheet = "Fact and Comp-" + (city or "Local")
+    sheet = UNITS_PREVIEW + (city or "Local")
     ws = wb.create_sheet(sheet)
     ws.append(["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
                stats_year] + [""] * 7 + ["Remark", "Source", "别名"])
@@ -342,12 +348,12 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         w.freeze_panes = "B2"
         return w
 
-    flat("Semi-Product", ["Product", "别名", "Research Insti", "Factory", "产量", "Time",
+    flat(toxlsx.SHEET_SEMI, ["Product", "别名", "Research Insti", "Factory", "产量", "Time",
                           "Personnel", "Remark"], res["semi"])
-    flat("Comp-Product", ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
+    flat(toxlsx.SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                           "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], res["comp"])
     # 待核那份的沿革表也照总表的次序摆:序、单位、名称、起、至、关系
-    nh = wb.create_sheet("Name-History")
+    nh = wb.create_sheet(toxlsx.SHEET_NAMES)
     # 表头写成中文,把话说死:「Unit」看着像「这一行这家单位叫什么」,而它其实
     # 是钥匙 —— 一家单位的几行都写同一个今名。改叫「单位(今名)」就不会看岔。
     nh.append(["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"])
@@ -404,9 +410,9 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
-              "Semi-Product": [6, 28, 20, 26, 24, 8, 11, 14, 30],
-              "Comp-Product": [6, 30, 8, 12, 14, 30, 24, 26, 8, 20, 14, 16, 34],
-              "Name-History": [6, 26, 30, 11, 40, 26]}
+              toxlsx.SHEET_SEMI: [6, 28, 20, 26, 24, 8, 11, 14, 30],
+              toxlsx.SHEET_COMP: [6, 30, 8, 12, 14, 30, 24, 26, 8, 20, 14, 16, 34],
+              toxlsx.SHEET_NAMES: [6, 26, 30, 11, 40, 26]}
     for nm, ws_widths in widths.items():
         w = wb[nm]
         for i, wid in enumerate(ws_widths, start=1):
@@ -549,22 +555,29 @@ def read_review(path):
     的就是你改过的样子。TSV 只当留底,不再回头去读:两处都能改,改了哪一处
     算数就说不清了。
 
-    返回 (四张表的行, 城市)。城市从「Fact and Comp-北京」这类表名上取。"""
+    返回 (四张表的行, 城市)。城市从「厂所名录-北京」这类表名上取
+    (旧本子作「Fact and Comp-北京」,一并认)。"""
     import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True)
     city = ""
     for name in wb.sheetnames:
-        if name.startswith("Fact and Comp-"):
-            city = name[len("Fact and Comp-"):]
+        for prefix in (UNITS_PREVIEW, UNITS_PREVIEW_OLD):
+            if name.startswith(prefix):
+                city = name[len(prefix):]
+                break
+        if city:
             break
 
     bundle, seen = {}, {}
-    for tag, sheet in (("units", "待核"), ("semi", "Semi-Product"),
-                       ("comp", "Comp-Product"), ("names", "Name-History")):
-        if sheet not in wb.sheetnames:
+    for tag, sheet in (("units", "待核"), ("semi", toxlsx.SHEET_SEMI),
+                       ("comp", toxlsx.SHEET_COMP), ("names", toxlsx.SHEET_NAMES)):
+        # 手里做了一半的待核本子还挂着英文标签 —— 两种都认,不然核过的一整章白核
+        name = toxlsx.tab(wb, sheet) if sheet in toxlsx.OLD_NAMES else (
+            sheet if sheet in wb.sheetnames else None)
+        if name is None:
             bundle[tag], seen[tag] = [], 0
             continue
-        rows = _sheet_rows(wb[sheet])
+        rows = _sheet_rows(wb[name])
         seen[tag] = len(rows)
         kept = []
         for r in rows:

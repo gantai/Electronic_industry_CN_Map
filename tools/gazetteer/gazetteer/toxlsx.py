@@ -14,24 +14,44 @@ import shutil
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
-# 这一张从前叫「Fact and Comp-Shanghai」—— 那时只收上海。后来北京、天津的厂所
-# 也都进了这一张,名字没跟着改,于是文档里说的「厂所表」和标签上写的对不上,
-# 找错表是迟早的事。改名归改名,旧工作簿还得认:读的时候两个名字都试。
+# 标签名一律用中文,跟文档里的说法对上。从前是英文,而且第一张还叫
+# 「Fact and Comp-Shanghai」—— 那时只收上海,后来北京、天津的厂所也进了这一张,
+# 名字没跟着改;「Semi-Product」与「Comp-Product」则是两个谁也认不准的缩写。
+# 改名归改名,手里的旧本子、git 历史里的那些,都还得读得动:两个名字都试。
 SHEET_UNITS = "厂所名录"
-SHEET_UNITS_OLD = "Fact and Comp-Shanghai"
+SHEET_SEMI = "器件"
+SHEET_COMP = "整机"
+SHEET_NAMES = "名称沿革"
+SHEET_LINEAGE = "机构沿革"
+
+OLD_NAMES = {
+    SHEET_UNITS: "Fact and Comp-Shanghai",
+    SHEET_SEMI: "Semi-Product",
+    SHEET_COMP: "Comp-Product",
+    SHEET_NAMES: "Name-History",
+}
+
+
+def tab(wb, sheet):
+    """这一张在这本工作簿里挂的什么标签 —— 新名优先,旧名照认;没有就 None。"""
+    if sheet in wb.sheetnames:
+        return sheet
+    old = OLD_NAMES.get(sheet)
+    return old if old and old in wb.sheetnames else None
+
+
+def sheet_of(wb, sheet):
+    name = tab(wb, sheet)
+    if name is None:
+        raise KeyError("这份工作簿里没有「%s」表" % sheet)
+    return wb[name]
 
 
 def units_sheet(wb):
-    """厂所名录那一张 —— 新名字优先,旧工作簿照旧认得。"""
-    for name in (SHEET_UNITS, SHEET_UNITS_OLD):
-        if name in wb.sheetnames:
-            return wb[name]
-    raise KeyError("这份工作簿里没有「%s」表" % SHEET_UNITS)
+    """厂所名录那一张。"""
+    return sheet_of(wb, SHEET_UNITS)
 
 
-SHEET_SEMI = "Semi-Product"
-SHEET_COMP = "Comp-Product"
-SHEET_NAMES = "Name-History"
 
 STAT_LABELS = [("staff", "职工总数"), ("tech", "技术人员"), ("plant", "厂房面积"),
                ("floor", "建筑面积"), ("assets", "固定资产"), ("output", "工业总产值"),
@@ -178,7 +198,9 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     def _append_flat(sheet, cols, rows, tag, text_cols=(), ensure=(), dedup_on=()):
         if not rows:
             return
-        ws = wb[sheet]
+        # 旧本子里这一张还挂着英文标签,追加得追到那一张上去,
+        # 不然会另建一张同名的中文表,数据就分了家
+        ws = wb[tab(wb, sheet) or sheet]
         for label in ensure:
             if any(r.get(label) not in (None, "") for r in rows):
                 _ensure_column(ws, label)
@@ -209,7 +231,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     if comp:
         from .extract import model_key
-        ws = wb[SHEET_COMP]
+        ws = sheet_of(wb, SHEET_COMP)
         hc = _headers(ws, 1)
         if "Product" in hc:
             core = {}
@@ -339,9 +361,10 @@ def read_units_full(xlsx_path):
 
 def read_flat(xlsx_path, sheet, cols):
     wb = _open(xlsx_path)
-    if sheet not in wb.sheetnames:
+    name = tab(wb, sheet)
+    if name is None:
         return []
-    ws = wb[sheet]
+    ws = wb[name]
     h = _headers(ws, 1)
     out = []
     for r in range(2, ws.max_row + 1):
@@ -412,10 +435,10 @@ def update_units(xlsx_path, changes, backup=True, log=print):
 def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
     """名称沿革整表重写 —— 库里改的是「某单位的全部段落」,逐格补丁反而易错。"""
     wb = _open(xlsx_path)
-    if SHEET_NAMES not in wb.sheetnames:
+    if tab(wb, SHEET_NAMES) is None:
         ws = wb.create_sheet(SHEET_NAMES)
         ws.append(["Unit", "Name", "From", "Name EN", "Remark", "Source"])
-    ws = wb[SHEET_NAMES]
+    ws = sheet_of(wb, SHEET_NAMES)
     # 原表没有 Name EN 一列;库里填了英文名就把这一列添上,不能悄悄丢掉
     if any(str(r.get("Name EN") or "").strip() for r in rows):
         _ensure_column(ws, "Name EN")
@@ -447,15 +470,13 @@ DIFF_KEYS = {
 
 def _sheet_rows(wb, sheet, key_cols, first_row, header_rows):
     """{钥匙: {表头: 值}} —— 认不出钥匙的那些行另存一份,免得默默丢掉。"""
-    # 改名前后的两份对着比,一边叫「厂所名录」一边叫「Fact and Comp-Shanghai」——
-    # 认死名字就会当这张表压根不在,于是一整张表的改动悄没声地报不出来。
+    # 改新旧两份对着比,一边挂中文标签一边挂英文标签 —— 认死名字就会当这张表
+    # 压根不在,于是一整张表的改动悄没声地报不出来。
     # 「是哪一张」和「标签上写什么」得分开记:底下认钥匙靠的是前者
-    tab = sheet
-    if sheet == SHEET_UNITS and tab not in wb.sheetnames:
-        tab = SHEET_UNITS_OLD
-    if tab not in wb.sheetnames:
+    name = tab(wb, sheet)
+    if name is None:
         return {}, []
-    ws = wb[tab]
+    ws = wb[name]
     h = _headers(ws, header_rows)
     name_col = 1 if sheet == SHEET_UNITS else None
     out, odd = {}, []
@@ -541,9 +562,9 @@ def tidy_names(xlsx_path, dry_run=False):
     对不上,所以单拎出这一道,随时可以再理一遍。"""
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path)
-    if SHEET_NAMES not in wb.sheetnames:
+    if tab(wb, SHEET_NAMES) is None:
         return {"moved": 0, "rows": 0}
-    ws = wb[SHEET_NAMES]
+    ws = sheet_of(wb, SHEET_NAMES)
     h = _headers(ws, 1)
     if "Unit" not in h or "From" not in h:
         return {"moved": 0, "rows": 0}
@@ -686,16 +707,16 @@ def report_dups(xlsx_path):
             (SHEET_COMP, ("Product", "Time"), "Product"),
             (SHEET_SEMI, ("Product", "Factory", "Time"), "Product"),
             (SHEET_NAMES, ("Unit", "Name", "From"), "Unit")):
-        if sheet not in wb.sheetnames:
+        if tab(wb, sheet) is None:
             continue
-        for key, rows in _sheet_dups(wb[sheet], key_cols, label).items():
+        for key, rows in _sheet_dups(sheet_of(wb, sheet), key_cols, label).items():
             out["exact"].append((sheet, "·".join(x for x in key if x),
                                  [x[0] for x in rows], rows[0][1]))
 
     # 型号内核相同、写法不同的整机 —— 只提醒,不当重复
-    if SHEET_COMP in wb.sheetnames:
+    if tab(wb, SHEET_COMP) is not None:
         from .extract import model_key
-        ws = wb[SHEET_COMP]
+        ws = sheet_of(wb, SHEET_COMP)
         h = _headers(ws, 1)
         if "Product" in h:
             by = {}
@@ -862,8 +883,8 @@ def verify(xlsx_path, geocode_js=None):
             bad.append(("出处", where, "没写出处", key))
 
     # 沿革表:年份不像话的、以及孤零零一条「自己改名叫自己」的
-    if SHEET_NAMES in wb.sheetnames:
-        w = wb[SHEET_NAMES]
+    if tab(wb, SHEET_NAMES) is not None:
+        w = sheet_of(wb, SHEET_NAMES)
         hh = _headers(w, 1)
         rows, per = [], {}
         for r in range(2, w.max_row + 1):
@@ -911,9 +932,9 @@ def verify(xlsx_path, geocode_js=None):
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),
                         (SHEET_SEMI, ("Research Insti", "Factory"))):
-        if sheet not in wb.sheetnames:
+        if tab(wb, sheet) is None:
             continue
-        w = wb[sheet]
+        w = sheet_of(wb, sheet)
         hh = _headers(w, 1)
         for r in range(2, w.max_row + 1):
             who = w.cell(row=r, column=hh["Product"]).value if "Product" in hh else ""

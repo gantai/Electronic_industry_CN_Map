@@ -207,7 +207,7 @@ def test_pipeline():
         eq(row[0], "上海无线电十九厂", "A 列是单位名")
         eq(row[3], 19580600, "始建日期写成八位整数")
         eq(row[8], 1218, "统计块落在职工总数那一格")
-        nh = wb["Name-History"]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         last = [c for c in next(nh.iter_rows(min_row=nh.max_row, max_row=nh.max_row,
                                              values_only=True))]
         check(isinstance(last[2], str), "Name-History 的 From 照原表存成文本")
@@ -409,10 +409,10 @@ def test_book():
         bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
                           log=lambda *a: None)
         wb = openpyxl.load_workbook(out)
-        eq(wb.sheetnames, ["待核", "Fact and Comp-Beijing", "Semi-Product",
-                           "Comp-Product", "Name-History"],
+        eq(wb.sheetnames, ["待核", bookmd.UNITS_PREVIEW + "Beijing", toxlsx.SHEET_SEMI,
+                           toxlsx.SHEET_COMP, toxlsx.SHEET_NAMES],
            "五张表,要核的那张排在头一个")
-        ws = wb["Fact and Comp-Beijing"]
+        ws = wb[bookmd.UNITS_PREVIEW + "Beijing"]
         eq([c.value for c in ws[1]][:8],
            [None, "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add."],
            "第一行表头与原表一致(A1 照原表留空)")
@@ -433,7 +433,7 @@ def test_book():
         rv.cell(row=4, column=1).value = ""
         wb.save(out)
         bundle, city2, seen = bookmd.read_review(out)
-        eq(city2, "Beijing", "城市从「Fact and Comp-北京」这类表名上认")
+        eq(city2, "Beijing", "城市从「厂所名录-北京」这类表名上认")
         eq(len(bundle["units"]), 1, "两行改成同一个名字,并作一家")
         eq(seen["merged"], 1, "并了几行要报出来")
         eq(bundle["units"][0]["Unit"], "上海无线电十九厂", "并成的那一家用核过的名字")
@@ -822,7 +822,7 @@ def test_accepted():
 
         # 新伤照报不误
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         ws.cell(row=3, column=h["Start Date"]).value = 1961
         wb.save(x)
@@ -932,7 +932,7 @@ def test_review_name_sheet():
         bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
 
         wb = openpyxl.load_workbook(x)
-        nh = wb["Name-History"]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         head = [nh.cell(row=1, column=c).value for c in range(1, 8)]
         eq(head, ["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"],
            "表头写成中文,「Unit」不再看着像「这一行这家叫什么」")
@@ -1031,14 +1031,14 @@ def test_diff_workbooks():
         eq(toxlsx.diff_workbooks(a, b), {}, "一模一样的两份,报「没有分别」")
 
         wb = openpyxl.load_workbook(b)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         # 钥匙是去掉括号的样子:「上海电子计算机厂（上无十三）」→ 上海电子计算机厂
         who = toxlsx._bare(ws.cell(row=3, column=1).value)
         ws.cell(row=3, column=h["Source"]).value = "试·补的出处"
         r = ws.max_row + 1
         ws.cell(row=r, column=1).value = "辽阳试验新厂"
-        wb[toxlsx.SHEET_NAMES].delete_rows(2)
+        toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES).delete_rows(2)
         wb.save(b)
 
         d = toxlsx.diff_workbooks(a, b)
@@ -1055,7 +1055,7 @@ def test_diff_workbooks():
         # 再把 b 理一遍 —— 两份只差这两列
         shutil.copy(a, b)
         wb = openpyxl.load_workbook(a)
-        nh = wb[toxlsx.SHEET_NAMES]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         hn = toxlsx._headers(nh, 1)
         check("序" in hn and "至" in hn, "现表已经有「序」「至」两列")
         for i in range(2, nh.max_row + 1):
@@ -1079,7 +1079,7 @@ def test_tidy_names():
         x = os.path.join(tmp, "总表.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_NAMES]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         h = toxlsx._headers(ws, 1)
         # 三段名称故意打乱着写进去,中间还夹一家别的
         r = ws.max_row + 1
@@ -1121,7 +1121,7 @@ def test_tidy_names():
 
         # 手工改坏了,verify 报得出来,并指向 gaz tidy
         wb = openpyxl.load_workbook(x)
-        wb[toxlsx.SHEET_NAMES].cell(row=2, column=1).value = 9
+        toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES).cell(row=2, column=1).value = 9
         wb.save(x)
         why = [w for k, _wh, w, _kk in toxlsx.verify(x) if k == "沿革"]
         check(any("gaz tidy" in w for w in why), "序号改坏了,verify 指着 gaz tidy 说")
@@ -1143,7 +1143,7 @@ def test_dups_near_names():
         x = os.path.join(tmp, "总表.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         r = ws.max_row + 1
         for nm in ("辽阳无线电器材厂", "辽阳无线电器材厂平谷分厂", "沈阳辽阳无线电器材厂"):
             ws.cell(row=r, column=1).value = nm
@@ -1168,7 +1168,7 @@ def test_dups_abbrev():
         x = os.path.join(tmp, "总表.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         r = ws.max_row + 1
         ws.cell(row=r, column=1).value = "辽阳电子仪器公司"
@@ -1217,7 +1217,7 @@ def test_verify():
         check(all(len(t) == 4 for t in base), "每一条都带着「哪一类」与「记号」")
 
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         r = None
         for i in range(3, ws.max_row + 1):
@@ -1260,7 +1260,7 @@ def test_verify():
         ws.cell(row=r, column=h["Source"]).value = "试·一页"
         ws.cell(row=r, column=h["别名"]).value = "辽试所"
         wb.save(x)
-        c = wb[toxlsx.SHEET_COMP]
+        c = toxlsx.sheet_of(wb, toxlsx.SHEET_COMP)
         hh = toxlsx._headers(c, 1)
         rr = c.max_row + 1
         c.cell(row=rr, column=hh["Product"]).value = "试验机零号"
@@ -1294,23 +1294,23 @@ def test_verify():
         wb.save(x)
 
         # 沿革表:1900 年代的年份是「1966年（后改名…」被切开算出来的
-        nh = wb[toxlsx.SHEET_NAMES]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         hn = toxlsx._headers(nh, 1)
         nr = nh.max_row + 1
         nh.cell(row=nr, column=hn["Unit"]).value = "辽阳试验计算技术研究所"
         nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验机械所"
         nh.cell(row=nr, column=hn["From"]).value = "19060000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), ["日期"], "1906 这样的年份,报出来")
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), ["日期"], "1906 这样的年份,报出来")
 
         nh.cell(row=nr, column=hn["From"]).value = "19660000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), [], "1966 是正常年份,不报")
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), [], "1966 是正常年份,不报")
 
         # 「甲厂 → 甲厂」是改名链的末一段:前头有别的名字才立得住
         nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验计算技术研究所"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), ["沿革"],
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), ["沿革"],
            "孤零零一条「改名叫自己」,不载信息,报出来")
 
         nr2 = nh.max_row + 1
@@ -1318,7 +1318,7 @@ def test_verify():
         nh.cell(row=nr2, column=hn["Name"]).value = "辽阳试验机械所"
         nh.cell(row=nr2, column=hn["From"]).value = "19600000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), [],
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), [],
            "前头有一段别的名字,末一段就立得住,不报")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1337,7 +1337,7 @@ def test_verify_knows_geocode_aliases():
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         geo = os.path.join(REPO, "src", "geocode.js")
         wb = openpyxl.load_workbook(x)
-        w = wb[toxlsx.SHEET_COMP]
+        w = toxlsx.sheet_of(wb, toxlsx.SHEET_COMP)
         hh = toxlsx._headers(w, 1)
         r = w.max_row + 1
         w.cell(row=r, column=hh["Product"]).value = "试·某型计算机"
@@ -1355,6 +1355,44 @@ def test_verify_knows_geocode_aliases():
         check("上海市计算中心" not in withgeo,
               "给了别名表,简称不再报(得 %r)" % withgeo)
         check("并无此厂" in withgeo, "真查无此人的照报不误(得 %r)" % withgeo)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_old_review_workbook():
+    """手里核了一半的待核本子还挂着英文标签,照样读得回来。
+
+    标签改名那天,谁手上正核着一章,那一章的工夫不能白费 —— 读的一头新旧
+    两种都认。城市也一样:从前是「Fact and Comp-北京」,如今是「厂所名录-北京」。"""
+    print("旧待核本子还认不认")
+    tmp = tempfile.mkdtemp(prefix="gaz-oldrev-")
+    try:
+        import openpyxl
+        res = EX.extract("# 第一章 电子计算机\n\n"
+                         "## 第一节 辽阳无线电厂\n\n"
+                         "辽阳无线电厂，创建于1965年3月，厂址辽阳路25号。\n",
+                         book="试验志", city="Beijing")
+        rev = os.path.join(tmp, "试验志待核.xlsx")
+        bookmd.write_xlsx(rev, res, city="Beijing", book="试验志", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(rev)
+        eq(wb.sheetnames[1], bookmd.UNITS_PREVIEW + "Beijing", "新本子挂中文标签")
+
+        # 改回旧标签,当作是改名以前做的那一份
+        wb[bookmd.UNITS_PREVIEW + "Beijing"].title = bookmd.UNITS_PREVIEW_OLD + "Beijing"
+        for new_name, old_name in toxlsx.OLD_NAMES.items():
+            if new_name in wb.sheetnames:
+                wb[new_name].title = old_name
+        # 核过一行:取否写 y
+        rv = wb["待核"]
+        h = {c.value: c.column for c in rv[1]}
+        rv.cell(row=2, column=h["取否"]).value = "y"
+        wb.save(rev)
+
+        bundle, city, seen = bookmd.read_review(rev)
+        eq(city, "Beijing", "城市从旧写法的表名上照样认得出")
+        eq(len(bundle["units"]), 1, "核过的那一行读得回来")
+        eq(bundle["units"][0].get("Unit"), "辽阳无线电厂", "读回来的是那一家")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1404,9 +1442,9 @@ def test_old_sheet_name():
         old = os.path.join(tmp, "旧本子.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), old)
         wb = openpyxl.load_workbook(old)
-        wb[toxlsx.SHEET_UNITS].title = toxlsx.SHEET_UNITS_OLD
+        toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS).title = toxlsx.OLD_NAMES[toxlsx.SHEET_UNITS]
         wb.save(old)
-        eq(openpyxl.load_workbook(old).sheetnames[0], toxlsx.SHEET_UNITS_OLD,
+        eq(openpyxl.load_workbook(old).sheetnames[0], toxlsx.OLD_NAMES[toxlsx.SHEET_UNITS],
            "这一份用的是旧标签名")
 
         n_new = len(toxlsx.read_units_full(os.path.join(REPO, "CN_Electronic_Industry.xlsx")))
@@ -1461,7 +1499,8 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_old_sheet_name, test_verify_founder_years,
+               test_old_sheet_name, test_old_review_workbook,
+               test_verify_founder_years,
                test_later_rename):
         fn()
     print()

@@ -978,7 +978,7 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
         <span className="dimtext mono">{t.countItems(list.length, rows.length)}</span>
       </div>
       <div className="notebar">
-        {t.productsNote(SOURCE_FILE, kind === "semi" ? "Semi-Product" : "Comp-Product")}
+        {t.productsNote(SOURCE_FILE, kind === "semi" ? "器件" : "整机")}
       </div>
       <div className="tablewrap">
         {kind === "semi" ? (

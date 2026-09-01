@@ -10,9 +10,9 @@ import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitCha
    ------------------------------------------------------------
    工作簿即本站唯一数据源,四张表:
      厂所名录                含 1990 年统计块,两行表头(旧名「Fact and Comp-Shanghai」仍认)
-     Semi-Product            半导体器件投产记录
-     Comp-Product            计算机整机研制记录
-     Name-History            名称沿革(可选,有则名称以此表为准)
+     器件                    半导体器件投产记录(旧名「Semi-Product」)
+     整机                    计算机整机研制记录(旧名「Comp-Product」)
+     名称沿革                可选;有则名称以此表为准(旧名「Name-History」)
    本文件只做「读取 + 归并」,不改写原表语义:地图上的经纬度来自
    geocode.js 的人工近似值,沿革连线由「Founder」列的措辞推定,
    两者在界面上都会显式标注出处,便于核对。
@@ -20,9 +20,9 @@ import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitCha
 
 const SHEET_HINTS = {
   units: ["厂所名录", "fact and comp-shanghai", "fact", "厂所", "units"],
-  semi: ["semi-product", "semi", "半导体"],
-  comp: ["comp-product", "comp", "整机", "计算机"],
-  names: ["name-history", "names", "名称沿革", "名称"],
+  semi: ["器件", "semi-product", "semi", "半导体"],
+  comp: ["整机", "comp-product", "comp", "计算机"],
+  names: ["名称沿革", "name-history", "names", "名称"],
 };
 
 const norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
@@ -487,7 +487,7 @@ function deriveEvents(units, comp, match) {
       from: c.unitIds.slice(),
       to: [],
       note: c.product + (c.remark ? " · " + c.remark : ""),
-      basis: "据「Comp-Product」表推定",
+      basis: "据「整机」表推定",
       derived: true,
       uncertain: !c.date,
       productId: c.id,
@@ -602,9 +602,9 @@ export function exportWorkbook(data, filename) {
   ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 30 }, { wch: 44 }, { wch: 22 }];
 
   XLSX.utils.book_append_sheet(wb, ws1, "厂所名录");
-  XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
-  XLSX.utils.book_append_sheet(wb, ws3, "Comp-Product");
-  XLSX.utils.book_append_sheet(wb, ws4, "Name-History");
+  XLSX.utils.book_append_sheet(wb, ws2, "器件");
+  XLSX.utils.book_append_sheet(wb, ws3, "整机");
+  XLSX.utils.book_append_sheet(wb, ws4, "名称沿革");
   XLSX.writeFile(wb, filename || "CN_Electronic_Industry.xlsx");
 }
 
