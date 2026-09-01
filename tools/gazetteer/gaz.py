@@ -328,12 +328,18 @@ def cmd_diff(args):
     for sheet, r in d.items():
         print("\n【%s】新增 %d、消失 %d、改过 %d"
               % (sheet, len(r["added"]), len(r["gone"]), len(r["changed"])))
+        # 一行拿什么称呼它 —— 各表的抬头不一样,机构沿革压根没有 Unit 那一栏
+        def who_of(x):
+            if x.get("前身") or x.get("后继"):
+                return "%s → %s" % (x.get("前身") or "?", x.get("后继") or "?")
+            return x.get("Unit") or x.get("Product") or x.get("Name") or "?"
+
         for x in r["added"][:12]:
-            print("   + %s" % (x.get("Unit") or x.get("Product") or "?"))
+            print("   + %s" % who_of(x))
         if len(r["added"]) > 12:
             print("     …… 还有 %d 条" % (len(r["added"]) - 12))
         for x in r["gone"][:12]:
-            print("   - %s" % (x.get("Unit") or x.get("Product") or x.get("Name") or "?"))
+            print("   - %s" % who_of(x))
         if len(r["gone"]) > 12:
             print("     …… 还有 %d 条" % (len(r["gone"]) - 12))
         for who, fields in r["changed"][:12]:
