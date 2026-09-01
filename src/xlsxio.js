@@ -23,6 +23,7 @@ const SHEET_HINTS = {
   semi: ["器件", "semi-product", "semi", "半导体"],
   comp: ["整机", "comp-product", "comp", "计算机"],
   names: ["名称沿革", "name-history", "names", "名称"],
+  lineage: ["机构沿革", "lineage", "机构"],
 };
 
 const norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
@@ -408,6 +409,45 @@ function parseComp(ws, match) {
   }).filter((x) => x.product);
 }
 
+/* ---------- 机构沿革表(可选) ----------
+   一行一桩机构变动 —— 合并、分立、划归、合资。「甲厂和乙厂合并成丙厂」是
+   一桩事、牵着三家,记在哪一家名下都别扭,所以前身、后继各占一栏,几家写几家。
+
+   有这张表就以它为准:表里已经写明的那一桩,不再从「Founder」列去猜。
+   Founder 那条路仍留着 —— 这张表里没写到的单位照旧靠它,一条线也不会因为
+   这张表刚立起来而消失。 */
+function parseLineage(ws, match) {
+  const rows = rowsOf(ws);
+  if (!rows.length) return [];
+  const hi = headerIndex(rows, "前身");
+  const col = colFinder(rows[hi] || []);
+  const cY = col("年月", "Date"), cP = col("前身", "From"), cR = col("关系", "Relation");
+  const cT = col("后继", "To"), cN = col("说明", "Note"), cS = col("出处", "Source");
+  if (cP < 0 || cT < 0) return [];
+
+  const out = [];
+  rows.slice(hi + 1).forEach((r) => {
+    const from = splitAliases(cell(r, cP)).flatMap((x) => match(x));
+    const to = splitAliases(cell(r, cT)).flatMap((x) => match(x));
+    if (!from.length || !to.length) return;
+    const date = parseCNDate(cell(r, cY));
+    const rel = String(cell(r, cR) || "").trim() || "合并";
+    out.push({
+      type: rel,
+      year: date ? date.y : null,
+      date,
+      from: [...new Set(from)],
+      to: [...new Set(to)],
+      note: String(cell(r, cN) || "").trim(),
+      source: String(cell(r, cS) || "").trim(),
+      basis: "机构沿革表",
+      derived: false,
+      uncertain: !date,
+    });
+  });
+  return out;
+}
+
 /* ---------- 名称沿革表(可选) ----------
    有这张表就以它为准,没有才回落到从「Founder」列推定的那条线。
    一行一段名称:Unit 对应名录里的单位,From 是这个名字启用的日期,
@@ -452,13 +492,22 @@ function parseNameHistory(ws, match, units) {
 }
 
 /* ---------- 事件推定 ---------- */
-function deriveEvents(units, comp, match) {
+function deriveEvents(units, comp, match, stated = []) {
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
   const events = [];
 
-  /* 一、沿革:「Founder」列里提到的、名录中确有其名的单位 → 前身 */
+  /* 〇、机构沿革表里明写的那些 —— 有表就以表为准 */
+  const spokenFor = new Set();
+  stated.forEach((e) => {
+    events.push({ ...e, id: "ev" + (events.length + 1) });
+    e.to.forEach((id) => spokenFor.add(id));
+  });
+
+  /* 一、沿革:「Founder」列里提到的、名录中确有其名的单位 → 前身。
+     机构沿革表已经替这一家说过话的,就不再拿 Founder 去猜 —— 一桩变动
+     报两遍,图上便是两条线,一条明写一条推定,读的人无从分辨哪个是哪个。 */
   units.forEach((u) => {
-    if (!u.founder) return;
+    if (!u.founder || spokenFor.has(u.id)) return;
     const from = match(u.founder).filter((id) => id !== u.id);
     if (!from.length) return;
     const dt = u.start || u.end;
@@ -523,7 +572,8 @@ export function parseWorkbook(buf) {
   units.forEach((u) => { if (explicitNames[u.id]) u.names = explicitNames[u.id]; });
   const semi = parseSemi(pickSheet(wb, "semi"), match);
   const comp = parseComp(pickSheet(wb, "comp"), match);
-  const events = deriveEvents(units, comp, match);
+  const stated = parseLineage(pickSheet(wb, "lineage"), match);
+  const events = deriveEvents(units, comp, match, stated);
 
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
   semi.forEach((s) => s.unitIds.forEach((id) => byId[id] && byId[id].semi.push(s)));
@@ -589,12 +639,16 @@ export function exportWorkbook(data, filename) {
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
+  /* 八位、月日拿零补足 —— 表里的日期一律这个样子 */
+  const ymd8 = (dt) => (dt
+    ? String(dt.y * 10000 + (dt.m || 0) * 100 + (dt.d || 0)).padStart(8, "0")
+    : "");
+
   const nameRows = [];
   data.units.forEach((u) => {
     if (!u.names || u.names.length < 2) return;
     u.names.forEach((seg) => nameRows.push([
-      u.raw, seg.name,
-      String(seg.from.y * 10000 + (seg.from.m || 0) * 100 + (seg.from.d || 0)).padStart(8, "0"),
+      u.raw, seg.name, ymd8(seg.from),
       seg.nameEn || "", seg.note || "", seg.source || "",
     ]));
   });
@@ -605,6 +659,25 @@ export function exportWorkbook(data, filename) {
   XLSX.utils.book_append_sheet(wb, ws2, "器件");
   XLSX.utils.book_append_sheet(wb, ws3, "整机");
   XLSX.utils.book_append_sheet(wb, ws4, "名称沿革");
+
+  /* 机构沿革:只导明写的那些。推定出来的线不写进这张表 —— 一写进去,
+     下回读回来就成了「表里明写的」,猜的东西便从此当了真。 */
+  const byId = Object.fromEntries(data.units.map((u) => [u.id, u]));
+  const nameOf = (id) => (byId[id] ? byId[id].name : "");
+  const linRows = (data.events || [])
+    .filter((e) => e.basis === "机构沿革表" && e.to && e.to.length)
+    .map((e) => [
+      ymd8(e.date),
+      e.from.map(nameOf).filter(Boolean).join("、"),
+      e.type,
+      e.to.map(nameOf).filter(Boolean).join("、"),
+      e.note || "",
+      e.source || "",
+    ]);
+  const ws5 = XLSX.utils.aoa_to_sheet([["年月", "前身", "关系", "后继", "说明", "出处"], ...linRows]);
+  ws5["!cols"] = [{ wch: 11 }, { wch: 44 }, { wch: 7 }, { wch: 24 }, { wch: 40 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws5, "机构沿革");
+
   XLSX.writeFile(wb, filename || "CN_Electronic_Industry.xlsx");
 }
 

@@ -1429,6 +1429,59 @@ def test_verify_founder_years():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_lineage_sheet():
+    """机构沿革:一行一桩变动,前身后继各占一栏。
+
+    「甲厂和乙厂合并成丙厂」牵着三家,记在哪一家名下都别扭 —— 从前挤在
+    Founder 一栏里,靠关键词猜是合并还是改名,猜不着就一律算改名。
+    这张表是明写的,所以查得比别处严:关系只认那五种,年月、出处都不许空,
+    前身后继的名字得在名录里查得着。"""
+    print("机构沿革表")
+    tmp = tempfile.mkdtemp(prefix="gaz-lin-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+
+        got = toxlsx.read_lineage(x)
+        check(got, "现表里已经有行了(从 Founder 迁来的那一行)")
+        check(all(r["关系"] in toxlsx.RELATIONS for r in got),
+              "现有的行,关系都在那五种里头")
+
+        eq(toxlsx.split_names("甲厂、乙厂"), ["甲厂", "乙厂"], "前身一栏拆得开")
+        eq(toxlsx.split_names(""), [], "空着就是没有")
+
+        wb = openpyxl.load_workbook(x)
+        lin = toxlsx.sheet_of(wb, toxlsx.SHEET_LINEAGE)
+        hh = toxlsx._headers(lin, 1)
+        r = lin.max_row + 1
+
+        def put(ym, pre, rel, post, src):
+            for lab, v in (("年月", ym), ("前身", pre), ("关系", rel),
+                           ("后继", post), ("出处", src)):
+                lin.cell(row=r, column=hh[lab]).value = v
+            wb.save(x)
+            return [(k, why) for k, w, why, _kk in toxlsx.verify(x) if "第%d行" % r in w]
+
+        # 名录里真有的两家,合并成第三家 —— 一句也不该报
+        bad = put("19600721", "一亚电工厂、交直电工厂", "合并", "上海无线电十四厂", "试·一页")
+        eq(bad, [], "写全了就不报(得 %r)" % bad[:3])
+
+        kinds = lambda b: sorted({k for k, _w in b})
+        eq(kinds(put("19600721", "一亚电工厂", "归并", "上海无线电十四厂", "试·一页")),
+           ["机构"], "关系写了个表外的词,拦下来")
+        eq(kinds(put("", "一亚电工厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["日期"], "年月空着,拦下来")
+        eq(kinds(put("19600721", "一亚电工厂", "合并", "上海无线电十四厂", "")),
+           ["出处"], "出处空着,拦下来")
+        eq(kinds(put("19600721", "并无此厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["名录"], "前身名录里查无此人,拦下来")
+        eq(kinds(put("19060721", "一亚电工厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["日期"], "1906 这样的年份,这张表里一样拦")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_old_sheet_name():
     """标签改叫「厂所名录」了,手里的旧工作簿还得读得动。
 
@@ -1499,7 +1552,8 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_old_sheet_name, test_old_review_workbook,
+               test_lineage_sheet, test_old_sheet_name,
+               test_old_review_workbook,
                test_verify_founder_years,
                test_later_rename):
         fn()

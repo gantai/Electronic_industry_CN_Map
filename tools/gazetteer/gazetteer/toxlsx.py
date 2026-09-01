@@ -384,6 +384,25 @@ def read_name_history(xlsx_path):
     return read_flat(xlsx_path, SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"])
 
 
+# 机构沿革表:一行一桩机构变动,而不是一行一家单位。
+# 「甲厂和乙厂合并成丙厂」是一桩事,牵着三家 —— 记在哪一家名下都是别扭的,
+# 所以另立一张,前身、后继各占一栏,几家就写几家,顿号隔开。
+LINEAGE_COLS = ["年月", "前身", "关系", "后继", "说明", "出处"]
+# 关系只这五种。写别的,verify 会拦下来 —— 不然一栏自由文字,又回到 Founder
+# 那个老样子:靠关键词猜是哪一类,猜不着就一律算改名。
+RELATIONS = ("合并", "分立", "划归", "合资", "更名")
+
+
+def read_lineage(xlsx_path):
+    """机构沿革:合并、分立、划归、合资,一行一桩。"""
+    return read_flat(xlsx_path, SHEET_LINEAGE, LINEAGE_COLS)
+
+
+def split_names(v):
+    """「甲厂、乙厂」→ ['甲厂', '乙厂']。前身、后继两栏都可以写好几家。"""
+    return [x.strip() for x in ALIAS_SPLIT.split(str(v or "")) if x.strip()]
+
+
 def read_semi(xlsx_path):
     return read_flat(xlsx_path, SHEET_SEMI, ["Product", "Factory", "Time", "Personnel", "Remark"])
 
@@ -465,6 +484,7 @@ DIFF_KEYS = {
     SHEET_COMP: (("Product", "Time"), 2, 1),
     SHEET_SEMI: (("Product", "Factory", "Time"), 2, 1),
     SHEET_NAMES: (("Unit", "Name", "From"), 2, 1),
+    SHEET_LINEAGE: (("年月", "前身", "后继"), 2, 1),
 }
 
 
@@ -928,6 +948,46 @@ def verify(xlsx_path, geocode_js=None):
                 bad.append(("沿革", "%s 全表" % SHEET_NAMES,
                             "「序」或「至」有 %d 行对不上 —— 跑一遍 gaz tidy 就理好了" % stale,
                             "序至失准"))
+
+    # 机构沿革:一行一桩变动。这张表是**明写**的,写错就直接错在图上 ——
+    # Founder 那条推定的线还能推说「是猜的」,这张不能
+    if tab(wb, SHEET_LINEAGE) is not None:
+        w = sheet_of(wb, SHEET_LINEAGE)
+        hh = _headers(w, 1)
+        for r in range(2, w.max_row + 1):
+            got = {c: str(w.cell(row=r, column=hh[c]).value or "").strip()
+                   for c in LINEAGE_COLS if c in hh}
+            if not any(got.values()):
+                continue
+            where = "%s 第%d行 %s" % (SHEET_LINEAGE, r,
+                                     "%s→%s" % (got.get("前身", "?"), got.get("后继", "?")))
+            key = "%s·%s·%s" % (got.get("年月", ""), got.get("前身", ""), got.get("后继", ""))
+
+            rel = got.get("关系", "")
+            if rel not in RELATIONS:
+                bad.append(("机构", where,
+                            "关系写作「%s」—— 只认 %s" % (rel or "空着", "、".join(RELATIONS)),
+                            key + "·关系"))
+            for side in ("前身", "后继"):
+                who = split_names(got.get(side, ""))
+                if not who:
+                    bad.append(("机构", where, "%s 空着 —— 一桩变动总得有来处和去处" % side,
+                                key + "·" + side))
+                for one in who:
+                    if _bare(one) not in names and _bare(one) not in elsewhere:
+                        bad.append(("名录", where,
+                                    "%s「%s」名录里查无此人" % (side, one),
+                                    key + "·" + one))
+            ym = got.get("年月", "")
+            if ym:
+                why = _year_trouble(ym, "年月")
+                if why:
+                    bad.append(("日期", where, why, key + "·年月"))
+            else:
+                bad.append(("日期", where, "没写年月 —— 图上这条线就落不到年份上",
+                            key + "·年月"))
+            if not got.get("出处", ""):
+                bad.append(("出处", where, "没写出处", key + "·出处"))
 
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),

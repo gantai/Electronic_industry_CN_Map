@@ -14,6 +14,7 @@
 | `器件` | 半导体器件投产记录 | `Product`、`Factory`、`Time`、`Personnel`、`Remark` |
 | `整机` | 计算机整机研制记录 | `Product`、`字长`、`内存`、`Speed（次秒）`、`Research Insti`、`Factory`、`Time`、`Personnel`、`Remark` |
 | `名称沿革` | 名称沿革(可选) | `Unit`、`Name`、`From`、`Remark`、`Source`;可选 `Name EN` |
+| `机构沿革` | 机构变动(可选) | `年月`、`前身`、`关系`(合并 / 分立 / 划归 / 合资 / 更名)、`后继`、`说明`、`出处`;前身与后继都可写多家,顿号隔开 |
 
 约定与容错:
 
