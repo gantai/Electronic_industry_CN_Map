@@ -9,6 +9,7 @@
 样张见 fixture/README.md,盯的是几处最容易张冠李戴的地方。
 """
 
+import io
 import os
 import re
 import shutil
@@ -1429,6 +1430,34 @@ def test_verify_founder_years():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_accepted_survives_rename():
+    """标签改名,不该把整本《已核》作废。
+
+    记号是拿表名开头的(「Comp-Product·某型机·某厂」)。改名那天同一个毛病的
+    记号跟着变样,认过的几十条旧账就会一夜涌回来 —— 而《已核》本来就是为了
+    把旧账压下去、让新伤显出来的。真发生过一回。"""
+    print("《已核》熬不熬得过改名")
+    tmp = tempfile.mkdtemp(prefix="gaz-accrn-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        bad = toxlsx.verify(x, geocode_js=os.path.join(REPO, "src", "geocode.js"))
+        comp = [t for t in bad if t[3].startswith(toxlsx.SHEET_COMP + "·")]
+        check(comp, "现表里有以「%s·」开头的记号" % toxlsx.SHEET_COMP)
+
+        # 照改名以前的样子写一份《已核》—— 表名是英文的
+        old_name = toxlsx.OLD_NAMES[toxlsx.SHEET_COMP]
+        with io.open(toxlsx.accepted_path(x), "w", encoding="utf-8") as f:
+            for kind, _w, _why, key in comp:
+                f.write("%s\t%s\t试\n" % (kind, old_name + key[len(toxlsx.SHEET_COMP):]))
+
+        seen = toxlsx.load_accepted(x)
+        still = [t for t in comp if (t[0], t[3]) not in seen]
+        eq(still, [], "旧写法的记号照样认得出,认过的不再报(还报着 %d 条)" % len(still))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_lineage_sheet():
     """机构沿革:一行一桩变动,前身后继各占一栏。
 
@@ -1552,7 +1581,8 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_lineage_sheet, test_old_sheet_name,
+               test_lineage_sheet, test_accepted_survives_rename,
+               test_old_sheet_name,
                test_old_review_workbook,
                test_verify_founder_years,
                test_later_rename):

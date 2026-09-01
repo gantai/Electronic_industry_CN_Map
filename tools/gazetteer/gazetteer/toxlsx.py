@@ -798,6 +798,20 @@ def accepted_path(xlsx_path):
     return os.path.splitext(xlsx_path)[0] + ".已核.tsv"
 
 
+def _rename_key(key):
+    """把记号里的旧表名换成新的。
+
+    记号是拿表名开头的(「Comp-Product·某型机·某厂」)。标签改名那天,
+    同一个毛病的记号跟着变了样,于是**整本《已核》一夜作废** —— 认过的
+    几十条旧账全涌回来,新伤又被埋掉,而这正是《已核》要防的事。
+    读进来的时候顺手换掉,认过的还是认过的。
+    """
+    for new_name, old_name in OLD_NAMES.items():
+        if key.startswith(old_name + "·"):
+            return new_name + key[len(old_name):]
+    return key
+
+
 def load_accepted(xlsx_path):
     """从前看过、认下了的那些毛病 —— 再报一遍只会把新的埋掉。"""
     path = accepted_path(xlsx_path)
@@ -810,7 +824,7 @@ def load_accepted(xlsx_path):
                 continue
             col = line.rstrip("\n").split("\t")
             if len(col) >= 2:
-                out.add((col[0], col[1]))
+                out.add((col[0], _rename_key(col[1])))
     return out
 
 
