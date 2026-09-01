@@ -1324,6 +1324,41 @@ def test_verify():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_verify_knows_geocode_aliases():
+    """geocode.js 里认下的别名,verify 不该再报「查无此人」。
+
+    「上海市计算中心」即上海市计算技术研究所 —— 别名表里写着,图上那条线连得
+    好好的。verify 从前只翻工作簿,于是报它一句查无此人,白让人去核一趟。"""
+    print("判名字时也认 geocode.js 的别名")
+    tmp = tempfile.mkdtemp(prefix="gaz-ali-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        geo = os.path.join(REPO, "src", "geocode.js")
+        wb = openpyxl.load_workbook(x)
+        w = wb[toxlsx.SHEET_COMP]
+        hh = toxlsx._headers(w, 1)
+        r = w.max_row + 1
+        w.cell(row=r, column=hh["Product"]).value = "试·某型计算机"
+        # 一个只在 geocode.js 里认得的简称,一个哪儿都没有的
+        w.cell(row=r, column=hh["Research Insti"]).value = "上海市计算中心、并无此厂"
+        wb.save(x)
+
+        def missed(bad):
+            return "、".join(why for kind, _w, why, _k in bad
+                             if kind == "名录" and "试·某型计算机" in _w)
+
+        bare = missed(toxlsx.verify(x))
+        check("上海市计算中心" in bare, "不给别名表,简称会被报出来(得 %r)" % bare)
+        withgeo = missed(toxlsx.verify(x, geocode_js=geo))
+        check("上海市计算中心" not in withgeo,
+              "给了别名表,简称不再报(得 %r)" % withgeo)
+        check("并无此厂" in withgeo, "真查无此人的照报不误(得 %r)" % withgeo)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_later_rename():
     """「后更名为」没说是哪一年 —— 宁可不记年份,也不能安上一个。"""
     print("后更名为")
@@ -1364,7 +1399,7 @@ def main():
                test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
-               test_later_rename):
+               test_verify_knows_geocode_aliases, test_later_rename):
         fn()
     print()
     if FAILED:

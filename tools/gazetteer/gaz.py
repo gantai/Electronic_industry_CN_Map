@@ -402,7 +402,7 @@ def cmd_verify(args):
 
     默认只报**新的**。从前看过、认下的那些记在《已核》里,不再翻出来 ——
     二十八条「没写出处」的旧账每回都摆在头里,新伤就没人看得见了。"""
-    bad = toxlsx.verify(args.xlsx)
+    bad = toxlsx.verify(args.xlsx, geocode_js=DEFAULT_GEOCODE)
 
     if args.accept:
         path, n = toxlsx.save_accepted(args.xlsx, bad)

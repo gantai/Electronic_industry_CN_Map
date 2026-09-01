@@ -770,7 +770,7 @@ def save_accepted(xlsx_path, findings):
     return path, len(rows)
 
 
-def verify(xlsx_path):
+def verify(xlsx_path, geocode_js=None):
     """手改过工作簿之后,看看有没有改坏。只报,一个格子也不动。
 
     Excel 改起来顺手,坏起来也无声无息:日期写成 1958、坐标只填了一半、
@@ -779,10 +779,19 @@ def verify(xlsx_path):
 
     返回 [(哪一类, 哪一行, 怎么了, 记号)]。分类是为了让「出处空着」这种
     成片的旧账,别把「研制单位打错字」这种一处一处的伤埋掉。「记号」是这条
-    毛病的身份,不含行号 —— 行会挪,毛病还是那个毛病,拿它跟《已核》比对。"""
+    毛病的身份,不含行号 —— 行会挪,毛病还是那个毛病,拿它跟《已核》比对。
+
+    `geocode_js` 给了就连它的别名表一起认。「上海市计算中心」在 geocode.js 里
+    早认作上海市计算技术研究所,图上那条线连得好好的 —— 只看工作簿就要报它一句
+    「查无此人」,那是白让人去核一趟。"""
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     bad = []
+    elsewhere = set()
+    if geocode_js and os.path.exists(geocode_js):
+        for canon, aliases in read_aliases(geocode_js).items():
+            elsewhere.add(canon)
+            elsewhere |= set(aliases)
 
     ws = wb[SHEET_UNITS]
     h = _headers(ws, 2)
@@ -887,7 +896,8 @@ def verify(xlsx_path):
                     continue
                 for one in ALIAS_SPLIT.split(str(w.cell(row=r, column=hh[c]).value or "")):
                     one = _bare(one)
-                    if one and one not in names and one not in miss:
+                    if one and one not in names and one not in elsewhere \
+                            and one not in miss:
                         miss.append(one)
             if miss:
                 bad.append(("名录", "%s 第%d行 %s" % (sheet, r, who or ""),
