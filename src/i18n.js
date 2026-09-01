@@ -276,6 +276,14 @@ const en = {
   legendIndustry: "INDUSTRY (click to filter)",
   legendFactory: "Factory", legendInstitute: "Institute", legendJv: "Joint venture",
   legendVague: "Location approximate",
+  legendPlacement: "PLACEMENT",
+  precTier: { street: "Street", district: "District", city: "City centre (no address)" },
+  precHint: {
+    street: "The gazetteer gives a street address and the point is inferred from it — only this tier means we know where it stood",
+    district: "District only; the point is the district centroid, shared by every unit in that district",
+    city: "No address on record — the city centre is where they go for want of anywhere else. Hidden by default; click to show",
+  },
+  placementHidden: (n) => n + " hidden",
 
   rulerLabel: (y) => "Year slider, currently " + y + ", use left and right arrow keys",
   play: "Play", pause: "Pause", prevYear: "Previous year", nextYear: "Next year",

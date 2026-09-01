@@ -77,7 +77,7 @@ function clusterUnits(units, lang, thresholdDeg = 0.6) {
 }
 
 /* ============================================================ MAP ============================================================ */
-function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
+function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, lang }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const zoomRef = useRef(null);
@@ -254,6 +254,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
         const ua = byId[a], ub = byId[b];
         if (!ua || !ub) return;
         if (!shown.has(ua.industry) && !shown.has(ub.industry)) return;
+        // 两头都藏起来了,这条线也就没处画
+        if (!precShown.has(ua.precision) && !precShown.has(ub.precision)) return;
         const pa = posOf(a), pb = posOf(b);
         if (!pa || !pb) return;
         const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
@@ -268,7 +270,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
       });
     });
     return out;
-  }, [evNear, posOf, year, byId, shown]);
+  }, [evNear, posOf, year, byId, shown, precShown]);
 
   const zoomBy = (f) => {
     if (svgRef.current && zoomRef.current)
@@ -323,11 +325,11 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
 
   const nodeList = useMemo(() => {
     return data.units
-      .filter((u) => basePos[u.id] && shown.has(u.industry))
+      .filter((u) => basePos[u.id] && shown.has(u.industry) && precShown.has(u.precision))
       .filter((u) => isExpanded(clusterOf[u.id]))
       .map((u) => ({ u, alive: isAlive(u, year), ghost: !isAlive(u, year) && ghostSet.has(u.id) }))
       .filter((n) => n.alive || n.ghost);
-  }, [data.units, basePos, shown, isExpanded, clusterOf, year, ghostSet]);
+  }, [data.units, basePos, shown, precShown, isExpanded, clusterOf, year, ghostSet]);
 
   /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
   const labelSet = useMemo(() => {
@@ -405,7 +407,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
           {/* 折叠的城市徽标 */}
           {clusterInfo.map((c, ci) => {
             if (isExpanded(ci)) return null;
-            const members = c.ids.map((id) => byId[id]).filter((u) => u && shown.has(u.industry));
+            const members = c.ids.map((id) => byId[id])
+              .filter((u) => u && shown.has(u.industry) && precShown.has(u.precision));
             const nAlive = members.filter((m) => isAlive(m, year)).length;
             const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)))
               || c.ids.some((id) => glowMap.has(id));
@@ -531,7 +534,15 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
 }
 
 /* ============================================================ LEGEND + FILTER ============================================================ */
-function Legend({ data, shown, setShown, t, lang }) {
+/* 落点分四档,只有前两档是「知道它在哪儿」。给定坐标与街段并作一个开关 ——
+   看图的人要分的是「查得到位置」和「查不到」,不是数据从哪一栏来的。 */
+const PREC_TIERS = [
+  { key: "street", also: ["given"] },
+  { key: "district", also: [] },
+  { key: "city", also: [] },
+];
+
+function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
   const industries = useMemo(
     () => Array.from(new Set(data.units.map((u) => u.industry).filter(Boolean))),
     [data.units]
@@ -540,6 +551,21 @@ function Legend({ data, shown, setShown, t, lang }) {
     const next = new Set(shown);
     if (next.has(ind)) next.delete(ind); else next.add(ind);
     setShown(next.size ? next : new Set(industries));
+  };
+
+  const precCount = useMemo(() => {
+    const c = {};
+    data.units.forEach((u) => { c[u.precision] = (c[u.precision] || 0) + 1; });
+    return c;
+  }, [data.units]);
+  const tierN = (tier) => [tier.key, ...tier.also].reduce((n, k) => n + (precCount[k] || 0), 0);
+  const hidden = data.units.filter((u) => !precShown.has(u.precision)).length;
+  const togglePrec = (tier) => {
+    const keys = [tier.key, ...tier.also];
+    const next = new Set(precShown);
+    if (keys.every((k) => next.has(k))) keys.forEach((k) => next.delete(k));
+    else keys.forEach((k) => next.add(k));
+    setPrecShown(next);
   };
   return (
     <div className="legend">
@@ -557,6 +583,25 @@ function Legend({ data, shown, setShown, t, lang }) {
         <span className="lg-item"><i className="sw sw-ring" style={{ background: "#BBD3EC" }} />{t.legendJv}</span>
         <span className="lg-item"><i className="sw sw-uncertain" />{t.legendVague}</span>
       </div>
+      <div className="lg-row">
+        <span className="lg-title mono lg-inline">{t.legendPlacement}</span>
+        {PREC_TIERS.map((tier) => {
+          const n = tierN(tier);
+          if (!n) return null;
+          const on = [tier.key, ...tier.also].every((k) => precShown.has(k));
+          return (
+            <button key={tier.key} className={"lg-item lg-btn" + (on ? "" : " off")}
+              onClick={() => togglePrec(tier)} title={t.precHint[tier.key]}>
+              <i className={"sw" + (tier.key === "city" ? " sw-uncertain" : "")}
+                style={tier.key === "city" ? undefined
+                  : { background: "#BBD3EC", opacity: tier.key === "district" ? .45 : 1 }} />
+              {t.precTier[tier.key]}<span className="dim mono lg-n">{n}</span>
+            </button>
+          );
+        })}
+        {hidden > 0 && <span className="lg-item dim">{t.placementHidden(hidden)}</span>}
+      </div>
+
       <div className="lg-row">
         {Object.entries(EVENT_META).map(([kk, m]) => (
           <span key={kk} className="lg-item">
@@ -1337,6 +1382,10 @@ export default function App() {
   const [introOpen, setIntroOpen] = useState(true);
   const [flyReq, setFlyReq] = useState(null);
   const [shown, setShown] = useState(() => new Set(boot.data.units.map((u) => u.industry).filter(Boolean)));
+  /* 落点档次的开关。**默认不显「市中心」那一档** —— 那些单位志书没写地址,
+     落在市中心只是没处放,不是它们在市中心;几十家叠在一个点上,既看不清,
+     又像是在说它们都挤在天安门。要看的时候点开即可,一家也没丢。 */
+  const [precShown, setPrecShown] = useState(() => new Set(["given", "street", "district"]));
 
   const byId = useMemo(() => Object.fromEntries(data.units.map((u) => [u.id, u])), [data.units]);
 
@@ -1456,8 +1505,9 @@ export default function App() {
           <>
             <MapView data={data} byId={byId} year={year} sel={sel}
               setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown}
-              t={t} lang={lang} />
-            <Legend data={data} shown={shown} setShown={setShown} t={t} lang={lang} />
+              precShown={precShown} t={t} lang={lang} />
+            <Legend data={data} shown={shown} setShown={setShown}
+              precShown={precShown} setPrecShown={setPrecShown} t={t} lang={lang} />
             {!selU && introOpen && (
               <div className="panel introcard">
                 <div className="panel-h">
@@ -1618,6 +1668,8 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .lg-btn{border:1px solid transparent;border-radius:2px;padding:1px 5px;font-size:11px}
 .lg-btn:hover{border-color:var(--paper2)}
 .lg-btn.off{opacity:.35;text-decoration:line-through}
+.lg-inline{margin:0 2px 0 0;display:inline-block}
+.lg-n{margin-left:4px;font-size:10px}
 .sw{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid #0E2440}
 .sw-square{border-radius:1.5px}
 .sw-ring{box-shadow:0 0 0 2.5px rgba(187,211,236,.4)}
