@@ -90,6 +90,18 @@ export const PLACES = {
   /* ──────── Beijing ──────── 0 条
      `gaz geocode-city --city Beijing` 出的草稿填好之后粘在这儿。
      41 家有地址、还没坐标,归在 32 条路上,酒仙桥路一条占 10 家。 */
+  "北京东方电子集团股份有限公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路10号" },
+  "北京东光电工厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路12号" },
+  "北京有线电总厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
+  "北京国际交换系统有限公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
+
+  "北京无线电工具设备厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+  "北京晨星无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+  "北京第一无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+ 
+  "北京第二无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
+  "北京电子动力公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
+  "北京飞行电子总公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
 };
 
 /* ------------------------------------------------------------
