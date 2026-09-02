@@ -317,6 +317,40 @@ def merge_known(xlsx_path, geocode_js=None):
     return known
 
 
+def read_places_full(geocode_js):
+    """PLACES 里每一条的内容 —— {单位名: {lat, lng, district, precision}}。
+
+    `read_places` 只回名字(判「有没有这一条」够用了);核对坐标得看值。
+    这是从 JS 源码里认字读出来的,不是跑 JS —— 所以只认得住那几种写法:
+    数字、null、双引号字符串。写别的(表达式、单引号)会当作没有。
+    """
+    if not os.path.exists(geocode_js):
+        return {}
+    with io.open(geocode_js, encoding="utf-8") as f:
+        src = f.read()
+    m = re.search(r"export\s+const\s+PLACES\s*=\s*\{(.*?)\n\};", src, re.S)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).split("\n"):
+        k = re.match(r'\s*"([^"]+)"\s*:\s*\{(.*)\}\s*,?\s*$', line)
+        if not k:
+            continue
+        rec = {}
+        for field, val in re.findall(r'(\w+)\s*:\s*("(?:[^"]*)"|null|-?[\d.]+)', k.group(2)):
+            if val == "null":
+                rec[field] = None
+            elif val.startswith('"'):
+                rec[field] = val[1:-1]
+            else:
+                try:
+                    rec[field] = float(val)
+                except ValueError:
+                    rec[field] = None
+        out[k.group(1)] = rec
+    return out
+
+
 def read_places(geocode_js):
     """src/geocode.js 的 PLACES 里已经有落点的单位名。"""
     if not os.path.exists(geocode_js):

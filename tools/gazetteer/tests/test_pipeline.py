@@ -1458,6 +1458,39 @@ def test_accepted_survives_rename():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_point_in_district():
+    """点落在哪个区里 —— 填好的坐标靠这个核,不必装 Node、不必开浏览器。"""
+    print("点落在哪个区")
+    import json
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "addbase", os.path.join(REPO, "tools", "geo", "添底图.py"))
+    geo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(geo)
+    with io.open(os.path.join(REPO, "src", "city.geo.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+
+    def at(lng, lat):
+        for feat in doc["features"]:
+            if any(geo.point_in_ring(lng, lat, r) for r in geo._rings(feat["geometry"])):
+                return feat["properties"].get("name")
+        return None
+
+    eq(at(116.3975, 39.9087), "东城", "天安门在东城")
+    eq(at(116.3264, 40.0031), "海淀", "清华在海淀")
+    eq(at(121.4737, 31.2304), "黄浦", "人民广场在黄浦")
+    eq(at(100.0, 40.0), None, "内蒙古的荒地,不属于图上任何一个区")
+
+    # 撤并过的区:老名字落进新区里是对的,不是填错了
+    import importlib.util as _iu
+    gspec = _iu.spec_from_file_location("gaz_gd", os.path.join(HERE, "..", "gaz.py"))
+    gaz = _iu.module_from_spec(gspec)
+    gspec.loader.exec_module(gaz)
+    check(gaz.same_district("崇文", "东城"), "崇文 2010 年并进东城,算同一个")
+    check(gaz.same_district("浦东", "浦东新"), "底图作「浦东新」,表里作「浦东」")
+    check(not gaz.same_district("徐汇", "杨浦"), "真不相干的两个区,不算")
+
+
 def test_places_dupe_key():
     """geocode.js 里同一个名字写两遍 —— JS 一声不吭地拿后一条顶掉前一条。
 
@@ -1629,7 +1662,7 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
+               test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
                test_old_sheet_name,
                test_old_review_workbook,
                test_verify_founder_years,

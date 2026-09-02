@@ -672,6 +672,115 @@ def road_of(addr):
     return HOUSE_NO.sub("", a).strip() or a
 
 
+# 区界底图是**当代**政区,而这张图管的是那之前的年头。撤并过的区,
+# 老名字落进新区里是对的,不是填错了 —— 与 src/xlsxio.js 的 GONE_DISTRICT 同一份账。
+GONE_DISTRICT = {
+    "崇文": "东城", "宣武": "西城",          # 北京 2010
+    "南市": "黄浦", "卢湾": "黄浦",          # 上海 2000 / 2011
+    "闸北": "静安",                          # 上海 2015
+    "浦东": "浦东新",                        # 底图作「浦东新」,表里作「浦东」
+}
+
+
+def same_district(want, got):
+    """表里写的区,跟点落进去的那个区,算不算同一个。"""
+    want, got = (want or "").strip(), (got or "").strip()
+    if want == got:
+        return True
+    return GONE_DISTRICT.get(want) == got or GONE_DISTRICT.get(got) == want
+
+
+# 区界是简化过的多边形,一两百米的出入是它自己的误差。差这么点不算填错。
+NEAR_KM = 0.6
+
+
+def _km_to_district(doc, geo_mod, name, lng, lat):
+    """这个点离那个区的边界有多远(公里)。落在里头的话是 0。"""
+    import math
+    kx = 111.32 * math.cos(math.radians(lat))
+    ky = 110.57
+    best = float("inf")
+    for f in doc.get("features", []):
+        if f.get("properties", {}).get("name") != name:
+            continue
+        for ring in geo_mod._rings(f.get("geometry", {})):
+            for i in range(len(ring)):
+                ax, ay = ring[i][0] * kx, ring[i][1] * ky
+                bx, by = ring[(i + 1) % len(ring)][0] * kx, ring[(i + 1) % len(ring)][1] * ky
+                px, py = lng * kx, lat * ky
+                dx, dy = bx - ax, by - ay
+                t = 0.0 if (dx == 0 and dy == 0) else max(
+                    0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+                best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+    return 0.0 if best == float("inf") else best
+
+
+def cmd_geocode_check(args):
+    """填好的坐标,核一核落对了没有 —— 不必装 Node,也不必开浏览器。
+
+    每条落点自己说了在哪个区(`district: "朝阳"`)。区界多边形就在
+    `src/city.geo.json` 里,拿点去套:套不进那个区,就是填错了或填串了。
+    这比在地图上肉眼看还准 —— 差一条街看不出来,差一个区一定报。"""
+    import io
+    import json
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "addbase", os.path.join(REPO, "tools", "geo", "添底图.py"))
+    geo_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(geo_mod)
+
+    geo_path = os.path.join(REPO, "src", "city.geo.json")
+    if not os.path.exists(geo_path):
+        sys.exit("找不到区界底图:%s" % geo_path)
+    with io.open(geo_path, encoding="utf-8") as f:
+        doc = json.load(f)
+
+    places = toxlsx.read_places_full(DEFAULT_GEOCODE)
+    done = [(n, p) for n, p in places.items()
+            if p.get("lat") is not None and p.get("lng") is not None]
+    if not done:
+        print("PLACES 里还没有填好坐标的条目。")
+        return 0
+
+    bad, near, nodist, ok = [], [], [], 0
+    for name, p in sorted(done):
+        lng, lat = float(p["lng"]), float(p["lat"])
+        hit = None
+        for f in doc.get("features", []):
+            pr = f.get("properties", {})
+            if any(geo_mod.point_in_ring(lng, lat, r)
+                   for r in geo_mod._rings(f.get("geometry", {}))):
+                hit = (pr.get("name", ""), pr.get("city", ""))
+                break
+        want = (p.get("district") or "").strip()
+        if hit is None:
+            nodist.append((name, lat, lng, want))
+        elif want and not same_district(want, hit[0]):
+            # 差多远才算差错?区界是**简化过**的多边形,一两百米的出入是它自己的
+            # 误差,不是你填错了。量一量到那个区的距离,照远近分开说。
+            km = _km_to_district(doc, geo_mod, want, lng, lat)
+            (near if km < NEAR_KM else bad).append((name, lat, lng, want, hit[0], hit[1], km))
+        else:
+            ok += 1
+
+    print("填好坐标的 %d 条:对得上 %d、擦着区界 %d、**落错区 %d**、出了区界 %d"
+          % (len(done), ok, len(near), len(bad), len(nodist)))
+    for name, lat, lng, want, got, city, km in bad:
+        print("  ✗ %-20s 写着「%s」,可 %.4f, %.4f 落在%s%s —— 离「%s」还有 %.1f 公里"
+              % (name, want, lat, lng, city, got, want, km))
+    for name, lat, lng, want in nodist:
+        print("  ? %-20s %.4f, %.4f 不在任何一个区界里%s"
+              % (name, lat, lng, ("(表里写着「%s」)" % want) if want else ""))
+    if near:
+        print("\n  擦着区界的 %d 条,离得都不到 %.1f 公里 —— 区界是简化过的多边形,"
+              "这点出入是它自己的误差,不必改:" % (len(near), NEAR_KM))
+        for name, _lat, _lng, want, got, _city, km in near:
+            print("     %-20s 写「%s」,落在「%s」,相距 %.2f 公里" % (name, want, got, km))
+    if not bad and not nodist:
+        print("\n  没有落错的。")
+    return 1 if bad else 0
+
+
 def cmd_geocode_city(args):
     """按路排的落点草稿 —— 总表里那些「有地址、没坐标」的单位。
 
@@ -983,6 +1092,10 @@ def main(argv=None):
     p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿", parents=[common])
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")
     p.set_defaults(func=cmd_geocode)
+
+    p = sub.add_parser("geocode-check", parents=[common],
+                       help="填好的坐标核一核:落在它自己写的那个区里没有")
+    p.set_defaults(func=cmd_geocode_check)
 
     p = sub.add_parser("geocode-city", parents=[common],
                        help="总表里「有地址、没坐标」的单位 → 按路排的落点草稿")
