@@ -54,11 +54,11 @@ export function cityAt(city) {
 
 /* key = 原表 A 列的单位名称(去掉括号别名前的完整写法亦可,见 xlsxio.js 的规范化) */
 export const PLACES = {
+  /* ──────── Shanghai ──────── 26 条 */
   "上海电子计算机厂": { lat: 31.2380, lng: 121.4460, district: "静安", precision: "street" },
   "上海微电脑厂": { lat: 31.1963, lng: 121.4098, district: "长宁", precision: "street" },
   "上海计算机技术服务公司": { lat: 31.2118, lng: 121.4344, district: "徐汇", precision: "street" },
   "上海王安电脑发展公司": { lat: 31.1590, lng: 121.4400, district: "徐汇", precision: "street" },
-
   "一亚电工实验室": { lat: 31.2245, lng: 121.4455, district: "静安", precision: "street", note: "原福煦路,今延安中路" },
   "一亚电工厂": { lat: 31.2600, lng: 121.4795, district: "虹口", precision: "street" },
   "国营上海精密医疗器械厂": { lat: null, lng: null, precision: "city" },
@@ -69,23 +69,27 @@ export const PLACES = {
   "上海无线电十厂": { lat: 31.2385, lng: 121.5675, district: "浦东", precision: "street" },
   "上海无线电十四厂": { lat: 31.1975, lng: 121.4778, district: "黄浦", precision: "street" },
   "上海无线电十七厂": { lat: 31.2120, lng: 121.4960, district: "黄浦", precision: "street", note: "1966 年 9 月由北苏州路 659 号迁董家渡路 175 号,此处取后者" },
-
   "黄浦仪器厂": { lat: 31.0505, lng: 121.3865, district: "闵行", precision: "street" },
   "上海长江计算机打印厂": { lat: 31.1665, lng: 121.4020, district: "徐汇", precision: "street", note: "漕河泾新兴技术开发区" },
-  "沪兴电子有限公司": { lat: 31.0505, lng: 121.3865, district: "闵行", precision: "street", note: "与黄浦仪器厂同址" },
-
   "上海工业自动化仪表研究所": { lat: 31.1735, lng: 121.4250, district: "徐汇", precision: "street" },
-  "华东计算技术研究所": { lat: 31.2378, lng: 121.4690, district: "黄浦", precision: "street", note: "原凤阳路 338 号,后迁嘉定澄桥,此处取前者" },
   "上海微电机研究所": { lat: 31.1820, lng: 121.4640, district: "徐汇", precision: "street" },
   "上海传输线研究所": { lat: 31.2790, lng: 121.4995, district: "虹口", precision: "street" },
   "上海市计算技术研究所": { lat: 31.2218, lng: 121.4385, district: "静安", precision: "street" },
   "上海微波技术研究所": { lat: 31.2430, lng: 121.4230, district: "普陀", precision: "street" },
   "上海微波设备研究所": { lat: 31.2700, lng: 121.3480, district: "普陀", precision: "street" },
-  "中国科学院上海冶金研究所": { lat: 31.2205, lng: 121.4180, district: "长宁", precision: "street" },
   "上海市无线电技术研究所": { lat: 31.2010, lng: 121.4225, district: "徐汇", precision: "street" },
   "上海市电子光学技术研究所": { lat: null, lng: null, precision: "city" },
   "上海仪器仪表研究所": { lat: null, lng: null, precision: "city", note: "原表作龙江路 225 号,路段未能核实" },
   "上海光学仪器研究所": { lat: null, lng: null, precision: "city" },
+
+  /* ──────── 未标城市 ──────── 3 条 */
+  "沪兴电子有限公司": { lat: 31.0505, lng: 121.3865, district: "闵行", precision: "street", note: "与黄浦仪器厂同址" },
+  "华东计算技术研究所": { lat: 31.2378, lng: 121.4690, district: "黄浦", precision: "street", note: "原凤阳路 338 号,后迁嘉定澄桥,此处取前者" },
+  "中国科学院上海冶金研究所": { lat: 31.2205, lng: 121.4180, district: "长宁", precision: "street" },
+
+  /* ──────── Beijing ──────── 0 条
+     `gaz geocode-city --city Beijing` 出的草稿填好之后粘在这儿。
+     41 家有地址、还没坐标,归在 32 条路上,酒仙桥路一条占 10 家。 */
 };
 
 /* ------------------------------------------------------------

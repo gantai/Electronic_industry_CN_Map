@@ -398,6 +398,7 @@ VERIFY_NOTE = {
     "坐标": "Lat/Lng 两个一起填,填了就以你填的为准",
     "出处": "哪一本、哪一页 —— 空着的将来没法回查",
     "沿革": "改名链上立不住的段落",
+    "落点": "src/geocode.js 里的毛病 —— 同一个名字写了两遍,JS 只认最后一条",
     "机构": "合并、分立、划归、合资 —— 这张表是明写的,写错就直接错在图上",
     "名录": "这些名字在厂所表里查无此人。打错字、把动词粘进了名字、"
             "或者这一家本来就没登记 —— 连不上的那条线,地图上什么也看不出来",
@@ -431,7 +432,7 @@ def cmd_verify(args):
     for kind, where, why, _key in fresh:
         by.setdefault(kind, []).append((where, why))
     print("%d 处可疑:" % len(fresh))
-    for kind in ("名录", "机构", "沿革", "日期", "坐标", "出处"):
+    for kind in ("名录", "机构", "沿革", "落点", "日期", "坐标", "出处"):
         rows = by.pop(kind, [])
         if not rows:
             continue

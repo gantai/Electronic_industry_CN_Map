@@ -963,6 +963,20 @@ def verify(xlsx_path, geocode_js=None):
                             "「序」或「至」有 %d 行对不上 —— 跑一遍 gaz tidy 就理好了" % stale,
                             "序至失准"))
 
+    # geocode.js 的 PLACES 是拿单位名当钥匙的一个 JS 对象。同一个钥匙写两遍,
+    # **JS 一声不吭地拿后一条顶掉前一条** —— 不报错、不警告,只是有一家的
+    # 坐标悄悄换成了另一家的。京沪两地的条目混在一张表里,越往后越容易撞上。
+    if geocode_js and os.path.exists(geocode_js):
+        with io.open(geocode_js, encoding="utf-8") as f:
+            src = f.read()
+        m = re.search(r"export\s+const\s+PLACES\s*=\s*\{(.*?)\n\};", src, re.S)
+        if m:
+            keys = re.findall(r'^\s*"([^"]+)"\s*:', m.group(1), re.M)
+            for one in sorted({k for k in keys if keys.count(k) > 1}):
+                bad.append(("落点", "src/geocode.js PLACES",
+                            "「%s」写了 %d 遍 —— JS 只认最后一条,前面几条悄悄作废了"
+                            % (one, keys.count(one)), "PLACES·重键·" + one))
+
     # 机构沿革:一行一桩变动。这张表是**明写**的,写错就直接错在图上 ——
     # Founder 那条推定的线还能推说「是猜的」,这张不能
     if tab(wb, SHEET_LINEAGE) is not None:

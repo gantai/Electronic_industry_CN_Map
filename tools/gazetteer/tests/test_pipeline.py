@@ -1458,6 +1458,33 @@ def test_accepted_survives_rename():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_places_dupe_key():
+    """geocode.js 里同一个名字写两遍 —— JS 一声不吭地拿后一条顶掉前一条。
+
+    PLACES 是个 JS 对象,重键不报错、不警告,只是有一家的坐标悄悄换成了
+    另一家的。京沪的条目混在一张表里,越往后越容易撞上,所以让 verify 看着。"""
+    print("落点表里的重复钥匙")
+    tmp = tempfile.mkdtemp(prefix="gaz-dupkey-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        geo = os.path.join(tmp, "geocode.js")
+        src = _read(os.path.join(REPO, "src", "geocode.js"))
+        eq([k for k, _w, why, _kk in toxlsx.verify(x, geocode_js=geo if False else
+            os.path.join(REPO, "src", "geocode.js")) if k == "落点"], [],
+           "现表干净,一处也不报")
+
+        # 把头一条抄一份塞进去,当作手滑粘重了
+        import re as _re
+        m = _re.search(r'^(\s*"[^"]+"\s*:\s*\{[^}]*\},)$', src, _re.M)
+        _write(geo, src.replace(m.group(1), m.group(1) + "\n" + m.group(1), 1))
+        hit = [why for k, _w, why, _kk in toxlsx.verify(x, geocode_js=geo) if k == "落点"]
+        check(hit, "粘重了的那一条,报出来")
+        check(hit and "只认最后一条" in hit[0], "话说清楚:前面那条悄悄作废了")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_road_of():
     """落点草稿按路排 —— 门牌各不相同,路只有那么几条。
 
@@ -1602,7 +1629,7 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_road_of, test_lineage_sheet, test_accepted_survives_rename,
+               test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
                test_old_sheet_name,
                test_old_review_workbook,
                test_verify_founder_years,
