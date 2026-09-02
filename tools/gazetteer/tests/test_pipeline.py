@@ -1458,6 +1458,27 @@ def test_accepted_survives_rename():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_road_of():
+    """落点草稿按路排 —— 门牌各不相同,路只有那么几条。
+
+    北京四十一家地址归到二十九条路上,光酒仙桥一条就占十三家。
+    照着一条路填,比一家一家查省事,也不容易填串。"""
+    print("地址归到哪条路")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gaz_road", os.path.join(HERE, "..", "gaz.py"))
+    gaz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gaz)
+    eq(gaz.road_of("酒仙桥路12号"), "酒仙桥路", "路名到「路」为止,门牌不算")
+    eq(gaz.road_of("酒仙桥北路9号"), "酒仙桥北路", "南路北路是两条,不并作一条")
+    eq(gaz.road_of("东四北大街107号"), "东四北大街", "大街也认")
+    eq(gaz.road_of("德胜门外后九条小市口胡同1号"), "德胜门外后九条小市口胡同",
+       "门牌号之前的整截都算路名 —— 北京的地址一层套一层,切早了会把两条路并作一条")
+    eq(gaz.road_of("古城北路甲4号"), "古城北路", "「甲4号」这样的门牌也掐得掉")
+    eq(gaz.road_of("深沟村"), "深沟村", "只写到村的,整个当作一条")
+    eq(gaz.road_of(""), "—", "空地址不至于炸")
+
+
 def test_lineage_sheet():
     """机构沿革:一行一桩变动,前身后继各占一栏。
 
@@ -1581,7 +1602,7 @@ def main():
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
-               test_lineage_sheet, test_accepted_survives_rename,
+               test_road_of, test_lineage_sheet, test_accepted_survives_rename,
                test_old_sheet_name,
                test_old_review_workbook,
                test_verify_founder_years,

@@ -655,6 +655,93 @@ def cmd_pull(args):
     return 0
 
 
+# 门牌号各不相同,可路只有那么几条 —— 按路排着填,比一家一家查省事,
+# 也不容易填串。**掐掉末尾的门牌号,剩下的就是路。**
+#
+# 别反过来「从头找到第一个『路』字」:「酒仙桥路12号」里头,「桥」比「路」先到,
+# 那样切出来的是「酒仙桥」,于是酒仙桥路、酒仙桥北路、酒仙桥南路全并成了一条 ——
+# 它们是三条不同的路。测试盯着这一条。
+HOUSE_NO = re.compile(r"[甲乙丙丁]?\d+\s*(?:号院|号|院|弄)?\s*$")
+
+
+def road_of(addr):
+    a = str(addr or "").strip()
+    if not a:
+        return "—"
+    return HOUSE_NO.sub("", a).strip() or a
+
+
+def cmd_geocode_city(args):
+    """按路排的落点草稿 —— 总表里那些「有地址、没坐标」的单位。
+
+    `gaz geocode` 管的是刚抽出来的新章;这一条管的是**已经在总表里**、
+    地址早就抄好、只差经纬度的那些。一条路一段,同一条路的门牌摆在一处,
+    照着地图从街这头看到那头,顺次填下去即可。"""
+    city = args.city
+    wb = __import__("openpyxl").load_workbook(args.xlsx, data_only=True)
+    ws = toxlsx.units_sheet(wb)
+    h = toxlsx._headers(ws, 2)
+    have = toxlsx.read_places(DEFAULT_GEOCODE)
+
+    rows = []
+    for r in range(3, ws.max_row + 1):
+        nm = ws.cell(row=r, column=1).value
+        if not nm:
+            continue
+        if city and str(ws.cell(row=r, column=h["City"]).value or "") != city:
+            continue
+        addr = str(ws.cell(row=r, column=h["Add."]).value or "").strip()
+        bare = toxlsx._bare(str(nm))
+        if not addr or bare in have:
+            continue
+        rows.append((bare, addr, str(ws.cell(row=r, column=h["区"]).value or "")))
+
+    if not rows:
+        print("%s 没有「有地址、还没坐标」的单位 —— 该填的都填过了。" % (city or "总表"))
+        return 0
+
+    by_road = {}
+    for bare, addr, dist in rows:
+        by_road.setdefault(road_of(addr), []).append((bare, addr, dist))
+    order = sorted(by_road.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+
+    out = ["/* 按路排的落点草稿 —— %s,%d 家、%d 条不重复的地址、%d 条路。"
+           % (city or "全表", len(rows), len({a for _n, a, _d in rows}), len(by_road)),
+           "",
+           "   一条路一段,同一条路的门牌摆在一处:开着地图从街这头看到那头,",
+           "   顺次把 lat / lng 填上,比一家一家查省事,也不容易填串。",
+           "",
+           "   填完把整段粘进 src/geocode.js 的 PLACES 里。**只填查得准的**;",
+           "   拿不准的整行留着不动 —— 空着的照旧落在市中心并标「坐标待定位」,",
+           "   那是老实话,胡填一个才是坏事。",
+           "*/", ""]
+    for road, us in order:
+        addrs = sorted({a for _n, a, _d in us})
+        dists = sorted({d for _n, _a, d in us if d})
+        out.append("  /* ---- %s ---- %d 家,%d 个门牌%s */"
+                   % (road, len(us), len(addrs),
+                      ("," + "、".join(dists) + "区") if dists else ""))
+        for addr in addrs:
+            who = [n for n, a, _d in us if a == addr]
+            for n in who:
+                dist = next((d for x, a, d in us if x == n), "")
+                out.append('  "%s": { lat: null, lng: null, district: "%s", '
+                           'precision: "street", note: "%s" },' % (n, dist, addr))
+            if len(who) > 1:
+                out.append("  //   ↑ 同一个门牌 %s 底下 %d 家,坐标填一样的即可" % (addr, len(who)))
+        out.append("")
+
+    path = args.out or os.path.join(REPO, "落点草稿-%s.js" % (city or "全表"))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+    print("%d 家 → %s" % (len(rows), path))
+    print("  归到 %d 条路上,最集中的几条:" % len(by_road))
+    for road, us in order[:5]:
+        print("     %-12s %d 家" % (road, len(us)))
+    print("\n填好之后粘进 src/geocode.js 的 PLACES,再跑一次 npm run dev 看落点对不对。")
+    return 0
+
+
 def cmd_geocode(args):
     """新单位的落点条目 —— 照 src/geocode.js 的体例开好格子,坐标留白待填。
 
@@ -895,6 +982,12 @@ def main(argv=None):
     p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿", parents=[common])
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")
     p.set_defaults(func=cmd_geocode)
+
+    p = sub.add_parser("geocode-city", parents=[common],
+                       help="总表里「有地址、没坐标」的单位 → 按路排的落点草稿")
+    p.add_argument("--city", default="", help="只做这一个市(如 Beijing);不给就做全表")
+    p.add_argument("--out", help="写到哪儿(默认仓库根目录 落点草稿-<市>.js)")
+    p.set_defaults(func=cmd_geocode_city)
 
     p = sub.add_parser("xlsx", help="取否=y 的行 → 追加进工作簿", parents=[common])
     p.add_argument("--from", dest="from_xlsx", metavar="XLSX",
