@@ -6,7 +6,7 @@ import CITY_RAW from "./city.geo.json";
 import { INDUSTRY_META, industryMeta, TYPE_META, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
 import { strings, detectLang, industryLabel, typeLabel, eventLabel, statLabel, basisLabel,
   districtLabel, cityLabel, PRECISION_EN } from "./i18n.js";
-import { clampYear, fmtDate, fmtNum, stripLeadingDate } from "./utils.js";
+import { clampYear, fmtDate, fmtNum, stripLeadingDate, rosette } from "./utils.js";
 import { parseWorkbook, exportWorkbook, nameAt, EMPTY_DATA } from "./xlsxio.js";
 import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
 
@@ -138,7 +138,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     return m;
   }, [projection, data.units]);
 
-  /* 同址单位(经纬度完全一致)在放大后呈环形散开,否则彼此叠死 */
+  /* 同址单位(经纬度完全一致)在放大后散开成花盘,否则彼此叠死。
+     排布见 utils.js 的 rosette:外沿有上限,不随家数无休止地长。 */
   const coloc = useMemo(() => {
     const g = {};
     data.units.forEach((u) => {
@@ -147,8 +148,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     });
     const m = {};
     Object.values(g).forEach((ids) => {
-      if (ids.length < 2) return;
-      ids.forEach((id, i) => { m[id] = { i, n: ids.length, R: 26 + ids.length * 3 }; });
+      rosette(ids.length).forEach((d, i) => { m[ids[i]] = d; });
     });
     return m;
   }, [data.units]);
@@ -195,8 +195,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     if (!p) return null;
     const co = coloc[id];
     if (!co) return p;
-    const a = (co.i / co.n) * Math.PI * 2 - Math.PI / 2;
-    return [p[0] + (Math.cos(a) * co.R) / k, p[1] + (Math.sin(a) * co.R) / k];
+    return [p[0] + co[0] / k, p[1] + co[1] / k];
   }, [basePos, coloc, clusterInfo, clusterOf, isExpanded, k]);
 
   /* 比例尺:取数据中心处 0.1° 经度的投影长度换算 */
