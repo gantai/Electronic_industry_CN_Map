@@ -46,9 +46,15 @@ pip install openpyxl                         # 必装:回写工作簿
 竖排、统计表都归它管,这边再写一份只会更差。要转扫描件才装:
 
 ```bash
-pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"
+pip install "git+https://github.com/gantai/Historian_Archive_Management@claude/historian-archive-obsidian-9impe4"
 pip install paddleocr "paddlex[ocr]==3.7.2"  # 识别引擎,zhiconv 不自带
 ```
+
+> 装的是整个 `historian-archive-management`,`zhiconv` 是它里头的一个包。
+> 从前写作 `pip install "zhiconv @ git+…"`,如今 pip 会拿 `zhiconv` 这个名字
+> 跟包自报的名字(`historian-archive-management`)对,对不上就不肯装。分支
+> 也得写明 —— 那边的 `main` 眼下只剩一个 LICENSE,活都在 `claude/historian-archive-obsidian-9impe4` 这一支上。
+> 那边把这一支并回 main 之后,`@` 后头这一截就可以去掉了。
 
 引擎这一步在 Windows 上常装不上。装不上也不要紧 —— **已经转好的 `.md`
 根本用不着 zhiconv**,`gaz book` 直接读。
@@ -75,11 +81,11 @@ python tools\gazetteer\gaz.py book "D:\Coding\CN_Map\转换稿\《北京工业�
 | 表 | 作什么用 | 改了算不算数 |
 | --- | --- | --- |
 | 待核 | 厂所,核对与改字都在这儿 | **算** |
-| Semi-Product / Comp-Product / Name-History | 器件、整机、名称沿革 | **算**(各有「取否」列) |
-| Fact and Comp-<城> | 照原表体例生成,好看出将来落在地图上是什么样;表名也是 `--from` 认城市的凭据 | **不算** —— 它是「待核」的另一种排法,读回来只读「待核」 |
+| 器件 / 整机 / 名称沿革 | 器件、整机、名称沿革 | **算**(各有「取否」列) |
+| 厂所名录-<城> | 照原表体例生成,好看出将来落在地图上是什么样;表名也是 `--from` 认城市的凭据 | **不算** —— 它是「待核」的另一种排法,读回来只读「待核」 |
 
 出来的工作簿五张表:
-`Fact and Comp-<城>`、`Semi-Product`、`Comp-Product`、`Name-History`,版式与
+`厂所名录-<城>`、`器件`、`整机`、`名称沿革`,版式与
 `CN_Electronic_Industry.xlsx` 一模一样;外加一张**「待核」**。
 
 **「待核」就是你落笔的地方。** 每家一行,前五列是 `取否 | 单位 | 置信 | 出处 |
@@ -105,7 +111,7 @@ python tools\gazetteer\gaz.py xlsx --from "D:\Coding\CN_Map\转换稿\《北京�
 
 | 情形 | 放哪儿 | 图上怎么显示 |
 | --- | --- | --- |
-| 改过名,年份可考(四机部15所 1982 年随部委改制成电子部15所) | `Name-History` 表 | 按年份显示 —— 拉到 1980 年是「四机部15所」,拉到 1990 年是「电子部15所」 |
+| 改过名,年份可考(四机部15所 1982 年随部委改制成电子部15所) | `名称沿革` 表 | 按年份显示 —— 拉到 1980 年是「四机部15所」,拉到 1990 年是「电子部15所」 |
 | 同时并行的别名、简称、又称(103型「亦称DJS-1」;中科院计算所) | 「别名」列,几个用「、」隔开 | 正名旁边一并列出;搜哪一个都搜得到;正文里提到哪一个都认得出是它 |
 
 志书写明的别名会自动记进「别名」列:「(简称中科院计算所)」「(亦称DJS-1)」,
@@ -156,7 +162,7 @@ python tools\gazetteer\gaz.py xlsx --from "D:\Coding\CN_Map\转换稿\《北京�
 - **站点只读一张厂所名录表。** `src/xlsxio.js` 的 `pickSheet` 取第一张匹配的,
   所以北京的行要并进 `CN_Electronic_Industry.xlsx` **原来那张** `Fact and
   Comp-Shanghai` 里,靠 `City` 列分辨,而不是另起一张表。`book` 出来的
-  `Fact and Comp-Beijing` 是给你单独看、单独存的。
+  `厂所名录-Beijing` 是给你单独看、单独存的。
 - **兜底落点按城分。** 没有地址、`geocode.js` 里也没有对照的单位,落在本市
   市中心。`src/geocode.js` 的 `CITY_FALLBACK` 现收了上海、北京、天津、南京;
   再添别的城,照样式加一行即可 —— **不加就一律落到上海去**。
@@ -215,10 +221,10 @@ git add -A && git commit -m "补录上海电子仪表工业志" && git push
 
 | TSV | 工作表 | 抽的是 |
 | --- | --- | --- |
-| `units.tsv` | `Fact and Comp-Shanghai` | 厂名、行业、产品、始建 / 终止、沿革、门牌、1990 年统计块八项 |
-| `semi.tsv` | `Semi-Product` | 器件投产:产品、厂、年份、人员 |
-| `comp.tsv` | `Comp-Product` | 整机研制:字长、内存、运算速度、研制单位、协作厂 |
-| `names.tsv` | `Name-History` | 名称沿革,一行一段,出处是**志书页码**而非「据 Founder 列推定」 |
+| `units.tsv` | `厂所名录` | 厂名、行业、产品、始建 / 终止、沿革、门牌、1990 年统计块八项 |
+| `semi.tsv` | `器件` | 器件投产:产品、厂、年份、人员 |
+| `comp.tsv` | `整机` | 整机研制:字长、内存、运算速度、研制单位、协作厂 |
+| `names.tsv` | `名称沿革` | 名称沿革,一行一段,出处是**志书页码**而非「据 Founder 列推定」 |
 
 日期一律折成本仓库的八位写法(`19580600` = 1958 年 6 月),
 「一九六五年」「民国二十六年」这类纪年都认得。
@@ -291,7 +297,7 @@ key: 上海微波设备研究所          # 匹配用的钥匙,别改
 | 名录的全部字段(行业、产品、始建、终止、沿革、地址、1990 年统计块八项、备注、出处、英文名) | 器件与整机记录 —— 一行常牵着两三家单位,从各家笔记里往回并容易打架,仍在工作簿里改 |
 | 单位名(改 `名称` 那一行,`key` 保持不动) | 新增单位 —— 走 `gaz xlsx`,不走 `pull` |
 | 经纬度(填 `纬度` / `经度`,写回 `Lat` / `Lng` 列) | 站点代码与底图 |
-| 名称沿革整表(改那张 Markdown 表,`pull` 照改 Name-History 工作表) | |
+| 名称沿革整表(改那张 Markdown 表,`pull` 照改 名称沿革工作表) | |
 
 ### 与志书抽取的关系
 

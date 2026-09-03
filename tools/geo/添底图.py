@@ -265,3 +265,40 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------- 落点核对
+
+def _rings(geom):
+    """一个 Polygon / MultiPolygon 的所有外环。孔洞不管 —— 区界没有孔。"""
+    t = geom.get("type")
+    if t == "Polygon":
+        return [geom["coordinates"][0]]
+    if t == "MultiPolygon":
+        return [poly[0] for poly in geom["coordinates"]]
+    return []
+
+
+def point_in_ring(lng, lat, ring):
+    """射线法:从这一点往东引一条线,穿过边界的次数是奇数就在里头。"""
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i][0], ring[i][1]
+        x2, y2 = ring[(i + 1) % n][0], ring[(i + 1) % n][1]
+        if (y1 > lat) != (y2 > lat):
+            xx = x1 + (lat - y1) * (x2 - x1) / (y2 - y1)
+            if lng < xx:
+                inside = not inside
+    return inside
+
+
+def district_at(lng, lat, geo, city="北京"):
+    """这个点落在哪个区里 —— 落不进任何一个就是 None(出了本市)。"""
+    for f in geo.get("features", []):
+        name = _pick_name(f.get("properties", {}), set(), city)
+        if not name:
+            continue
+        if any(point_in_ring(lng, lat, r) for r in _rings(f.get("geometry", {}))):
+            return name
+    return None

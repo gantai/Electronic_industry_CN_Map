@@ -14,10 +14,44 @@ import shutil
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
-SHEET_UNITS = "Fact and Comp-Shanghai"
-SHEET_SEMI = "Semi-Product"
-SHEET_COMP = "Comp-Product"
-SHEET_NAMES = "Name-History"
+# 标签名一律用中文,跟文档里的说法对上。从前是英文,而且第一张还叫
+# 「Fact and Comp-Shanghai」—— 那时只收上海,后来北京、天津的厂所也进了这一张,
+# 名字没跟着改;「Semi-Product」与「Comp-Product」则是两个谁也认不准的缩写。
+# 改名归改名,手里的旧本子、git 历史里的那些,都还得读得动:两个名字都试。
+SHEET_UNITS = "厂所名录"
+SHEET_SEMI = "器件"
+SHEET_COMP = "整机"
+SHEET_NAMES = "名称沿革"
+SHEET_LINEAGE = "机构沿革"
+
+OLD_NAMES = {
+    SHEET_UNITS: "Fact and Comp-Shanghai",
+    SHEET_SEMI: "Semi-Product",
+    SHEET_COMP: "Comp-Product",
+    SHEET_NAMES: "Name-History",
+}
+
+
+def tab(wb, sheet):
+    """这一张在这本工作簿里挂的什么标签 —— 新名优先,旧名照认;没有就 None。"""
+    if sheet in wb.sheetnames:
+        return sheet
+    old = OLD_NAMES.get(sheet)
+    return old if old and old in wb.sheetnames else None
+
+
+def sheet_of(wb, sheet):
+    name = tab(wb, sheet)
+    if name is None:
+        raise KeyError("这份工作簿里没有「%s」表" % sheet)
+    return wb[name]
+
+
+def units_sheet(wb):
+    """厂所名录那一张。"""
+    return sheet_of(wb, SHEET_UNITS)
+
+
 
 STAT_LABELS = [("staff", "职工总数"), ("tech", "技术人员"), ("plant", "厂房面积"),
                ("floor", "建筑面积"), ("assets", "固定资产"), ("output", "工业总产值"),
@@ -119,7 +153,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
 
     # ---- 厂所名录(两行表头,正文自第 3 行起)
     if units:
-        ws = wb[SHEET_UNITS]
+        ws = units_sheet(wb)
         h = _headers(ws, 2)
         have = _existing_names(ws, 3, alias_col=h.get("别名"))
         row = _last_row(ws, start=3) + 1
@@ -145,6 +179,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             for key, label in STAT_LABELS:
                 if label in h and r.get(key) not in (None, ""):
                     ws.cell(row=row, column=h[label], value=_num(r[key]))
+            # 区名一直是抽出来了却没写下 —— 于是一市之内所有的点都落在市中心,
+            # 叠成一坨。有了区,至少能落到区一级(见 src/xlsxio.js 的 district 兜底)
+            if r.get("district") not in (None, ""):
+                _ensure_column(ws, "区", header_row=1)
+                h = _headers(ws, 2)
+                ws.cell(row=row, column=h["区"]).value = str(r["district"]).strip()
             # 数字是哪一年的 —— 志书各章截取的年份不一致(上海多是 1990,
             # 北京第四篇是 1995),不记下来,一个数字就等于没说
             if r.get("统计年") not in (None, ""):
@@ -158,7 +198,9 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     def _append_flat(sheet, cols, rows, tag, text_cols=(), ensure=(), dedup_on=()):
         if not rows:
             return
-        ws = wb[sheet]
+        # 旧本子里这一张还挂着英文标签,追加得追到那一张上去,
+        # 不然会另建一张同名的中文表,数据就分了家
+        ws = wb[tab(wb, sheet) or sheet]
         for label in ensure:
             if any(r.get(label) not in (None, "") for r in rows):
                 _ensure_column(ws, label)
@@ -189,7 +231,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
     # 「用户」是原表没有的一列 —— 机器交到谁手里用,记在这儿(见 src/xlsxio.js)
     if comp:
         from .extract import model_key
-        ws = wb[SHEET_COMP]
+        ws = sheet_of(wb, SHEET_COMP)
         hc = _headers(ws, 1)
         if "Product" in hc:
             core = {}
@@ -232,7 +274,7 @@ def read_known(xlsx_path):
     if not os.path.exists(xlsx_path):
         return {}
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     known = {}
     for r in range(3, ws.max_row + 1):
         v = ws.cell(row=r, column=1).value
@@ -275,6 +317,40 @@ def merge_known(xlsx_path, geocode_js=None):
     return known
 
 
+def read_places_full(geocode_js):
+    """PLACES 里每一条的内容 —— {单位名: {lat, lng, district, precision}}。
+
+    `read_places` 只回名字(判「有没有这一条」够用了);核对坐标得看值。
+    这是从 JS 源码里认字读出来的,不是跑 JS —— 所以只认得住那几种写法:
+    数字、null、双引号字符串。写别的(表达式、单引号)会当作没有。
+    """
+    if not os.path.exists(geocode_js):
+        return {}
+    with io.open(geocode_js, encoding="utf-8") as f:
+        src = f.read()
+    m = re.search(r"export\s+const\s+PLACES\s*=\s*\{(.*?)\n\};", src, re.S)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).split("\n"):
+        k = re.match(r'\s*"([^"]+)"\s*:\s*\{(.*)\}\s*,?\s*$', line)
+        if not k:
+            continue
+        rec = {}
+        for field, val in re.findall(r'(\w+)\s*:\s*("(?:[^"]*)"|null|-?[\d.]+)', k.group(2)):
+            if val == "null":
+                rec[field] = None
+            elif val.startswith('"'):
+                rec[field] = val[1:-1]
+            else:
+                try:
+                    rec[field] = float(val)
+                except ValueError:
+                    rec[field] = None
+        out[k.group(1)] = rec
+    return out
+
+
 def read_places(geocode_js):
     """src/geocode.js 的 PLACES 里已经有落点的单位名。"""
     if not os.path.exists(geocode_js):
@@ -299,7 +375,7 @@ UNIT_LABELS = ["Industry", "Product", "Start Date", "End Date", "Founder", "City
 def read_units_full(xlsx_path):
     """厂所名录整本读出,每行带着它在表里的行号,回写时据以定位。"""
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     out = []
     for r in range(3, ws.max_row + 1):
@@ -312,15 +388,17 @@ def read_units_full(xlsx_path):
         for key, label in STAT_LABELS:
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
         rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
+        rec["district"] = ws.cell(row=r, column=h["区"]).value if "区" in h else None
         out.append(rec)
     return out
 
 
 def read_flat(xlsx_path, sheet, cols):
     wb = _open(xlsx_path)
-    if sheet not in wb.sheetnames:
+    name = tab(wb, sheet)
+    if name is None:
         return []
-    ws = wb[sheet]
+    ws = wb[name]
     h = _headers(ws, 1)
     out = []
     for r in range(2, ws.max_row + 1):
@@ -338,6 +416,25 @@ def read_flat(xlsx_path, sheet, cols):
 
 def read_name_history(xlsx_path):
     return read_flat(xlsx_path, SHEET_NAMES, ["Unit", "Name", "From", "Name EN", "Remark", "Source"])
+
+
+# 机构沿革表:一行一桩机构变动,而不是一行一家单位。
+# 「甲厂和乙厂合并成丙厂」是一桩事,牵着三家 —— 记在哪一家名下都是别扭的,
+# 所以另立一张,前身、后继各占一栏,几家就写几家,顿号隔开。
+LINEAGE_COLS = ["年月", "前身", "关系", "后继", "说明", "出处"]
+# 关系只这五种。写别的,verify 会拦下来 —— 不然一栏自由文字,又回到 Founder
+# 那个老样子:靠关键词猜是哪一类,猜不着就一律算改名。
+RELATIONS = ("合并", "分立", "划归", "合资", "更名")
+
+
+def read_lineage(xlsx_path):
+    """机构沿革:合并、分立、划归、合资,一行一桩。"""
+    return read_flat(xlsx_path, SHEET_LINEAGE, LINEAGE_COLS)
+
+
+def split_names(v):
+    """「甲厂、乙厂」→ ['甲厂', '乙厂']。前身、后继两栏都可以写好几家。"""
+    return [x.strip() for x in ALIAS_SPLIT.split(str(v or "")) if x.strip()]
 
 
 def read_semi(xlsx_path):
@@ -366,7 +463,7 @@ def update_units(xlsx_path, changes, backup=True, log=print):
     changes: [{"_row": 3, "名称": "...", "fields": {"Industry": "半导体", ...}}]
     只动列出来的格子,别的一律不碰。"""
     wb = _open(xlsx_path)
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     bak = ""
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -391,10 +488,10 @@ def update_units(xlsx_path, changes, backup=True, log=print):
 def rewrite_name_history(xlsx_path, rows, backup=False, log=print):
     """名称沿革整表重写 —— 库里改的是「某单位的全部段落」,逐格补丁反而易错。"""
     wb = _open(xlsx_path)
-    if SHEET_NAMES not in wb.sheetnames:
+    if tab(wb, SHEET_NAMES) is None:
         ws = wb.create_sheet(SHEET_NAMES)
         ws.append(["Unit", "Name", "From", "Name EN", "Remark", "Source"])
-    ws = wb[SHEET_NAMES]
+    ws = sheet_of(wb, SHEET_NAMES)
     # 原表没有 Name EN 一列;库里填了英文名就把这一列添上,不能悄悄丢掉
     if any(str(r.get("Name EN") or "").strip() for r in rows):
         _ensure_column(ws, "Name EN")
@@ -421,14 +518,19 @@ DIFF_KEYS = {
     SHEET_COMP: (("Product", "Time"), 2, 1),
     SHEET_SEMI: (("Product", "Factory", "Time"), 2, 1),
     SHEET_NAMES: (("Unit", "Name", "From"), 2, 1),
+    SHEET_LINEAGE: (("年月", "前身", "后继"), 2, 1),
 }
 
 
 def _sheet_rows(wb, sheet, key_cols, first_row, header_rows):
     """{钥匙: {表头: 值}} —— 认不出钥匙的那些行另存一份,免得默默丢掉。"""
-    if sheet not in wb.sheetnames:
+    # 改新旧两份对着比,一边挂中文标签一边挂英文标签 —— 认死名字就会当这张表
+    # 压根不在,于是一整张表的改动悄没声地报不出来。
+    # 「是哪一张」和「标签上写什么」得分开记:底下认钥匙靠的是前者
+    name = tab(wb, sheet)
+    if name is None:
         return {}, []
-    ws = wb[sheet]
+    ws = wb[name]
     h = _headers(ws, header_rows)
     name_col = 1 if sheet == SHEET_UNITS else None
     out, odd = {}, []
@@ -514,9 +616,9 @@ def tidy_names(xlsx_path, dry_run=False):
     对不上,所以单拎出这一道,随时可以再理一遍。"""
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path)
-    if SHEET_NAMES not in wb.sheetnames:
+    if tab(wb, SHEET_NAMES) is None:
         return {"moved": 0, "rows": 0}
-    ws = wb[SHEET_NAMES]
+    ws = sheet_of(wb, SHEET_NAMES)
     h = _headers(ws, 1)
     if "Unit" not in h or "From" not in h:
         return {"moved": 0, "rows": 0}
@@ -597,36 +699,78 @@ def report_dups(xlsx_path):
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     out = {"exact": [], "similar": []}
 
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     seen = {}
+    primary, alias_rows, seen_name = [], [], {}
     for r in range(3, ws.max_row + 1):
         nm = ws.cell(row=r, column=1).value
         if not nm:
             continue
         alias = ws.cell(row=r, column=h["别名"]).value if "别名" in h else ""
+        primary.append((r, _bare(nm)))
+        seen_name[r] = str(nm)
         for one in _names_of(nm, alias):
             seen.setdefault(one, []).append((r, str(nm)))
+            if one != _bare(nm):
+                alias_rows.append((r, one))
     for one, rows in seen.items():
         if len(rows) > 1:
             who = sorted({x[1] for x in rows})
             kind = "exact" if len(who) == 1 else "similar"
             out[kind].append(("厂所", one, [x[0] for x in rows], "、".join(who)))
 
+    # 名字差一截的两家 ——「北大方正集团公司」与「北京北大方正集团公司」、
+    # 「联想计算机集团公司」与「北京联想计算机集团公司」。判重只比名字是否相同,
+    # 这种一个是另一个的一截,两边都过关,于是同一家在名录里坐了两行。
+    # 多出来的这一截若是「分厂」「分公司」一类,那本就是另一家,不算重复
+    BRANCH = re.compile(r"(分厂|分公司|分所|附属工厂|实习厂|车间|工场)$")
+    short = sorted({(one, who) for one, rows in seen.items() for _r, who in rows},
+                   key=lambda x: len(x[0]))
+    for i, (a, wa) in enumerate(short):
+        if len(a) < 5:
+            continue
+        for b, wb_ in short[i + 1:]:
+            if a == b or not (b.endswith(a) or b.startswith(a)):
+                continue
+            if len(b) - len(a) > 4 or BRANCH.search(b):
+                continue
+            ra = {x[0] for x in seen.get(a, [])}
+            rb = {x[0] for x in seen.get(b, [])}
+            if ra == rb:          # 同一行的正名与别名,不是两家
+                continue
+            out["similar"].append(("厂所", "%s ⊂ %s" % (a, b), sorted(ra | rb),
+                                   "%s ｜ %s —— 名字差一截,是不是同一家?" % (wa, wb_)))
+
+    # 简称与全称各占一行 ——「上无十三」是「上海无线电十三厂」抽字缩的,
+    # 既不同名,也不是掐头去尾差一截,上面两道都拦不住。抽字缩的照抽字查:
+    # 简称的字若按原序都落在另一家的正名里,且头一个字对得上,就提出来问一句。
+    for r, one in alias_rows:
+        if len(one) < 4:
+            continue
+        for r2, full in primary:
+            if r2 == r or len(full) <= len(one) or full[0] != one[0]:
+                continue
+            it = iter(full)
+            if all(ch in it for ch in one):
+                out["similar"].append(
+                    ("厂所", "%s ⊂ %s" % (one, full), sorted({r, r2}),
+                     "%s ｜ %s —— 简称抽字对得上,是不是同一家?" % (seen_name[r], full)))
+
     for sheet, key_cols, label in (
             (SHEET_COMP, ("Product", "Time"), "Product"),
             (SHEET_SEMI, ("Product", "Factory", "Time"), "Product"),
             (SHEET_NAMES, ("Unit", "Name", "From"), "Unit")):
-        if sheet not in wb.sheetnames:
+        if tab(wb, sheet) is None:
             continue
-        for key, rows in _sheet_dups(wb[sheet], key_cols, label).items():
+        for key, rows in _sheet_dups(sheet_of(wb, sheet), key_cols, label).items():
             out["exact"].append((sheet, "·".join(x for x in key if x),
                                  [x[0] for x in rows], rows[0][1]))
 
     # 型号内核相同、写法不同的整机 —— 只提醒,不当重复
-    if SHEET_COMP in wb.sheetnames:
+    if tab(wb, SHEET_COMP) is not None:
         from .extract import model_key
-        ws = wb[SHEET_COMP]
+        ws = sheet_of(wb, SHEET_COMP)
         h = _headers(ws, 1)
         if "Product" in h:
             by = {}
@@ -688,6 +832,20 @@ def accepted_path(xlsx_path):
     return os.path.splitext(xlsx_path)[0] + ".已核.tsv"
 
 
+def _rename_key(key):
+    """把记号里的旧表名换成新的。
+
+    记号是拿表名开头的(「Comp-Product·某型机·某厂」)。标签改名那天,
+    同一个毛病的记号跟着变了样,于是**整本《已核》一夜作废** —— 认过的
+    几十条旧账全涌回来,新伤又被埋掉,而这正是《已核》要防的事。
+    读进来的时候顺手换掉,认过的还是认过的。
+    """
+    for new_name, old_name in OLD_NAMES.items():
+        if key.startswith(old_name + "·"):
+            return new_name + key[len(old_name):]
+    return key
+
+
 def load_accepted(xlsx_path):
     """从前看过、认下了的那些毛病 —— 再报一遍只会把新的埋掉。"""
     path = accepted_path(xlsx_path)
@@ -700,7 +858,7 @@ def load_accepted(xlsx_path):
                 continue
             col = line.rstrip("\n").split("\t")
             if len(col) >= 2:
-                out.add((col[0], col[1]))
+                out.add((col[0], _rename_key(col[1])))
     return out
 
 
@@ -721,7 +879,7 @@ def save_accepted(xlsx_path, findings):
     return path, len(rows)
 
 
-def verify(xlsx_path):
+def verify(xlsx_path, geocode_js=None):
     """手改过工作簿之后,看看有没有改坏。只报,一个格子也不动。
 
     Excel 改起来顺手,坏起来也无声无息:日期写成 1958、坐标只填了一半、
@@ -730,12 +888,21 @@ def verify(xlsx_path):
 
     返回 [(哪一类, 哪一行, 怎么了, 记号)]。分类是为了让「出处空着」这种
     成片的旧账,别把「研制单位打错字」这种一处一处的伤埋掉。「记号」是这条
-    毛病的身份,不含行号 —— 行会挪,毛病还是那个毛病,拿它跟《已核》比对。"""
+    毛病的身份,不含行号 —— 行会挪,毛病还是那个毛病,拿它跟《已核》比对。
+
+    `geocode_js` 给了就连它的别名表一起认。「上海市计算中心」在 geocode.js 里
+    早认作上海市计算技术研究所,图上那条线连得好好的 —— 只看工作簿就要报它一句
+    「查无此人」,那是白让人去核一趟。"""
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     bad = []
+    elsewhere = set()
+    if geocode_js and os.path.exists(geocode_js):
+        for canon, aliases in read_aliases(geocode_js).items():
+            elsewhere.add(canon)
+            elsewhere |= set(aliases)
 
-    ws = wb[SHEET_UNITS]
+    ws = units_sheet(wb)
     h = _headers(ws, 2)
     names = set()
     for r in range(3, ws.max_row + 1):
@@ -757,6 +924,17 @@ def verify(xlsx_path):
             if why:
                 bad.append(("日期", where, why, "%s·%s" % (key, label)))
 
+        # 沿革链里也写年份,而且是同一个来路 ——「1965年（后改名…」被切开,
+        # 算出来就是 1905。只查 Start/End 两栏,这种年份就一直躺在链子里没人看见
+        if "Founder" in h:
+            chain = str(ws.cell(row=r, column=h["Founder"]).value or "")
+            for y in set(re.findall(r"(?<!\d)(1[89]\d{2})(?=\d{4})", chain)):
+                if int(y) in SLICED_YEAR:
+                    bad.append(("日期", where,
+                                "沿革链里有个 %s 年 —— 电子工业里没有这个年份,"
+                                "多半是「19xx年（后改名…」被切开算出来的,回稿子上核" % y,
+                                "%s·沿革·%s" % (key, y)))
+
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
         if (lat in (None, "")) != (lng in (None, "")):
@@ -773,8 +951,8 @@ def verify(xlsx_path):
             bad.append(("出处", where, "没写出处", key))
 
     # 沿革表:年份不像话的、以及孤零零一条「自己改名叫自己」的
-    if SHEET_NAMES in wb.sheetnames:
-        w = wb[SHEET_NAMES]
+    if tab(wb, SHEET_NAMES) is not None:
+        w = sheet_of(wb, SHEET_NAMES)
         hh = _headers(w, 1)
         rows, per = [], {}
         for r in range(2, w.max_row + 1):
@@ -819,12 +997,66 @@ def verify(xlsx_path):
                             "「序」或「至」有 %d 行对不上 —— 跑一遍 gaz tidy 就理好了" % stale,
                             "序至失准"))
 
+    # geocode.js 的 PLACES 是拿单位名当钥匙的一个 JS 对象。同一个钥匙写两遍,
+    # **JS 一声不吭地拿后一条顶掉前一条** —— 不报错、不警告,只是有一家的
+    # 坐标悄悄换成了另一家的。京沪两地的条目混在一张表里,越往后越容易撞上。
+    if geocode_js and os.path.exists(geocode_js):
+        with io.open(geocode_js, encoding="utf-8") as f:
+            src = f.read()
+        m = re.search(r"export\s+const\s+PLACES\s*=\s*\{(.*?)\n\};", src, re.S)
+        if m:
+            keys = re.findall(r'^\s*"([^"]+)"\s*:', m.group(1), re.M)
+            for one in sorted({k for k in keys if keys.count(k) > 1}):
+                bad.append(("落点", "src/geocode.js PLACES",
+                            "「%s」写了 %d 遍 —— JS 只认最后一条,前面几条悄悄作废了"
+                            % (one, keys.count(one)), "PLACES·重键·" + one))
+
+    # 机构沿革:一行一桩变动。这张表是**明写**的,写错就直接错在图上 ——
+    # Founder 那条推定的线还能推说「是猜的」,这张不能
+    if tab(wb, SHEET_LINEAGE) is not None:
+        w = sheet_of(wb, SHEET_LINEAGE)
+        hh = _headers(w, 1)
+        for r in range(2, w.max_row + 1):
+            got = {c: str(w.cell(row=r, column=hh[c]).value or "").strip()
+                   for c in LINEAGE_COLS if c in hh}
+            if not any(got.values()):
+                continue
+            where = "%s 第%d行 %s" % (SHEET_LINEAGE, r,
+                                     "%s→%s" % (got.get("前身", "?"), got.get("后继", "?")))
+            key = "%s·%s·%s" % (got.get("年月", ""), got.get("前身", ""), got.get("后继", ""))
+
+            rel = got.get("关系", "")
+            if rel not in RELATIONS:
+                bad.append(("机构", where,
+                            "关系写作「%s」—— 只认 %s" % (rel or "空着", "、".join(RELATIONS)),
+                            key + "·关系"))
+            for side in ("前身", "后继"):
+                who = split_names(got.get(side, ""))
+                if not who:
+                    bad.append(("机构", where, "%s 空着 —— 一桩变动总得有来处和去处" % side,
+                                key + "·" + side))
+                for one in who:
+                    if _bare(one) not in names and _bare(one) not in elsewhere:
+                        bad.append(("名录", where,
+                                    "%s「%s」名录里查无此人" % (side, one),
+                                    key + "·" + one))
+            ym = got.get("年月", "")
+            if ym:
+                why = _year_trouble(ym, "年月")
+                if why:
+                    bad.append(("日期", where, why, key + "·年月"))
+            else:
+                bad.append(("日期", where, "没写年月 —— 图上这条线就落不到年份上",
+                            key + "·年月"))
+            if not got.get("出处", ""):
+                bad.append(("出处", where, "没写出处", key + "·出处"))
+
     # 整机、器件里点到的单位,名录里得有 —— 打错一个字,连线就连不上
     for sheet, cols in ((SHEET_COMP, ("Research Insti", "Factory")),
                         (SHEET_SEMI, ("Research Insti", "Factory"))):
-        if sheet not in wb.sheetnames:
+        if tab(wb, sheet) is None:
             continue
-        w = wb[sheet]
+        w = sheet_of(wb, sheet)
         hh = _headers(w, 1)
         for r in range(2, w.max_row + 1):
             who = w.cell(row=r, column=hh["Product"]).value if "Product" in hh else ""
@@ -838,7 +1070,8 @@ def verify(xlsx_path):
                     continue
                 for one in ALIAS_SPLIT.split(str(w.cell(row=r, column=hh[c]).value or "")):
                     one = _bare(one)
-                    if one and one not in names and one not in miss:
+                    if one and one not in names and one not in elsewhere \
+                            and one not in miss:
                         miss.append(one)
             if miss:
                 bad.append(("名录", "%s 第%d行 %s" % (sheet, r, who or ""),

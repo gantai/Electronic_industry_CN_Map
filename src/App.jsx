@@ -77,7 +77,7 @@ function clusterUnits(units, lang, thresholdDeg = 0.6) {
 }
 
 /* ============================================================ MAP ============================================================ */
-function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
+function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, lang }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const zoomRef = useRef(null);
@@ -254,6 +254,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
         const ua = byId[a], ub = byId[b];
         if (!ua || !ub) return;
         if (!shown.has(ua.industry) && !shown.has(ub.industry)) return;
+        // 两头都藏起来了,这条线也就没处画
+        if (!precShown.has(ua.precision) && !precShown.has(ub.precision)) return;
         const pa = posOf(a), pb = posOf(b);
         if (!pa || !pb) return;
         const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
@@ -268,7 +270,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
       });
     });
     return out;
-  }, [evNear, posOf, year, byId, shown]);
+  }, [evNear, posOf, year, byId, shown, precShown]);
 
   const zoomBy = (f) => {
     if (svgRef.current && zoomRef.current)
@@ -281,13 +283,22 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
     (dur ? s.transition().duration(dur) : s).call(zoomRef.current.transform, tr);
   }, [size]);
 
-  /* 数据全在一城时,国界尺度什么也看不清 —— 首屏自动套合到数据范围 */
+  /* 首屏套合到数据上 —— 可要套的是数据的**主体**,不是最远的那几个点。
+     九成六的厂所在京沪两地,而哈尔滨、兰州、长沙、唐山各只有一家;拿最外圈
+     去框,框出来的是整个中国,开屏便是一张几乎空白的图。两头各掐掉 4%,
+     框住的才是真正要看的那一片;那几家远的照画不误,缩一下就见着了。 */
+  const trimmed = (arr) => {
+    const a = arr.slice().sort((p, q) => p - q);
+    if (a.length < 12) return [a[0], a[a.length - 1]];   // 点太少,掐了就没了
+    return [a[Math.floor(a.length * 0.04)], a[Math.ceil(a.length * 0.96) - 1]];
+  };
+
   const fitData = useCallback((dur) => {
     if (!projection || !size.w) return;
     const pts = data.units.map((u) => basePos[u.id]).filter(Boolean);
     if (!pts.length) return;
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const [x0, x1] = trimmed(pts.map((p) => p[0]));
+    const [y0, y1] = trimmed(pts.map((p) => p[1]));
     const spanX = Math.max(x1 - x0, 1e-6), spanY = Math.max(y1 - y0, 1e-6);
     const kk = Math.max(1, Math.min(MAX_K, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
     flyTo((x0 + x1) / 2, (y0 + y1) / 2, kk, dur);
@@ -314,11 +325,11 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
 
   const nodeList = useMemo(() => {
     return data.units
-      .filter((u) => basePos[u.id] && shown.has(u.industry))
+      .filter((u) => basePos[u.id] && shown.has(u.industry) && precShown.has(u.precision))
       .filter((u) => isExpanded(clusterOf[u.id]))
       .map((u) => ({ u, alive: isAlive(u, year), ghost: !isAlive(u, year) && ghostSet.has(u.id) }))
       .filter((n) => n.alive || n.ghost);
-  }, [data.units, basePos, shown, isExpanded, clusterOf, year, ghostSet]);
+  }, [data.units, basePos, shown, precShown, isExpanded, clusterOf, year, ghostSet]);
 
   /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
   const labelSet = useMemo(() => {
@@ -396,7 +407,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
           {/* 折叠的城市徽标 */}
           {clusterInfo.map((c, ci) => {
             if (isExpanded(ci)) return null;
-            const members = c.ids.map((id) => byId[id]).filter((u) => u && shown.has(u.industry));
+            const members = c.ids.map((id) => byId[id])
+              .filter((u) => u && shown.has(u.industry) && precShown.has(u.precision));
             const nAlive = members.filter((m) => isAlive(m, year)).length;
             const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)))
               || c.ids.some((id) => glowMap.has(id));
@@ -522,7 +534,15 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, t, lang }) {
 }
 
 /* ============================================================ LEGEND + FILTER ============================================================ */
-function Legend({ data, shown, setShown, t, lang }) {
+/* 落点分四档,只有前两档是「知道它在哪儿」。给定坐标与街段并作一个开关 ——
+   看图的人要分的是「查得到位置」和「查不到」,不是数据从哪一栏来的。 */
+const PREC_TIERS = [
+  { key: "street", also: ["given"] },
+  { key: "district", also: [] },
+  { key: "city", also: [] },
+];
+
+function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
   const industries = useMemo(
     () => Array.from(new Set(data.units.map((u) => u.industry).filter(Boolean))),
     [data.units]
@@ -531,6 +551,21 @@ function Legend({ data, shown, setShown, t, lang }) {
     const next = new Set(shown);
     if (next.has(ind)) next.delete(ind); else next.add(ind);
     setShown(next.size ? next : new Set(industries));
+  };
+
+  const precCount = useMemo(() => {
+    const c = {};
+    data.units.forEach((u) => { c[u.precision] = (c[u.precision] || 0) + 1; });
+    return c;
+  }, [data.units]);
+  const tierN = (tier) => [tier.key, ...tier.also].reduce((n, k) => n + (precCount[k] || 0), 0);
+  const hidden = data.units.filter((u) => !precShown.has(u.precision)).length;
+  const togglePrec = (tier) => {
+    const keys = [tier.key, ...tier.also];
+    const next = new Set(precShown);
+    if (keys.every((k) => next.has(k))) keys.forEach((k) => next.delete(k));
+    else keys.forEach((k) => next.add(k));
+    setPrecShown(next);
   };
   return (
     <div className="legend">
@@ -548,6 +583,25 @@ function Legend({ data, shown, setShown, t, lang }) {
         <span className="lg-item"><i className="sw sw-ring" style={{ background: "#BBD3EC" }} />{t.legendJv}</span>
         <span className="lg-item"><i className="sw sw-uncertain" />{t.legendVague}</span>
       </div>
+      <div className="lg-row">
+        <span className="lg-title mono lg-inline">{t.legendPlacement}</span>
+        {PREC_TIERS.map((tier) => {
+          const n = tierN(tier);
+          if (!n) return null;
+          const on = [tier.key, ...tier.also].every((k) => precShown.has(k));
+          return (
+            <button key={tier.key} className={"lg-item lg-btn" + (on ? "" : " off")}
+              onClick={() => togglePrec(tier)} title={t.precHint[tier.key]}>
+              <i className={"sw" + (tier.key === "city" ? " sw-uncertain" : "")}
+                style={tier.key === "city" ? undefined
+                  : { background: "#BBD3EC", opacity: tier.key === "district" ? .45 : 1 }} />
+              {t.precTier[tier.key]}<span className="dim mono lg-n">{n}</span>
+            </button>
+          );
+        })}
+        {hidden > 0 && <span className="lg-item dim">{t.placementHidden(hidden)}</span>}
+      </div>
+
       <div className="lg-row">
         {Object.entries(EVENT_META).map(([kk, m]) => (
           <span key={kk} className="lg-item">
@@ -978,7 +1032,7 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
         <span className="dimtext mono">{t.countItems(list.length, rows.length)}</span>
       </div>
       <div className="notebar">
-        {t.productsNote(SOURCE_FILE, kind === "semi" ? "Semi-Product" : "Comp-Product")}
+        {t.productsNote(SOURCE_FILE, kind === "semi" ? "器件" : "整机")}
       </div>
       <div className="tablewrap">
         {kind === "semi" ? (
@@ -1328,6 +1382,10 @@ export default function App() {
   const [introOpen, setIntroOpen] = useState(true);
   const [flyReq, setFlyReq] = useState(null);
   const [shown, setShown] = useState(() => new Set(boot.data.units.map((u) => u.industry).filter(Boolean)));
+  /* 落点档次的开关。**默认不显「市中心」那一档** —— 那些单位志书没写地址,
+     落在市中心只是没处放,不是它们在市中心;几十家叠在一个点上,既看不清,
+     又像是在说它们都挤在天安门。要看的时候点开即可,一家也没丢。 */
+  const [precShown, setPrecShown] = useState(() => new Set(["given", "street", "district"]));
 
   const byId = useMemo(() => Object.fromEntries(data.units.map((u) => [u.id, u])), [data.units]);
 
@@ -1447,8 +1505,9 @@ export default function App() {
           <>
             <MapView data={data} byId={byId} year={year} sel={sel}
               setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown}
-              t={t} lang={lang} />
-            <Legend data={data} shown={shown} setShown={setShown} t={t} lang={lang} />
+              precShown={precShown} t={t} lang={lang} />
+            <Legend data={data} shown={shown} setShown={setShown}
+              precShown={precShown} setPrecShown={setPrecShown} t={t} lang={lang} />
             {!selU && introOpen && (
               <div className="panel introcard">
                 <div className="panel-h">
@@ -1514,9 +1573,10 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 :focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
 
 /* header */
-.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:56px;flex:none;
+.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:56px;flex:none;overflow:hidden;
   border-bottom:1px solid var(--line);background:rgba(10,24,43,.75);backdrop-filter:blur(5px);z-index:20}
-.ttl-zh{font-family:var(--serif);font-size:17.5px;letter-spacing:2.5px;font-weight:600}
+.ttl-zh{font-family:var(--serif);font-size:17.5px;letter-spacing:2.5px;font-weight:600;
+  white-space:nowrap}
 .ttl-zh.lat{letter-spacing:.6px;font-size:16.5px}
 .ttl-en{font-size:8px;letter-spacing:.24em;color:var(--dim);margin-top:1px;white-space:nowrap}
 .tabs{display:flex;gap:6px;margin-left:8px}
@@ -1527,7 +1587,8 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .storchip{cursor:pointer;color:var(--yellow);border-color:var(--yellow)}
 .langbtn{cursor:pointer;color:var(--paper);border-color:var(--paper2);letter-spacing:.1em;padding:3px 9px}
 .langbtn:hover{border-color:var(--yellow);color:var(--yellow)}
-.dimchip{color:var(--dim)}
+.dimchip{color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:1180px){.dimchip{display:none}}
 
 /* layout */
 .content{position:relative;flex:1;display:flex;flex-direction:column;min-height:0}
@@ -1598,7 +1659,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .icobtn:hover{border-color:var(--yellow);color:var(--yellow)}
 .scalebar{position:absolute;right:14px;bottom:14px;z-index:10;display:flex;align-items:center;gap:7px;
   font-size:10.5px;color:var(--paper2);background:rgba(10,24,43,.8);padding:4px 9px;border:1px solid var(--line);border-radius:2px}
-.legend{position:absolute;bottom:76px;left:12px;background:rgba(10,24,43,.88);border:1px solid var(--line);
+.legend{position:absolute;bottom:76px;left:12px;background:rgba(10,24,43,.97);border:1px solid var(--line);
   padding:8px 11px;border-radius:2px;z-index:13;max-width:min(70%,560px)}
 .lg-title{font-size:9px;letter-spacing:.18em;color:var(--dim);margin-bottom:5px}
 .lg-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:11px;color:var(--paper2)}
@@ -1607,6 +1668,8 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .lg-btn{border:1px solid transparent;border-radius:2px;padding:1px 5px;font-size:11px}
 .lg-btn:hover{border-color:var(--paper2)}
 .lg-btn.off{opacity:.35;text-decoration:line-through}
+.lg-inline{margin:0 2px 0 0;display:inline-block}
+.lg-n{margin-left:4px;font-size:10px}
 .sw{display:inline-block;width:9px;height:9px;border-radius:50%;border:1px solid #0E2440}
 .sw-square{border-radius:1.5px}
 .sw-ring{box-shadow:0 0 0 2.5px rgba(187,211,236,.4)}

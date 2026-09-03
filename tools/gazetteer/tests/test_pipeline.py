@@ -9,6 +9,7 @@
 样张见 fixture/README.md,盯的是几处最容易张冠李戴的地方。
 """
 
+import io
 import os
 import re
 import shutil
@@ -23,6 +24,12 @@ from gazetteer import (bookmd, cndate, extract as EX, notes,  # noqa: E402
                        toxlsx, tsvio, vault)
 
 FAILED = []
+
+# geocode.js 里 CITY_FALLBACK 收了哪几个市 —— extract.OTHER_CITY 不能比它多,
+# 多出来的市在图上没有落点,认出来反而会掉进上海的兜底里
+GEOCODE_CITIES = set(re.findall(
+    r"^  ([A-Z][a-zA-Z]+): \{ lat:",
+    open(os.path.join(REPO, "src", "geocode.js"), encoding="utf-8").read(), re.M))
 
 
 def check(cond, what):
@@ -188,20 +195,20 @@ def test_pipeline():
         target = os.path.join(tmp, "wb.xlsx")
         shutil.copy2(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), target)
         import openpyxl
-        before = openpyxl.load_workbook(target)["Fact and Comp-Shanghai"].max_row
+        before = toxlsx.units_sheet(openpyxl.load_workbook(target)).max_row
         picked = [dict(r, keep="y") for r in res["units"] if r["role"] == "专条"]
         rep = toxlsx.append(target, units=picked, semi=res["semi"], comp=res["comp"],
                             names=res["names"], backup=False, log=lambda *a: None)
         eq(rep["units"], 3, "追加 3 家单位")
         wb = openpyxl.load_workbook(target)
-        ws = wb["Fact and Comp-Shanghai"]
+        ws = toxlsx.units_sheet(wb)
         eq(ws.max_row, before + 3, "名录表多了 3 行")
         row = [c for c in next(ws.iter_rows(min_row=before + 1, max_row=before + 1,
                                             values_only=True))]
         eq(row[0], "上海无线电十九厂", "A 列是单位名")
         eq(row[3], 19580600, "始建日期写成八位整数")
         eq(row[8], 1218, "统计块落在职工总数那一格")
-        nh = wb["Name-History"]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         last = [c for c in next(nh.iter_rows(min_row=nh.max_row, max_row=nh.max_row,
                                              values_only=True))]
         check(isinstance(last[2], str), "Name-History 的 From 照原表存成文本")
@@ -264,22 +271,33 @@ def test_vault():
         eq(len(got["changes"]), 0, "刚推出来,没有该改的")
         # 沿革表里没有、而 Founder 链里有的,collect 会把它补出来 —— 那是它的本分。
         # 要紧的是一条也不能少。
-        nh_now = {(r["Unit"], r["Name"], str(r["From"])) for r in toxlsx.read_name_history(xlsx)}
+        # 比「名称+启用年」,不比 Unit 那一格的写法:笔记按名录里的正名立,
+        # 推回来时 Unit 会归到正名(「上海电子计算机厂」→「上海电子计算机厂（上无十三）」),
+        # 那是归一,不是丢失
+        nh_now = {(r["Name"], str(r["From"])) for r in toxlsx.read_name_history(xlsx)}
         if got["name_history"] is not None:
-            back = {(r["Unit"], r["Name"], str(r["From"])) for r in got["name_history"]}
-            check(nh_now <= back, "推出来的沿革不该丢掉原表已有的行")
+            back = {(r["Name"], str(r["From"])) for r in got["name_history"]}
+            miss = sorted(nh_now - back)
+            check(not miss, "推出来的沿革不该丢掉原表已有的行(丢了 %r)" % miss[:3])
 
         # 产品表混进名称沿革 —— 曾经真出过这个岔子
         big = os.path.join(vdir, "上海电子计算机厂.md")
         managed, _ = vault.split_managed(vault.split_note(_read(big))[1])
         check("整机" in managed, "整机表在 managed 段里")
         segs = vault.parse_nh_table(managed)
-        check(all("计算机" not in s["Name"] for s in segs),
-              "只读的产品表没被当成名称沿革(DJS-130 不是厂名)")
+        # 从前拿「名字里有没有『计算机』」当判据,可「上海电子计算机厂」本就带着
+        # 这三个字 —— 该问的是:有没有哪一段名称其实是产品表里的型号
+        models = {toxlsx._bare(r["Product"]) for r in toxlsx.read_comp(xlsx)
+                  if r.get("Product")}
+        hit = [x["Name"] for x in segs if toxlsx._bare(x["Name"]) in models]
+        check(not hit, "只读的产品表没被当成名称沿革(混进来的:%r)" % hit[:3])
 
         # 改三样:普通字段、宽写的日期、自填坐标;再改一行沿革的出处
         s0 = _read(note)
-        s0 = s0.replace('城市: ""', "城市: Shanghai")
+        # 城市这一格从前空着,如今表里填好了 —— 改动要作数就得换个值,
+        # 别再赌工作簿里哪一格是空的
+        newcity = "Nanjing"          # 只要与表里那格不同即可
+        s0 = re.sub(r"(?m)^城市: .*$", "城市: " + newcity, s0)
         s0 = s0.replace("始建: 19501100", "始建: 1950年11月")
         s0 = s0.replace('纬度: ""', "纬度: 31.2701").replace('经度: ""', "经度: 121.3481")
         s0 = s0.replace("| 上海仪表铜厂 | 19610000 |  |  | 据 Founder 列推定,待核 |",
@@ -298,7 +316,7 @@ def test_vault():
         check(len(toxlsx.read_name_history(xlsx)) >= nh_before, "沿革行只增不减")
 
         wb = openpyxl.load_workbook(xlsx)
-        heads = [c.value for c in wb["Fact and Comp-Shanghai"][1]]
+        heads = [c.value for c in toxlsx.units_sheet(wb)[1]]
         check("Lat" in heads and "Lng" in heads, "Lat / Lng 两列按需添上")
         nh = [r for r in toxlsx.read_name_history(xlsx)
               if r["Unit"] == "上海微波设备研究所" and r["Name"] == "上海仪表铜厂"]
@@ -306,7 +324,7 @@ def test_vault():
         eq(nh[0]["Source"], "仪表工业志 p.412", "核实过的出处写回去了")
         eq(nh[0]["Name EN"], "Copper Works", "英文名不会因原表没这一列就丢掉")
 
-        wb2 = openpyxl.load_workbook(xlsx)["Fact and Comp-Shanghai"]
+        wb2 = toxlsx.units_sheet(openpyxl.load_workbook(xlsx))
         h = {c.value: i + 1 for i, c in enumerate(wb2[1]) if c.value}
         vals = [wb2.cell(row=r, column=h["Lat"]).value for r in range(3, wb2.max_row + 1)
                 if wb2.cell(row=r, column=1).value == "上海元件五厂"]
@@ -317,7 +335,7 @@ def test_vault():
         eq(rep["skipped"], [], "刚 pull 过,不该跳过")
         check("我的札记在此。" in _read(note), "自己写的札记,push 不动它")
         fm = vault.parse_fm(vault.split_note(_read(note))[0])
-        eq(fm["城市"], "Shanghai", "改动已在工作簿里,推回来还是它")
+        eq(fm["城市"], newcity, "改动已在工作簿里,推回来还是它")
 
         # 真有未推的改动时,push 要拦住
         other = os.path.join(vdir, "上海元件五厂.md")
@@ -392,10 +410,10 @@ def test_book():
         bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
                           log=lambda *a: None)
         wb = openpyxl.load_workbook(out)
-        eq(wb.sheetnames, ["待核", "Fact and Comp-Beijing", "Semi-Product",
-                           "Comp-Product", "Name-History"],
+        eq(wb.sheetnames, ["待核", bookmd.UNITS_PREVIEW + "Beijing", toxlsx.SHEET_SEMI,
+                           toxlsx.SHEET_COMP, toxlsx.SHEET_NAMES],
            "五张表,要核的那张排在头一个")
-        ws = wb["Fact and Comp-Beijing"]
+        ws = wb[bookmd.UNITS_PREVIEW + "Beijing"]
         eq([c.value for c in ws[1]][:8],
            [None, "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add."],
            "第一行表头与原表一致(A1 照原表留空)")
@@ -416,7 +434,7 @@ def test_book():
         rv.cell(row=4, column=1).value = ""
         wb.save(out)
         bundle, city2, seen = bookmd.read_review(out)
-        eq(city2, "Beijing", "城市从「Fact and Comp-北京」这类表名上认")
+        eq(city2, "Beijing", "城市从「厂所名录-北京」这类表名上认")
         eq(len(bundle["units"]), 1, "两行改成同一个名字,并作一家")
         eq(seen["merged"], 1, "并了几行要报出来")
         eq(bundle["units"][0]["Unit"], "上海无线电十九厂", "并成的那一家用核过的名字")
@@ -805,7 +823,7 @@ def test_accepted():
 
         # 新伤照报不误
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         ws.cell(row=3, column=h["Start Date"]).value = 1961
         wb.save(x)
@@ -822,8 +840,12 @@ def test_accepted():
         fresh = [t for t in toxlsx.verify(x) if (t[0], t[3]) not in seen]
         eq(fresh, [], "插一行,底下行号全挪,认过的还是认过的")
 
-        # 改好一条,--accept 重写时它自己掉出去
-        ws.cell(row=4, column=h["Source"]).value = "试·补的出处"
+        # 改好一条,--accept 重写时它自己掉出去。
+        # 挑一条眼下真报着「没出处」的来补 —— 哪一家缺出处会随补录而变,不认死行号
+        blank = next(r for r in range(3, ws.max_row + 1)
+                     if ws.cell(row=r, column=1).value
+                     and not ws.cell(row=r, column=h["Source"]).value)
+        ws.cell(row=blank, column=h["Source"]).value = "试·补的出处"
         wb.save(x)
         _p, n2 = toxlsx.save_accepted(x, toxlsx.verify(x))
         check(n2 < n, "改好的那条不再记进《已核》,名单不会越积越长")
@@ -843,6 +865,30 @@ def test_version():
     # 命令列表是拿来对照的:少了哪一个,手里那份就是旧的
     for cmd in ("verify", "tidy", "volume", "version"):
         check(cmd in said, "命令列表里有 %s" % cmd)
+
+
+def test_run_out_encoding():
+    """外部命令的输出按 UTF-8 解,不跟本机的编码走。
+
+    简体中文 Windows 的本地编码是 GBK。subprocess 的 text=True 按本地编码解,
+    而 git 吐出来的提交说明是 UTF-8 —— 里头一个 GBK 认不得的字节,读输出那个
+    线程就当场炸掉,stdout 变成 None,底下 .strip() 报一句莫名其妙的
+    AttributeError。真绊过人:gaz version 在中文提交说明上整个跑不动。"""
+    print("外部命令的输出怎么解")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gaz_mod", os.path.join(HERE, "..", "gaz.py"))
+    gaz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gaz)
+
+    # 「」『』—— 这几个字的 UTF-8 字节 GBK 解不开,正是绊住的那一类
+    zh = "判重加一道「抽字缩的简称」"
+    got = gaz.run_out(sys.executable, "-c",
+                      "import sys;sys.stdout.buffer.write(%r)" % zh.encode("utf-8"))
+    eq(got, zh, "中文输出原样拿得回来")
+    eq(gaz.run_out(sys.executable, "-c", "raise SystemExit(3)"), None,
+       "命令返回非零,报 None,不是半截输出")
+    eq(gaz.run_out("这个命令根本不存在-xyz"), None, "命令不存在,报 None,不抛异常")
 
 
 def test_model_dash():
@@ -887,7 +933,7 @@ def test_review_name_sheet():
         bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
 
         wb = openpyxl.load_workbook(x)
-        nh = wb["Name-History"]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         head = [nh.cell(row=1, column=c).value for c in range(1, 8)]
         eq(head, ["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"],
            "表头写成中文,「Unit」不再看着像「这一行这家叫什么」")
@@ -986,14 +1032,14 @@ def test_diff_workbooks():
         eq(toxlsx.diff_workbooks(a, b), {}, "一模一样的两份,报「没有分别」")
 
         wb = openpyxl.load_workbook(b)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         # 钥匙是去掉括号的样子:「上海电子计算机厂（上无十三）」→ 上海电子计算机厂
         who = toxlsx._bare(ws.cell(row=3, column=1).value)
         ws.cell(row=3, column=h["Source"]).value = "试·补的出处"
         r = ws.max_row + 1
         ws.cell(row=r, column=1).value = "辽阳试验新厂"
-        wb[toxlsx.SHEET_NAMES].delete_rows(2)
+        toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES).delete_rows(2)
         wb.save(b)
 
         d = toxlsx.diff_workbooks(a, b)
@@ -1010,7 +1056,7 @@ def test_diff_workbooks():
         # 再把 b 理一遍 —— 两份只差这两列
         shutil.copy(a, b)
         wb = openpyxl.load_workbook(a)
-        nh = wb[toxlsx.SHEET_NAMES]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         hn = toxlsx._headers(nh, 1)
         check("序" in hn and "至" in hn, "现表已经有「序」「至」两列")
         for i in range(2, nh.max_row + 1):
@@ -1034,7 +1080,7 @@ def test_tidy_names():
         x = os.path.join(tmp, "总表.xlsx")
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_NAMES]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         h = toxlsx._headers(ws, 1)
         # 三段名称故意打乱着写进去,中间还夹一家别的
         r = ws.max_row + 1
@@ -1076,7 +1122,7 @@ def test_tidy_names():
 
         # 手工改坏了,verify 报得出来,并指向 gaz tidy
         wb = openpyxl.load_workbook(x)
-        wb[toxlsx.SHEET_NAMES].cell(row=2, column=1).value = 9
+        toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES).cell(row=2, column=1).value = 9
         wb.save(x)
         why = [w for k, _wh, w, _kk in toxlsx.verify(x) if k == "沿革"]
         check(any("gaz tidy" in w for w in why), "序号改坏了,verify 指着 gaz tidy 说")
@@ -1086,6 +1132,71 @@ def test_tidy_names():
         eq(why, [], "理过一遍就不再报")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_dups_near_names():
+    """名字差一截的两家:「北大方正集团公司」与「北京北大方正集团公司」。
+       判重只比名字相不相同,这种一个是另一个的一截,两边都过关。"""
+    print("名字差一截的重复")
+    tmp = tempfile.mkdtemp(prefix="gaz-near-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
+        r = ws.max_row + 1
+        for nm in ("辽阳无线电器材厂", "辽阳无线电器材厂平谷分厂", "沈阳辽阳无线电器材厂"):
+            ws.cell(row=r, column=1).value = nm
+            r += 1
+        wb.save(x)
+        pairs = [k for _s, k, _rows, _w in toxlsx.report_dups(x)["similar"] if " ⊂ " in k]
+        check(any("辽阳无线电器材厂 ⊂ 沈阳辽阳无线电器材厂" == k for k in pairs),
+              "差一个前缀的,报出来")
+        check(not any("平谷分厂" in k for k in pairs),
+              "分厂本就是另一家,不报(得 %r)" % [k for k in pairs if "辽阳" in k])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_dups_abbrev():
+    """抽字缩的简称与全称各占一行:「上无十三」即「上海无线电十三厂」。
+       既不同名,也不是掐头去尾差一截 —— 上面两道都拦不住,得照抽字查。"""
+    print("简称与全称的重复")
+    tmp = tempfile.mkdtemp(prefix="gaz-abbr-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
+        h = toxlsx._headers(ws, 2)
+        r = ws.max_row + 1
+        ws.cell(row=r, column=1).value = "辽阳电子仪器公司"
+        ws.cell(row=r, column=h["别名"]).value = "辽无二厂、辽阳仪器"
+        ws.cell(row=r + 1, column=1).value = "辽阳无线电二厂"
+        ws.cell(row=r + 2, column=1).value = "抚顺辽阳仪器修配所"
+        wb.save(x)
+        pairs = [k for _s, k, _rows, _w in toxlsx.report_dups(x)["similar"] if " ⊂ " in k]
+        check("辽无二厂 ⊂ 辽阳无线电二厂" in pairs,
+              "抽字缩的简称,对得上全称就报出来")
+        check("辽阳仪器 ⊂ 抚顺辽阳仪器修配所" not in pairs,
+              "头一个字对不上的不报,不然满纸都是似是而非的对子")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_city_of():
+    """志书按城市成书,书里点到的外地协作单位却不属本市 —— 名字冠了别的市名就照名字算。"""
+    print("外地协作单位的城市")
+    eq(EX.city_of("北京市半导体器件六厂", "Beijing"), "Beijing", "本市的照旧")
+    eq(EX.city_of("唐山陡河发电总厂", "Beijing"), "Tangshan", "唐山的厂不算北京的")
+    eq(EX.city_of("哈尔滨军事工程学院", "Beijing"), "Harbin", "长市名先比,不叫「哈」字截和")
+    eq(EX.city_of("上海无线电七厂", "Beijing"), "Shanghai", "北京志里点到的上海厂归上海")
+    eq(EX.city_of("华东计算技术研究所", "Shanghai"), "Shanghai", "名字不冠市名的,跟着志书走")
+    for _zh, en in EX.OTHER_CITY.items():
+        check(en in GEOCODE_CITIES,
+              "%s 在 geocode.js 里有落点(没有就会掉进上海的兜底)" % en)
 
 
 def test_verify():
@@ -1107,7 +1218,7 @@ def test_verify():
         check(all(len(t) == 4 for t in base), "每一条都带着「哪一类」与「记号」")
 
         wb = openpyxl.load_workbook(x)
-        ws = wb[toxlsx.SHEET_UNITS]
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
         h = toxlsx._headers(ws, 2)
         r = None
         for i in range(3, ws.max_row + 1):
@@ -1150,7 +1261,7 @@ def test_verify():
         ws.cell(row=r, column=h["Source"]).value = "试·一页"
         ws.cell(row=r, column=h["别名"]).value = "辽试所"
         wb.save(x)
-        c = wb[toxlsx.SHEET_COMP]
+        c = toxlsx.sheet_of(wb, toxlsx.SHEET_COMP)
         hh = toxlsx._headers(c, 1)
         rr = c.max_row + 1
         c.cell(row=rr, column=hh["Product"]).value = "试验机零号"
@@ -1184,23 +1295,23 @@ def test_verify():
         wb.save(x)
 
         # 沿革表:1900 年代的年份是「1966年（后改名…」被切开算出来的
-        nh = wb[toxlsx.SHEET_NAMES]
+        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
         hn = toxlsx._headers(nh, 1)
         nr = nh.max_row + 1
         nh.cell(row=nr, column=hn["Unit"]).value = "辽阳试验计算技术研究所"
         nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验机械所"
         nh.cell(row=nr, column=hn["From"]).value = "19060000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), ["日期"], "1906 这样的年份,报出来")
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), ["日期"], "1906 这样的年份,报出来")
 
         nh.cell(row=nr, column=hn["From"]).value = "19660000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), [], "1966 是正常年份,不报")
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), [], "1966 是正常年份,不报")
 
         # 「甲厂 → 甲厂」是改名链的末一段:前头有别的名字才立得住
         nh.cell(row=nr, column=hn["Name"]).value = "辽阳试验计算技术研究所"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), ["沿革"],
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), ["沿革"],
            "孤零零一条「改名叫自己」,不载信息,报出来")
 
         nr2 = nh.max_row + 1
@@ -1208,8 +1319,304 @@ def test_verify():
         nh.cell(row=nr2, column=hn["Name"]).value = "辽阳试验机械所"
         nh.cell(row=nr2, column=hn["From"]).value = "19600000"
         wb.save(x)
-        eq(kinds("Name-History 第%d行" % nr), [],
+        eq(kinds("%s 第%d行" % (toxlsx.SHEET_NAMES, nr)), [],
            "前头有一段别的名字,末一段就立得住,不报")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_verify_knows_geocode_aliases():
+    """geocode.js 里认下的别名,verify 不该再报「查无此人」。
+
+    「上海市计算中心」即上海市计算技术研究所 —— 别名表里写着,图上那条线连得
+    好好的。verify 从前只翻工作簿,于是报它一句查无此人,白让人去核一趟。"""
+    print("判名字时也认 geocode.js 的别名")
+    tmp = tempfile.mkdtemp(prefix="gaz-ali-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        geo = os.path.join(REPO, "src", "geocode.js")
+        wb = openpyxl.load_workbook(x)
+        w = toxlsx.sheet_of(wb, toxlsx.SHEET_COMP)
+        hh = toxlsx._headers(w, 1)
+        r = w.max_row + 1
+        w.cell(row=r, column=hh["Product"]).value = "试·某型计算机"
+        # 一个只在 geocode.js 里认得的简称,一个哪儿都没有的
+        w.cell(row=r, column=hh["Research Insti"]).value = "上海市计算中心、并无此厂"
+        wb.save(x)
+
+        def missed(bad):
+            return "、".join(why for kind, _w, why, _k in bad
+                             if kind == "名录" and "试·某型计算机" in _w)
+
+        bare = missed(toxlsx.verify(x))
+        check("上海市计算中心" in bare, "不给别名表,简称会被报出来(得 %r)" % bare)
+        withgeo = missed(toxlsx.verify(x, geocode_js=geo))
+        check("上海市计算中心" not in withgeo,
+              "给了别名表,简称不再报(得 %r)" % withgeo)
+        check("并无此厂" in withgeo, "真查无此人的照报不误(得 %r)" % withgeo)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_old_review_workbook():
+    """手里核了一半的待核本子还挂着英文标签,照样读得回来。
+
+    标签改名那天,谁手上正核着一章,那一章的工夫不能白费 —— 读的一头新旧
+    两种都认。城市也一样:从前是「Fact and Comp-北京」,如今是「厂所名录-北京」。"""
+    print("旧待核本子还认不认")
+    tmp = tempfile.mkdtemp(prefix="gaz-oldrev-")
+    try:
+        import openpyxl
+        res = EX.extract("# 第一章 电子计算机\n\n"
+                         "## 第一节 辽阳无线电厂\n\n"
+                         "辽阳无线电厂，创建于1965年3月，厂址辽阳路25号。\n",
+                         book="试验志", city="Beijing")
+        rev = os.path.join(tmp, "试验志待核.xlsx")
+        bookmd.write_xlsx(rev, res, city="Beijing", book="试验志", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(rev)
+        eq(wb.sheetnames[1], bookmd.UNITS_PREVIEW + "Beijing", "新本子挂中文标签")
+
+        # 改回旧标签,当作是改名以前做的那一份
+        wb[bookmd.UNITS_PREVIEW + "Beijing"].title = bookmd.UNITS_PREVIEW_OLD + "Beijing"
+        for new_name, old_name in toxlsx.OLD_NAMES.items():
+            if new_name in wb.sheetnames:
+                wb[new_name].title = old_name
+        # 核过一行:取否写 y
+        rv = wb["待核"]
+        h = {c.value: c.column for c in rv[1]}
+        rv.cell(row=2, column=h["取否"]).value = "y"
+        wb.save(rev)
+
+        bundle, city, seen = bookmd.read_review(rev)
+        eq(city, "Beijing", "城市从旧写法的表名上照样认得出")
+        eq(len(bundle["units"]), 1, "核过的那一行读得回来")
+        eq(bundle["units"][0].get("Unit"), "辽阳无线电厂", "读回来的是那一家")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_verify_founder_years():
+    """沿革链里的年份也得查 —— 从前只查 Start/End 两栏。
+
+    「1966年（后改名…」被切开算成 1906,写进哪一栏都是错的。可 verify 只盯
+    始建、终止两栏,写在 Founder 链里的就一直躺着没人看见 —— 现表里躺着两个。"""
+    print("沿革链里的年份")
+    tmp = tempfile.mkdtemp(prefix="gaz-fy-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.units_sheet(wb)
+        h = toxlsx._headers(ws, 2)
+        r = ws.max_row + 1
+        ws.cell(row=r, column=1).value = "辽阳试验电子厂"
+        ws.cell(row=r, column=h["Founder"]).value = "19030000改名辽阳无线电厂"
+        ws.cell(row=r, column=h["Source"]).value = "试·一页"
+        wb.save(x)
+        hit = [w for kind, w, why, _k in toxlsx.verify(x)
+               if kind == "日期" and "1903" in why]
+        check(hit, "链子里那个 1903 报出来了")
+        # 正经年份不报,不然满纸都是
+        ws.cell(row=r, column=h["Founder"]).value = "19630000改名辽阳无线电厂"
+        wb.save(x)
+        hit = [w for kind, w, why, _k in toxlsx.verify(x)
+               if kind == "日期" and "辽阳试验电子厂" in w]
+        eq(hit, [], "1963 是正经年份,不报")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_accepted_survives_rename():
+    """标签改名,不该把整本《已核》作废。
+
+    记号是拿表名开头的(「Comp-Product·某型机·某厂」)。改名那天同一个毛病的
+    记号跟着变样,认过的几十条旧账就会一夜涌回来 —— 而《已核》本来就是为了
+    把旧账压下去、让新伤显出来的。真发生过一回。"""
+    print("《已核》熬不熬得过改名")
+    tmp = tempfile.mkdtemp(prefix="gaz-accrn-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        bad = toxlsx.verify(x, geocode_js=os.path.join(REPO, "src", "geocode.js"))
+        comp = [t for t in bad if t[3].startswith(toxlsx.SHEET_COMP + "·")]
+        check(comp, "现表里有以「%s·」开头的记号" % toxlsx.SHEET_COMP)
+
+        # 照改名以前的样子写一份《已核》—— 表名是英文的
+        old_name = toxlsx.OLD_NAMES[toxlsx.SHEET_COMP]
+        with io.open(toxlsx.accepted_path(x), "w", encoding="utf-8") as f:
+            for kind, _w, _why, key in comp:
+                f.write("%s\t%s\t试\n" % (kind, old_name + key[len(toxlsx.SHEET_COMP):]))
+
+        seen = toxlsx.load_accepted(x)
+        still = [t for t in comp if (t[0], t[3]) not in seen]
+        eq(still, [], "旧写法的记号照样认得出,认过的不再报(还报着 %d 条)" % len(still))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_point_in_district():
+    """点落在哪个区里 —— 填好的坐标靠这个核,不必装 Node、不必开浏览器。"""
+    print("点落在哪个区")
+    import json
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "addbase", os.path.join(REPO, "tools", "geo", "添底图.py"))
+    geo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(geo)
+    with io.open(os.path.join(REPO, "src", "city.geo.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+
+    def at(lng, lat):
+        for feat in doc["features"]:
+            if any(geo.point_in_ring(lng, lat, r) for r in geo._rings(feat["geometry"])):
+                return feat["properties"].get("name")
+        return None
+
+    eq(at(116.3975, 39.9087), "东城", "天安门在东城")
+    eq(at(116.3264, 40.0031), "海淀", "清华在海淀")
+    eq(at(121.4737, 31.2304), "黄浦", "人民广场在黄浦")
+    eq(at(100.0, 40.0), None, "内蒙古的荒地,不属于图上任何一个区")
+
+    # 撤并过的区:老名字落进新区里是对的,不是填错了
+    import importlib.util as _iu
+    gspec = _iu.spec_from_file_location("gaz_gd", os.path.join(HERE, "..", "gaz.py"))
+    gaz = _iu.module_from_spec(gspec)
+    gspec.loader.exec_module(gaz)
+    check(gaz.same_district("崇文", "东城"), "崇文 2010 年并进东城,算同一个")
+    check(gaz.same_district("浦东", "浦东新"), "底图作「浦东新」,表里作「浦东」")
+    check(not gaz.same_district("徐汇", "杨浦"), "真不相干的两个区,不算")
+
+
+def test_places_dupe_key():
+    """geocode.js 里同一个名字写两遍 —— JS 一声不吭地拿后一条顶掉前一条。
+
+    PLACES 是个 JS 对象,重键不报错、不警告,只是有一家的坐标悄悄换成了
+    另一家的。京沪的条目混在一张表里,越往后越容易撞上,所以让 verify 看着。"""
+    print("落点表里的重复钥匙")
+    tmp = tempfile.mkdtemp(prefix="gaz-dupkey-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        geo = os.path.join(tmp, "geocode.js")
+        src = _read(os.path.join(REPO, "src", "geocode.js"))
+        eq([k for k, _w, why, _kk in toxlsx.verify(x, geocode_js=geo if False else
+            os.path.join(REPO, "src", "geocode.js")) if k == "落点"], [],
+           "现表干净,一处也不报")
+
+        # 把头一条抄一份塞进去,当作手滑粘重了
+        import re as _re
+        m = _re.search(r'^(\s*"[^"]+"\s*:\s*\{[^}]*\},)$', src, _re.M)
+        _write(geo, src.replace(m.group(1), m.group(1) + "\n" + m.group(1), 1))
+        hit = [why for k, _w, why, _kk in toxlsx.verify(x, geocode_js=geo) if k == "落点"]
+        check(hit, "粘重了的那一条,报出来")
+        check(hit and "只认最后一条" in hit[0], "话说清楚:前面那条悄悄作废了")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_road_of():
+    """落点草稿按路排 —— 门牌各不相同,路只有那么几条。
+
+    北京四十一家地址归到二十九条路上,光酒仙桥一条就占十三家。
+    照着一条路填,比一家一家查省事,也不容易填串。"""
+    print("地址归到哪条路")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gaz_road", os.path.join(HERE, "..", "gaz.py"))
+    gaz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gaz)
+    eq(gaz.road_of("酒仙桥路12号"), "酒仙桥路", "路名到「路」为止,门牌不算")
+    eq(gaz.road_of("酒仙桥北路9号"), "酒仙桥北路", "南路北路是两条,不并作一条")
+    eq(gaz.road_of("东四北大街107号"), "东四北大街", "大街也认")
+    eq(gaz.road_of("德胜门外后九条小市口胡同1号"), "德胜门外后九条小市口胡同",
+       "门牌号之前的整截都算路名 —— 北京的地址一层套一层,切早了会把两条路并作一条")
+    eq(gaz.road_of("古城北路甲4号"), "古城北路", "「甲4号」这样的门牌也掐得掉")
+    eq(gaz.road_of("深沟村"), "深沟村", "只写到村的,整个当作一条")
+    eq(gaz.road_of(""), "—", "空地址不至于炸")
+
+
+def test_lineage_sheet():
+    """机构沿革:一行一桩变动,前身后继各占一栏。
+
+    「甲厂和乙厂合并成丙厂」牵着三家,记在哪一家名下都别扭 —— 从前挤在
+    Founder 一栏里,靠关键词猜是合并还是改名,猜不着就一律算改名。
+    这张表是明写的,所以查得比别处严:关系只认那五种,年月、出处都不许空,
+    前身后继的名字得在名录里查得着。"""
+    print("机构沿革表")
+    tmp = tempfile.mkdtemp(prefix="gaz-lin-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+
+        got = toxlsx.read_lineage(x)
+        check(got, "现表里已经有行了(从 Founder 迁来的那一行)")
+        check(all(r["关系"] in toxlsx.RELATIONS for r in got),
+              "现有的行,关系都在那五种里头")
+
+        eq(toxlsx.split_names("甲厂、乙厂"), ["甲厂", "乙厂"], "前身一栏拆得开")
+        eq(toxlsx.split_names(""), [], "空着就是没有")
+
+        wb = openpyxl.load_workbook(x)
+        lin = toxlsx.sheet_of(wb, toxlsx.SHEET_LINEAGE)
+        hh = toxlsx._headers(lin, 1)
+        r = lin.max_row + 1
+
+        def put(ym, pre, rel, post, src):
+            for lab, v in (("年月", ym), ("前身", pre), ("关系", rel),
+                           ("后继", post), ("出处", src)):
+                lin.cell(row=r, column=hh[lab]).value = v
+            wb.save(x)
+            return [(k, why) for k, w, why, _kk in toxlsx.verify(x) if "第%d行" % r in w]
+
+        # 名录里真有的两家,合并成第三家 —— 一句也不该报
+        bad = put("19600721", "一亚电工厂、交直电工厂", "合并", "上海无线电十四厂", "试·一页")
+        eq(bad, [], "写全了就不报(得 %r)" % bad[:3])
+
+        kinds = lambda b: sorted({k for k, _w in b})
+        eq(kinds(put("19600721", "一亚电工厂", "归并", "上海无线电十四厂", "试·一页")),
+           ["机构"], "关系写了个表外的词,拦下来")
+        eq(kinds(put("", "一亚电工厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["日期"], "年月空着,拦下来")
+        eq(kinds(put("19600721", "一亚电工厂", "合并", "上海无线电十四厂", "")),
+           ["出处"], "出处空着,拦下来")
+        eq(kinds(put("19600721", "并无此厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["名录"], "前身名录里查无此人,拦下来")
+        eq(kinds(put("19060721", "一亚电工厂", "合并", "上海无线电十四厂", "试·一页")),
+           ["日期"], "1906 这样的年份,这张表里一样拦")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_old_sheet_name():
+    """标签改叫「厂所名录」了,手里的旧工作簿还得读得动。
+
+    从前叫「Fact and Comp-Shanghai」—— 那时只收上海,后来北京、天津的厂所
+    也进了这一张,名字就不对了。改名是为了跟文档里说的「厂所表」对得上,
+    可别人手里、git 历史里的旧本子还是旧名字,认死一个就打不开了。"""
+    print("旧标签名还认不认")
+    tmp = tempfile.mkdtemp(prefix="gaz-tab-")
+    try:
+        import openpyxl
+        old = os.path.join(tmp, "旧本子.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), old)
+        wb = openpyxl.load_workbook(old)
+        toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS).title = toxlsx.OLD_NAMES[toxlsx.SHEET_UNITS]
+        wb.save(old)
+        eq(openpyxl.load_workbook(old).sheetnames[0], toxlsx.OLD_NAMES[toxlsx.SHEET_UNITS],
+           "这一份用的是旧标签名")
+
+        n_new = len(toxlsx.read_units_full(os.path.join(REPO, "CN_Electronic_Industry.xlsx")))
+        eq(len(toxlsx.read_units_full(old)), n_new, "旧标签名照样读得出全部厂所")
+        check(toxlsx.verify(old), "旧本子也验得动")
+        # 一新一旧对着比,不该当成「整张表都没了」
+        d = toxlsx.diff_workbooks(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), old)
+        gone = d.get(toxlsx.SHEET_UNITS, {}).get("gone", [])
+        eq(gone, [], "改名前后两份对着比,厂所不该凭空消失(得 %r)" % gone[:3])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1249,8 +1656,16 @@ def main():
                test_book, test_flat_heads, test_fixes, test_users,
                test_rename_subject, test_models, test_output,
                test_edit_in_place, test_aliases, test_no_dup,
-               test_drafts_default, test_version, test_model_dash, test_product_attributive,
+               test_drafts_default, test_version, test_run_out_encoding,
+               test_dups_near_names,
+               test_dups_abbrev, test_city_of,
+               test_model_dash, test_product_attributive,
                test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
+               test_verify_knows_geocode_aliases,
+               test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
+               test_old_sheet_name,
+               test_old_review_workbook,
+               test_verify_founder_years,
                test_later_rename):
         fn()
     print()

@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, cityAt } from "./geocode.js";
+import CITY_GEO from "./city.geo.json";
 import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
 import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitChain,
          stripLeadingDate } from "./utils.js";
@@ -8,20 +9,21 @@ import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitCha
    CN_Electronic_Industry.xlsx 解析器
    ------------------------------------------------------------
    工作簿即本站唯一数据源,四张表:
-     Fact and Comp-Shanghai  厂所名录(含 1990 年统计块,两行表头)
-     Semi-Product            半导体器件投产记录
-     Comp-Product            计算机整机研制记录
-     Name-History            名称沿革(可选,有则名称以此表为准)
+     厂所名录                含 1990 年统计块,两行表头(旧名「Fact and Comp-Shanghai」仍认)
+     器件                    半导体器件投产记录(旧名「Semi-Product」)
+     整机                    计算机整机研制记录(旧名「Comp-Product」)
+     名称沿革                可选;有则名称以此表为准(旧名「Name-History」)
    本文件只做「读取 + 归并」,不改写原表语义:地图上的经纬度来自
    geocode.js 的人工近似值,沿革连线由「Founder」列的措辞推定,
    两者在界面上都会显式标注出处,便于核对。
    ============================================================ */
 
 const SHEET_HINTS = {
-  units: ["fact and comp-shanghai", "fact", "厂所", "units"],
-  semi: ["semi-product", "semi", "半导体"],
-  comp: ["comp-product", "comp", "整机", "计算机"],
-  names: ["name-history", "names", "名称沿革", "名称"],
+  units: ["厂所名录", "fact and comp-shanghai", "fact", "厂所", "units"],
+  semi: ["器件", "semi-product", "semi", "半导体"],
+  comp: ["整机", "comp-product", "comp", "计算机"],
+  names: ["名称沿革", "name-history", "names", "名称"],
+  lineage: ["机构沿革", "lineage", "机构"],
 };
 
 const norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
@@ -61,6 +63,52 @@ function headerIndex(rows, needle) {
     if ((rows[i] || []).some((c) => norm(c) === needle)) return i;
   }
   return 0;
+}
+
+/* 区界多边形的形心 —— 只知道在哪个区、查不到门牌的单位,落在那个区中央。
+   比「一市之内一百多家全叠在市中心那一个点上」强得多,而且不冒充精确:
+   界面上照旧标作「区级」。 */
+const DISTRICT_CENTER = (() => {
+  const out = {};
+  (CITY_GEO.features || []).forEach((f) => {
+    const p = f.properties || {};
+    if (!p.name) return;
+    const pts = [];
+    const walk = (x) => {
+      if (!Array.isArray(x)) return;
+      if (typeof x[0] === "number") pts.push(x);
+      else x.forEach(walk);
+    };
+    walk((f.geometry || {}).coordinates);
+    if (!pts.length) return;
+    out[(p.city || "") + "·" + p.name] = {
+      lng: pts.reduce((a, q) => a + q[0], 0) / pts.length,
+      lat: pts.reduce((a, q) => a + q[1], 0) / pts.length,
+    };
+  });
+  return out;
+})();
+
+/* 撤销了的老区,落点借用今区 —— 界线图是当代政区,没有它们。
+   记的名字仍是志书写的那个:一九七〇年的厂在崇文区,说它在东城区是错的;
+   可要在图上给它一个位置,今东城的中央离它当年所在处最近。 */
+const GONE_DISTRICT = {
+  "北京·崇文": "东城",   // 2010 并入东城
+  "北京·宣武": "西城",   // 2010 并入西城
+  "上海·南市": "黄浦",   // 2000 并入黄浦
+  "上海·卢湾": "黄浦",   // 2011 并入黄浦
+  "上海·闸北": "静安",   // 2015 并入静安
+};
+
+/** 「朝阳区」「朝阳」都认;认不出返回 null。city 用中文市名(cityAt 的 label)。 */
+export function districtAt(city, district) {
+  const d = String(district || "").trim().replace(/[区县]$/, "");
+  if (!d) return null;
+  const key = String(city || "") + "·" + d;
+  const now = GONE_DISTRICT[key];
+  return DISTRICT_CENTER[key]
+    || (now ? DISTRICT_CENTER[String(city || "") + "·" + now] : null)
+    || null;
 }
 
 function colFinder(...headerRows) {
@@ -197,6 +245,8 @@ function parseUnits(ws) {
   /* 统计数字是哪一年的 —— 志书按「1995年末,职工总数…」整段报,一行一个年份。
      没这一列就退回表头那个总年份(表头 `1990` 那一格)。 */
   const cStatsYear = col("统计年", "Stats Year", "数据年份");
+  /* 志书写明的区。查不到门牌时,靠它落到区一级,不必全挤在市中心 */
+  const cDistrict = col("区", "District", "区县");
   const cLat = col("Lat", "Latitude", "纬度");
   const cLng = col("Lng", "Lon", "Longitude", "经度");
   /* A 列无表头,即单位名称 */
@@ -243,6 +293,8 @@ function parseUnits(ws) {
     const lngOverride = cLng >= 0 ? numCell(r, cLng) : null;
     const hasOwn = latOverride != null && lngOverride != null;
     const hasPlace = place.lat != null && place.lng != null;
+    const zone = cDistrict >= 0 ? String(cell(r, cDistrict) || "").trim() : "";
+    const atZone = hasOwn || hasPlace ? null : districtAt(fallback.label, zone);
 
     units.push({
       id: "u" + (units.length + 1),
@@ -263,10 +315,12 @@ function parseUnits(ws) {
       city: String(cell(r, cCity) || "").trim(),
       address: String(cell(r, cAddr) || "").trim(),
       statsYear: (cStatsYear >= 0 ? parseInt(cell(r, cStatsYear), 10) : NaN) || statsYear,
-      lat: hasOwn ? latOverride : hasPlace ? place.lat : fallback.lat,
-      lng: hasOwn ? lngOverride : hasPlace ? place.lng : fallback.lng,
-      precision: hasOwn ? "given" : hasPlace ? place.precision || "district" : "city",
-      district: hasPlace || hasOwn ? place.district || "" : "",
+      lat: hasOwn ? latOverride : hasPlace ? place.lat : atZone ? atZone.lat : fallback.lat,
+      lng: hasOwn ? lngOverride : hasPlace ? place.lng : atZone ? atZone.lng : fallback.lng,
+      precision: hasOwn ? "given"
+        : hasPlace ? place.precision || "district"
+          : atZone ? "district" : "city",
+      district: hasPlace || hasOwn ? place.district || "" : (atZone ? zone : ""),
       locNote: place.note || "",
       stats,
       hasStats,
@@ -355,6 +409,45 @@ function parseComp(ws, match) {
   }).filter((x) => x.product);
 }
 
+/* ---------- 机构沿革表(可选) ----------
+   一行一桩机构变动 —— 合并、分立、划归、合资。「甲厂和乙厂合并成丙厂」是
+   一桩事、牵着三家,记在哪一家名下都别扭,所以前身、后继各占一栏,几家写几家。
+
+   有这张表就以它为准:表里已经写明的那一桩,不再从「Founder」列去猜。
+   Founder 那条路仍留着 —— 这张表里没写到的单位照旧靠它,一条线也不会因为
+   这张表刚立起来而消失。 */
+function parseLineage(ws, match) {
+  const rows = rowsOf(ws);
+  if (!rows.length) return [];
+  const hi = headerIndex(rows, "前身");
+  const col = colFinder(rows[hi] || []);
+  const cY = col("年月", "Date"), cP = col("前身", "From"), cR = col("关系", "Relation");
+  const cT = col("后继", "To"), cN = col("说明", "Note"), cS = col("出处", "Source");
+  if (cP < 0 || cT < 0) return [];
+
+  const out = [];
+  rows.slice(hi + 1).forEach((r) => {
+    const from = splitAliases(cell(r, cP)).flatMap((x) => match(x));
+    const to = splitAliases(cell(r, cT)).flatMap((x) => match(x));
+    if (!from.length || !to.length) return;
+    const date = parseCNDate(cell(r, cY));
+    const rel = String(cell(r, cR) || "").trim() || "合并";
+    out.push({
+      type: rel,
+      year: date ? date.y : null,
+      date,
+      from: [...new Set(from)],
+      to: [...new Set(to)],
+      note: String(cell(r, cN) || "").trim(),
+      source: String(cell(r, cS) || "").trim(),
+      basis: "机构沿革表",
+      derived: false,
+      uncertain: !date,
+    });
+  });
+  return out;
+}
+
 /* ---------- 名称沿革表(可选) ----------
    有这张表就以它为准,没有才回落到从「Founder」列推定的那条线。
    一行一段名称:Unit 对应名录里的单位,From 是这个名字启用的日期,
@@ -399,13 +492,22 @@ function parseNameHistory(ws, match, units) {
 }
 
 /* ---------- 事件推定 ---------- */
-function deriveEvents(units, comp, match) {
+function deriveEvents(units, comp, match, stated = []) {
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
   const events = [];
 
-  /* 一、沿革:「Founder」列里提到的、名录中确有其名的单位 → 前身 */
+  /* 〇、机构沿革表里明写的那些 —— 有表就以表为准 */
+  const spokenFor = new Set();
+  stated.forEach((e) => {
+    events.push({ ...e, id: "ev" + (events.length + 1) });
+    e.to.forEach((id) => spokenFor.add(id));
+  });
+
+  /* 一、沿革:「Founder」列里提到的、名录中确有其名的单位 → 前身。
+     机构沿革表已经替这一家说过话的,就不再拿 Founder 去猜 —— 一桩变动
+     报两遍,图上便是两条线,一条明写一条推定,读的人无从分辨哪个是哪个。 */
   units.forEach((u) => {
-    if (!u.founder) return;
+    if (!u.founder || spokenFor.has(u.id)) return;
     const from = match(u.founder).filter((id) => id !== u.id);
     if (!from.length) return;
     const dt = u.start || u.end;
@@ -434,7 +536,7 @@ function deriveEvents(units, comp, match) {
       from: c.unitIds.slice(),
       to: [],
       note: c.product + (c.remark ? " · " + c.remark : ""),
-      basis: "据「Comp-Product」表推定",
+      basis: "据「整机」表推定",
       derived: true,
       uncertain: !c.date,
       productId: c.id,
@@ -463,14 +565,15 @@ export const EMPTY_DATA = {
 export function parseWorkbook(buf) {
   const wb = XLSX.read(buf, { type: "array" });
   const { units, statsYear } = parseUnits(pickSheet(wb, "units"));
-  if (!units.length) throw new Error("未找到「Fact and Comp-Shanghai」厂所名录表");
+  if (!units.length) throw new Error("未找到「厂所名录」表(旧名「Fact and Comp-Shanghai」也认)");
 
   const match = buildMatcher(units);
   const explicitNames = parseNameHistory(pickSheet(wb, "names"), match, units);
   units.forEach((u) => { if (explicitNames[u.id]) u.names = explicitNames[u.id]; });
   const semi = parseSemi(pickSheet(wb, "semi"), match);
   const comp = parseComp(pickSheet(wb, "comp"), match);
-  const events = deriveEvents(units, comp, match);
+  const stated = parseLineage(pickSheet(wb, "lineage"), match);
+  const events = deriveEvents(units, comp, match, stated);
 
   const byId = Object.fromEntries(units.map((u) => [u.id, u]));
   semi.forEach((s) => s.unitIds.forEach((id) => byId[id] && byId[id].semi.push(s)));
@@ -536,22 +639,45 @@ export function exportWorkbook(data, filename) {
   ]);
   ws3["!cols"] = [{ wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 40 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 46 }];
 
+  /* 八位、月日拿零补足 —— 表里的日期一律这个样子 */
+  const ymd8 = (dt) => (dt
+    ? String(dt.y * 10000 + (dt.m || 0) * 100 + (dt.d || 0)).padStart(8, "0")
+    : "");
+
   const nameRows = [];
   data.units.forEach((u) => {
     if (!u.names || u.names.length < 2) return;
     u.names.forEach((seg) => nameRows.push([
-      u.raw, seg.name,
-      String(seg.from.y * 10000 + (seg.from.m || 0) * 100 + (seg.from.d || 0)).padStart(8, "0"),
+      u.raw, seg.name, ymd8(seg.from),
       seg.nameEn || "", seg.note || "", seg.source || "",
     ]));
   });
   const ws4 = XLSX.utils.aoa_to_sheet([["Unit", "Name", "From", "Name EN", "Remark", "Source"], ...nameRows]);
   ws4["!cols"] = [{ wch: 26 }, { wch: 30 }, { wch: 11 }, { wch: 30 }, { wch: 44 }, { wch: 22 }];
 
-  XLSX.utils.book_append_sheet(wb, ws1, "Fact and Comp-Shanghai");
-  XLSX.utils.book_append_sheet(wb, ws2, "Semi-Product");
-  XLSX.utils.book_append_sheet(wb, ws3, "Comp-Product");
-  XLSX.utils.book_append_sheet(wb, ws4, "Name-History");
+  XLSX.utils.book_append_sheet(wb, ws1, "厂所名录");
+  XLSX.utils.book_append_sheet(wb, ws2, "器件");
+  XLSX.utils.book_append_sheet(wb, ws3, "整机");
+  XLSX.utils.book_append_sheet(wb, ws4, "名称沿革");
+
+  /* 机构沿革:只导明写的那些。推定出来的线不写进这张表 —— 一写进去,
+     下回读回来就成了「表里明写的」,猜的东西便从此当了真。 */
+  const byId = Object.fromEntries(data.units.map((u) => [u.id, u]));
+  const nameOf = (id) => (byId[id] ? byId[id].name : "");
+  const linRows = (data.events || [])
+    .filter((e) => e.basis === "机构沿革表" && e.to && e.to.length)
+    .map((e) => [
+      ymd8(e.date),
+      e.from.map(nameOf).filter(Boolean).join("、"),
+      e.type,
+      e.to.map(nameOf).filter(Boolean).join("、"),
+      e.note || "",
+      e.source || "",
+    ]);
+  const ws5 = XLSX.utils.aoa_to_sheet([["年月", "前身", "关系", "后继", "说明", "出处"], ...linRows]);
+  ws5["!cols"] = [{ wch: 11 }, { wch: 44 }, { wch: 7 }, { wch: 24 }, { wch: 40 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws5, "机构沿革");
+
   XLSX.writeFile(wb, filename || "CN_Electronic_Industry.xlsx");
 }
 

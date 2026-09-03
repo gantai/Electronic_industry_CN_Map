@@ -68,7 +68,10 @@ SUBCOMMANDS = []
 # 扫描件 → Markdown 不在这个仓里。同一批 PDF 另一个项目也要转,那边把转换
 # 单拆成了 zhiconv 一个包,专门伺候这两处;这边再写一份只会更差。
 ZHICONV_INSTALL = (
-    'pip install "zhiconv @ git+https://github.com/gantai/Historian_Archive_Management"\n'
+    # 装的是整个 historian-archive-management(zhiconv 是它里头的一个包)。
+    # 别写成 "zhiconv @ git+…" —— pip 会拿这个名字跟包自报的名字对,对不上就不装。
+    # 分支也得写明:那边的 main 眼下只剩一个 LICENSE,活都在这一支上。
+    'pip install "git+https://github.com/gantai/Historian_Archive_Management@claude/historian-archive-obsidian-9impe4"\n'
     '       再装识别引擎:pip install paddleocr "paddlex[ocr]==3.7.2"')
 ZHICONV_MISSING = (
     "没装 zhiconv —— 扫描件转 Markdown 归它管:\n"
@@ -91,6 +94,27 @@ COMP_COLS = ["keep", "confidence", "page", "Product", "字长", "内存", "Speed
              "Research Insti", "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark",
              "evidence"]
 NAME_COLS = ["keep", "confidence", "page", "Unit", "Name", "From", "Remark", "Source", "evidence"]
+
+
+def run_out(*cmd, **kw):
+    """跑一条外部命令,拿它的输出;跑不起来、或返回非零,就是 None。
+
+    **编码写死 UTF-8,不许跟着本机的。** subprocess 的 text=True 是按本地编码
+    解的 —— 简体中文 Windows 上那是 GBK,而 git 吐出来的提交说明是 UTF-8。
+    里头但凡有一个 GBK 认不得的字节(破折号、间隔号、⊂ 都够),读输出的那个
+    线程当场就炸,stdout 成了 None,底下再 .strip() 就是一句莫名其妙的
+    AttributeError。errors="replace" 是第二道保险:认不得的字换成 �,
+    不让一个字符拦住整条命令。
+    """
+    import subprocess
+    try:
+        out = subprocess.run(cmd, capture_output=True, timeout=15,
+                             encoding="utf-8", errors="replace", **kw)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or out.stdout is None:
+        return None
+    return out.stdout.strip()
 
 
 def workdir(args, slug=None):
@@ -124,14 +148,7 @@ def cmd_check(args):
 
     # 底下这两样不归 pip 管,却是真绊过人的:没设 user.name 提交会被拒,
     # 没装 Node 看不了本地那张图
-    import subprocess
-
-    def run(*cmd):
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            return out.stdout.strip() if out.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            return None
+    run = run_out
 
     print("\n仓库这一头:\n")
     if run("git", "--version") is None:
@@ -227,15 +244,9 @@ def cmd_notes(args):
 
 def cmd_version(args):
     """手里这一份工具是什么时候的 —— 拿旧版跑,少的那道关卡不会吭声。"""
-    import subprocess
 
     def git(*a):
-        try:
-            out = subprocess.run(("git", "-C", REPO) + a,
-                                 capture_output=True, text=True, timeout=15)
-            return out.stdout.strip() if out.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            return None
+        return run_out("git", "-C", REPO, *a)
 
     head = git("log", "-1", "--format=%h  %cd  %s", "--date=format:%Y-%m-%d %H:%M")
     if not head:
@@ -317,12 +328,18 @@ def cmd_diff(args):
     for sheet, r in d.items():
         print("\n【%s】新增 %d、消失 %d、改过 %d"
               % (sheet, len(r["added"]), len(r["gone"]), len(r["changed"])))
+        # 一行拿什么称呼它 —— 各表的抬头不一样,机构沿革压根没有 Unit 那一栏
+        def who_of(x):
+            if x.get("前身") or x.get("后继"):
+                return "%s → %s" % (x.get("前身") or "?", x.get("后继") or "?")
+            return x.get("Unit") or x.get("Product") or x.get("Name") or "?"
+
         for x in r["added"][:12]:
-            print("   + %s" % (x.get("Unit") or x.get("Product") or "?"))
+            print("   + %s" % who_of(x))
         if len(r["added"]) > 12:
             print("     …… 还有 %d 条" % (len(r["added"]) - 12))
         for x in r["gone"][:12]:
-            print("   - %s" % (x.get("Unit") or x.get("Product") or x.get("Name") or "?"))
+            print("   - %s" % who_of(x))
         if len(r["gone"]) > 12:
             print("     …… 还有 %d 条" % (len(r["gone"]) - 12))
         for who, fields in r["changed"][:12]:
@@ -360,7 +377,11 @@ def cmd_dups(args):
     if rep["similar"]:
         print("\n像是一回事的 %d 处 —— 得你自己看:" % len(rep["similar"]))
         for sheet, key, rows, who in rep["similar"]:
-            print("   %-22s %-10s 行 %-14s %s" % (sheet, key[:10], str(rows), who[:44]))
+            # 厂所那一类的钥匙就是两个厂名,截到 10 个字什么也看不出
+            wide = sheet == "厂所"
+            print("   %-14s %-*s 行 %-12s %s"
+                  % (sheet, 34 if wide else 10, key[:34 if wide else 10],
+                     str(rows), who[:46]))
         print("\n   (「DJS-130」与「DJS-130B」型号内核一样,却是两台机器 —— 别一律并掉)")
     if not rep["exact"] and not rep["similar"]:
         print("没找到重复。")
@@ -377,6 +398,8 @@ VERIFY_NOTE = {
     "坐标": "Lat/Lng 两个一起填,填了就以你填的为准",
     "出处": "哪一本、哪一页 —— 空着的将来没法回查",
     "沿革": "改名链上立不住的段落",
+    "落点": "src/geocode.js 里的毛病 —— 同一个名字写了两遍,JS 只认最后一条",
+    "机构": "合并、分立、划归、合资 —— 这张表是明写的,写错就直接错在图上",
     "名录": "这些名字在厂所表里查无此人。打错字、把动词粘进了名字、"
             "或者这一家本来就没登记 —— 连不上的那条线,地图上什么也看不出来",
 }
@@ -387,7 +410,7 @@ def cmd_verify(args):
 
     默认只报**新的**。从前看过、认下的那些记在《已核》里,不再翻出来 ——
     二十八条「没写出处」的旧账每回都摆在头里,新伤就没人看得见了。"""
-    bad = toxlsx.verify(args.xlsx)
+    bad = toxlsx.verify(args.xlsx, geocode_js=DEFAULT_GEOCODE)
 
     if args.accept:
         path, n = toxlsx.save_accepted(args.xlsx, bad)
@@ -409,7 +432,7 @@ def cmd_verify(args):
     for kind, where, why, _key in fresh:
         by.setdefault(kind, []).append((where, why))
     print("%d 处可疑:" % len(fresh))
-    for kind in ("名录", "沿革", "日期", "坐标", "出处"):
+    for kind in ("名录", "机构", "沿革", "落点", "日期", "坐标", "出处"):
         rows = by.pop(kind, [])
         if not rows:
             continue
@@ -630,6 +653,202 @@ def cmd_pull(args):
     rep = VAULT.pull(args.xlsx, _vault_dir(args), dry_run=args.dry_run)
     if rep["units"] and not args.dry_run:
         print("核对无误后:git add -A && git commit -m \"据库中校订更新数据\" && git push")
+    return 0
+
+
+# 门牌号各不相同,可路只有那么几条 —— 按路排着填,比一家一家查省事,
+# 也不容易填串。**掐掉末尾的门牌号,剩下的就是路。**
+#
+# 别反过来「从头找到第一个『路』字」:「酒仙桥路12号」里头,「桥」比「路」先到,
+# 那样切出来的是「酒仙桥」,于是酒仙桥路、酒仙桥北路、酒仙桥南路全并成了一条 ——
+# 它们是三条不同的路。测试盯着这一条。
+HOUSE_NO = re.compile(r"[甲乙丙丁]?\d+\s*(?:号院|号|院|弄)?\s*$")
+
+
+def road_of(addr):
+    a = str(addr or "").strip()
+    if not a:
+        return "—"
+    return HOUSE_NO.sub("", a).strip() or a
+
+
+# 区界底图是**当代**政区,而这张图管的是那之前的年头。撤并过的区,
+# 老名字落进新区里是对的,不是填错了 —— 与 src/xlsxio.js 的 GONE_DISTRICT 同一份账。
+GONE_DISTRICT = {
+    "崇文": "东城", "宣武": "西城",          # 北京 2010
+    "南市": "黄浦", "卢湾": "黄浦",          # 上海 2000 / 2011
+    "闸北": "静安",                          # 上海 2015
+    "浦东": "浦东新",                        # 底图作「浦东新」,表里作「浦东」
+}
+
+
+def same_district(want, got):
+    """表里写的区,跟点落进去的那个区,算不算同一个。"""
+    want, got = (want or "").strip(), (got or "").strip()
+    if want == got:
+        return True
+    return GONE_DISTRICT.get(want) == got or GONE_DISTRICT.get(got) == want
+
+
+# 区界是简化过的多边形,一两百米的出入是它自己的误差。差这么点不算填错。
+NEAR_KM = 0.6
+
+
+def _km_to_district(doc, geo_mod, name, lng, lat):
+    """这个点离那个区的边界有多远(公里)。落在里头的话是 0。"""
+    import math
+    kx = 111.32 * math.cos(math.radians(lat))
+    ky = 110.57
+    best = float("inf")
+    for f in doc.get("features", []):
+        if f.get("properties", {}).get("name") != name:
+            continue
+        for ring in geo_mod._rings(f.get("geometry", {})):
+            for i in range(len(ring)):
+                ax, ay = ring[i][0] * kx, ring[i][1] * ky
+                bx, by = ring[(i + 1) % len(ring)][0] * kx, ring[(i + 1) % len(ring)][1] * ky
+                px, py = lng * kx, lat * ky
+                dx, dy = bx - ax, by - ay
+                t = 0.0 if (dx == 0 and dy == 0) else max(
+                    0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+                best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+    return 0.0 if best == float("inf") else best
+
+
+def cmd_geocode_check(args):
+    """填好的坐标,核一核落对了没有 —— 不必装 Node,也不必开浏览器。
+
+    每条落点自己说了在哪个区(`district: "朝阳"`)。区界多边形就在
+    `src/city.geo.json` 里,拿点去套:套不进那个区,就是填错了或填串了。
+    这比在地图上肉眼看还准 —— 差一条街看不出来,差一个区一定报。"""
+    import io
+    import json
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "addbase", os.path.join(REPO, "tools", "geo", "添底图.py"))
+    geo_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(geo_mod)
+
+    geo_path = os.path.join(REPO, "src", "city.geo.json")
+    if not os.path.exists(geo_path):
+        sys.exit("找不到区界底图:%s" % geo_path)
+    with io.open(geo_path, encoding="utf-8") as f:
+        doc = json.load(f)
+
+    places = toxlsx.read_places_full(DEFAULT_GEOCODE)
+    done = [(n, p) for n, p in places.items()
+            if p.get("lat") is not None and p.get("lng") is not None]
+    if not done:
+        print("PLACES 里还没有填好坐标的条目。")
+        return 0
+
+    bad, near, nodist, ok = [], [], [], 0
+    for name, p in sorted(done):
+        lng, lat = float(p["lng"]), float(p["lat"])
+        hit = None
+        for f in doc.get("features", []):
+            pr = f.get("properties", {})
+            if any(geo_mod.point_in_ring(lng, lat, r)
+                   for r in geo_mod._rings(f.get("geometry", {}))):
+                hit = (pr.get("name", ""), pr.get("city", ""))
+                break
+        want = (p.get("district") or "").strip()
+        if hit is None:
+            nodist.append((name, lat, lng, want))
+        elif want and not same_district(want, hit[0]):
+            # 差多远才算差错?区界是**简化过**的多边形,一两百米的出入是它自己的
+            # 误差,不是你填错了。量一量到那个区的距离,照远近分开说。
+            km = _km_to_district(doc, geo_mod, want, lng, lat)
+            (near if km < NEAR_KM else bad).append((name, lat, lng, want, hit[0], hit[1], km))
+        else:
+            ok += 1
+
+    print("填好坐标的 %d 条:对得上 %d、擦着区界 %d、**落错区 %d**、出了区界 %d"
+          % (len(done), ok, len(near), len(bad), len(nodist)))
+    for name, lat, lng, want, got, city, km in bad:
+        print("  ✗ %-20s 写着「%s」,可 %.4f, %.4f 落在%s%s —— 离「%s」还有 %.1f 公里"
+              % (name, want, lat, lng, city, got, want, km))
+    for name, lat, lng, want in nodist:
+        print("  ? %-20s %.4f, %.4f 不在任何一个区界里%s"
+              % (name, lat, lng, ("(表里写着「%s」)" % want) if want else ""))
+    if near:
+        print("\n  擦着区界的 %d 条,离得都不到 %.1f 公里 —— 区界是简化过的多边形,"
+              "这点出入是它自己的误差,不必改:" % (len(near), NEAR_KM))
+        for name, _lat, _lng, want, got, _city, km in near:
+            print("     %-20s 写「%s」,落在「%s」,相距 %.2f 公里" % (name, want, got, km))
+    if not bad and not nodist:
+        print("\n  没有落错的。")
+    return 1 if bad else 0
+
+
+def cmd_geocode_city(args):
+    """按路排的落点草稿 —— 总表里那些「有地址、没坐标」的单位。
+
+    `gaz geocode` 管的是刚抽出来的新章;这一条管的是**已经在总表里**、
+    地址早就抄好、只差经纬度的那些。一条路一段,同一条路的门牌摆在一处,
+    照着地图从街这头看到那头,顺次填下去即可。"""
+    city = args.city
+    wb = __import__("openpyxl").load_workbook(args.xlsx, data_only=True)
+    ws = toxlsx.units_sheet(wb)
+    h = toxlsx._headers(ws, 2)
+    have = toxlsx.read_places(DEFAULT_GEOCODE)
+
+    rows = []
+    for r in range(3, ws.max_row + 1):
+        nm = ws.cell(row=r, column=1).value
+        if not nm:
+            continue
+        if city and str(ws.cell(row=r, column=h["City"]).value or "") != city:
+            continue
+        addr = str(ws.cell(row=r, column=h["Add."]).value or "").strip()
+        bare = toxlsx._bare(str(nm))
+        if not addr or bare in have:
+            continue
+        rows.append((bare, addr, str(ws.cell(row=r, column=h["区"]).value or "")))
+
+    if not rows:
+        print("%s 没有「有地址、还没坐标」的单位 —— 该填的都填过了。" % (city or "总表"))
+        return 0
+
+    by_road = {}
+    for bare, addr, dist in rows:
+        by_road.setdefault(road_of(addr), []).append((bare, addr, dist))
+    order = sorted(by_road.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+
+    out = ["/* 按路排的落点草稿 —— %s,%d 家、%d 条不重复的地址、%d 条路。"
+           % (city or "全表", len(rows), len({a for _n, a, _d in rows}), len(by_road)),
+           "",
+           "   一条路一段,同一条路的门牌摆在一处:开着地图从街这头看到那头,",
+           "   顺次把 lat / lng 填上,比一家一家查省事,也不容易填串。",
+           "",
+           "   填完把整段粘进 src/geocode.js 的 PLACES 里。**只填查得准的**;",
+           "   拿不准的整行留着不动 —— 空着的照旧落在市中心并标「坐标待定位」,",
+           "   那是老实话,胡填一个才是坏事。",
+           "*/", ""]
+    for road, us in order:
+        addrs = sorted({a for _n, a, _d in us})
+        dists = sorted({d for _n, _a, d in us if d})
+        out.append("  /* ---- %s ---- %d 家,%d 个门牌%s */"
+                   % (road, len(us), len(addrs),
+                      ("," + "、".join(dists) + "区") if dists else ""))
+        for addr in addrs:
+            who = [n for n, a, _d in us if a == addr]
+            for n in who:
+                dist = next((d for x, a, d in us if x == n), "")
+                out.append('  "%s": { lat: null, lng: null, district: "%s", '
+                           'precision: "street", note: "%s" },' % (n, dist, addr))
+            if len(who) > 1:
+                out.append("  //   ↑ 同一个门牌 %s 底下 %d 家,坐标填一样的即可" % (addr, len(who)))
+        out.append("")
+
+    path = args.out or os.path.join(REPO, "落点草稿-%s.js" % (city or "全表"))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+    print("%d 家 → %s" % (len(rows), path))
+    print("  归到 %d 条路上,最集中的几条:" % len(by_road))
+    for road, us in order[:5]:
+        print("     %-12s %d 家" % (road, len(us)))
+    print("\n填好之后粘进 src/geocode.js 的 PLACES,再跑一次 npm run dev 看落点对不对。")
     return 0
 
 
@@ -873,6 +1092,16 @@ def main(argv=None):
     p = sub.add_parser("geocode", help="新单位 → src/geocode.js 的落点条目草稿", parents=[common])
     p.add_argument("--all", action="store_true", help="不问 keep,全部列出")
     p.set_defaults(func=cmd_geocode)
+
+    p = sub.add_parser("geocode-check", parents=[common],
+                       help="填好的坐标核一核:落在它自己写的那个区里没有")
+    p.set_defaults(func=cmd_geocode_check)
+
+    p = sub.add_parser("geocode-city", parents=[common],
+                       help="总表里「有地址、没坐标」的单位 → 按路排的落点草稿")
+    p.add_argument("--city", default="", help="只做这一个市(如 Beijing);不给就做全表")
+    p.add_argument("--out", help="写到哪儿(默认仓库根目录 落点草稿-<市>.js)")
+    p.set_defaults(func=cmd_geocode_city)
 
     p = sub.add_parser("xlsx", help="取否=y 的行 → 追加进工作簿", parents=[common])
     p.add_argument("--from", dest="from_xlsx", metavar="XLSX",

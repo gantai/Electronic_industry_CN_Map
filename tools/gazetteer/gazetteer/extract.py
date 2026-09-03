@@ -3,7 +3,7 @@
 
 抽出来的东西对着 CN_Electronic_Industry.xlsx 的四张表:
 
-    units  -> Fact and Comp-Shanghai   厂所名录
+    units  -> 厂所名录（旧名 Fact and Comp-Shanghai，两个都认）
     semi   -> Semi-Product             器件投产
     comp   -> Comp-Product             整机研制
     names  -> Name-History             名称沿革
@@ -117,7 +117,8 @@ STREET = ("(?:" + NOT_STREET + r"路|大街|街|大道|弄|巷|胡同|里|村|�
 ADDR_RE = re.compile(r"(" + ADDR_CH + r"{1,12}?" + STREET
                      + r"(?:" + ADDR_CH + r"{0,8}?[甲乙丙丁]?[0-9]{1,4}[号弄])?)")
 # 区名单独记一栏 —— 地址照原表体例不带区,但 src/geocode.js 的落点表要用
-DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
+# 「子」也排除:「位子」是「位于」的形近误认,不排就切出「子西城」「子海淀」
+DISTRICT_RE = re.compile(r"((?:(?![址在于设迁坐落位子厂所地市省的和与至往到入自从由近])[一-鿿]){2,3}?)(?:区|县)"
                          r"(?![^,,。;;]{0,4}(?:政府|工业局|人民政府))")
 
 # 产品:一律从「试制/研制/生产」之后取,免得把动词连着抓进名字
@@ -786,6 +787,25 @@ def make_source(book, page, head=""):
     return book or ""
 
 
+# 志书按城市成书,凡书里点到的单位都随手记作本市 —— 可外地的协作单位不是本市的。
+# 名字冠了别的市名就照名字算。只认这张表里的市:图上没有落点的市认出来也没用,
+# 反而会掉进上海的兜底里(见 src/geocode.js 的 cityAt)。要添市,两处一起添。
+OTHER_CITY = OrderedDict([
+    ("哈尔滨", "Harbin"),                          # 长的排前头,免得被短的截和
+    ("北京", "Beijing"), ("上海", "Shanghai"), ("天津", "Tianjin"),
+    ("南京", "Nanjing"), ("唐山", "Tangshan"), ("兰州", "Lanzhou"),
+    ("长沙", "Changsha"),
+])
+
+
+def city_of(name, book_city):
+    """单位名冠了别的市名就归那个市,否则跟着志书走。"""
+    for zh, en in OTHER_CITY.items():
+        if str(name or "").startswith(zh):
+            return en
+    return book_city
+
+
 def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             min_mentions=2, auto_keep=None):
     blocks = read_blocks(md_text)
@@ -925,7 +945,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["Start Date"] = start
         row["End Date"] = end
         row["Founder"] = founder
-        row["City"] = city
+        row["City"] = city_of(nm, city)
         row["Add."] = addr
         row["district"] = find_district([addr_ev] if addr_ev else sents)
         for key, _ in STAT_PATTERNS:

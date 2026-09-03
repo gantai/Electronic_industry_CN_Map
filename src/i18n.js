@@ -2,7 +2,7 @@
    中英双语
    ------------------------------------------------------------
    界面文字在此集中,数据本身不翻译:厂所名、地址、产品名、备注与出处
-   都是史料原文,照录中文。若要英文厂名,可在「Fact and Comp-Shanghai」
+   都是史料原文,照录中文。若要英文厂名,可在「厂所名录」
    表加一列 `Name EN`,英文界面下自会取用(见 xlsxio.js)。
    受控词表(行业 / 类型 / 事件 / 统计项 / 精度 / 依据)是站点自己的分类,
    故给出对照译名。
@@ -36,7 +36,7 @@ export const PRECISION_EN = {
   city: "city-level (address unrecorded)",
 };
 export const BASIS_EN = {
-  "名称沿革表": "Name-History sheet",
+  "名称沿革表": "the 名称沿革 sheet",
   "原表沿革链": "Founder chain",
   "表内名称": "table name",
 };
@@ -59,6 +59,10 @@ export const CITY_ZH = {
   Beijing: "北京", beijing: "北京", 北京: "北京",
   Tianjin: "天津", tianjin: "天津", 天津: "天津",
   Nanjing: "南京", nanjing: "南京", 南京: "南京",
+  Tangshan: "唐山", 唐山: "唐山",
+  Harbin: "哈尔滨", 哈尔滨: "哈尔滨",
+  Lanzhou: "兰州", 兰州: "兰州",
+  Changsha: "长沙", 长沙: "长沙",
 };
 
 /* ---------- 界面文字 ---------- */
@@ -109,7 +113,12 @@ const zh = {
   abFoot: "淡框与虚线处为待撰内容,版式先行。",
 
   langLabel: "切换到英文",
-  coverage: (cities, n) => "现有数据:" + (cities.length ? cities.join("、") : "—") + " · " + n + " 家厂所",
+  /* 城市一多,这一行能把标题挤下去 —— 只报大头,其余折成「+N 城」 */
+  coverage: (cities, n) => {
+    const head = cities.slice(0, 2), rest = cities.length - head.length;
+    return "现有数据:" + (head.length ? head.join("、") : "—")
+      + (rest > 0 ? " 等 " + cities.length + " 城" : "") + " · " + n + " 家厂所";
+  },
   previewChip: (f) => "● 本地预览:" + f + " ✕",
   previewTitle: "当前显示的是你导入的本地文件,线上数据未改变。点击可放弃预览。",
 
@@ -170,7 +179,7 @@ const zh = {
   searchUnits: "检索单位、地址、沿革…", searchUnitsLabel: "检索名录",
   countUnits: (a, b) => a + " / " + b + " 家",
   importExcel: "导入 Excel", exportExcel: "导出 Excel",
-  directoryNote: (file) => "全站数据来自仓库根目录的 " + file + "(Fact and Comp-Shanghai / Semi-Product / Comp-Product,另有可选的 Name-History),构建时编入产物。更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。",
+  directoryNote: (file) => "全站数据来自仓库根目录的 " + file + "(厂所名录 / 器件 / 整机,另有可选的 名称沿革),构建时编入产物。更新流程:改表 → 用「导入 Excel」在本机预览核对 → 覆盖仓库中的同名文件并 push,Actions 自动重建。导入只影响你自己这一次浏览。",
   statsNoteYear: (y) => " 统计数字未标年份的,按 " + y + " 年计;标了的以数字后那一年为准。量纲悉依原表。",
   thUnit: "单位", thIndustry: "行业", thType: "类型", thSpan: "起讫",
   thCity: "城市", thAddress: "地址",
@@ -187,11 +196,11 @@ const zh = {
 
   /* 读取失败 */
   bootFail: "数据表读取失败",
-  bootHint: (file) => "请检查仓库根目录下的 " + file + " 是否仍含「Fact and Comp-Shanghai / Semi-Product / Comp-Product」三张表(Name-History 可有可无)。",
+  bootHint: (file) => "请检查仓库根目录下的 " + file + " 是否仍含「厂所名录 / 器件 / 整机」三张表(名称沿革 可有可无)。",
 
   /* 使用说明 */
   introTitle: "使用说明",
-  intro1: "拖动下方年份标尺或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。首屏已自动套合到现有数据的范围(上海),缩小即可回到全国视野。",
+  intro1: "拖动下方年份标尺或按 ▶ 播放,观察厂所的兴建、分立与合并;滚轮缩放、点击节点查看详情。首屏自动套合到数据聚集的那一片,缩小即可回到全国视野 —— 志书里顺带点到的外地单位(唐山、哈尔滨、兰州、长沙)在更外围。",
   intro2a: "节点颜色代表行业,形状区分工厂 / 研究所 / 合资企业。",
   intro2b: "经纬度不在原表之中",
   intro2c: ",是按门牌地址人工推定的近似落点(误差数百米至数公里);带红点者原表未著录地址,暂落在市中心。",
@@ -248,7 +257,11 @@ const en = {
   abFoot: "Outlined and dashed areas are still to be written; this is the layout.",
 
   langLabel: "Switch to Chinese",
-  coverage: (cities, n) => "Coverage: " + (cities.length ? cities.join(", ") : "—") + " · " + n + " units",
+  coverage: (cities, n) => {
+    const head = cities.slice(0, 2), rest = cities.length - head.length;
+    return "Coverage: " + (head.length ? head.join(", ") : "—")
+      + (rest > 0 ? " +" + rest + " more" : "") + " · " + n + " units";
+  },
   previewChip: (f) => "● Local preview: " + f + " ✕",
   previewTitle: "You are viewing a file you imported. The published data is unchanged. Click to discard the preview.",
 
@@ -263,6 +276,14 @@ const en = {
   legendIndustry: "INDUSTRY (click to filter)",
   legendFactory: "Factory", legendInstitute: "Institute", legendJv: "Joint venture",
   legendVague: "Location approximate",
+  legendPlacement: "PLACEMENT",
+  precTier: { street: "Street", district: "District", city: "City centre (no address)" },
+  precHint: {
+    street: "The gazetteer gives a street address and the point is inferred from it — only this tier means we know where it stood",
+    district: "District only; the point is the district centroid, shared by every unit in that district",
+    city: "No address on record — the city centre is where they go for want of anywhere else. Hidden by default; click to show",
+  },
+  placementHidden: (n) => n + " hidden",
 
   rulerLabel: (y) => "Year slider, currently " + y + ", use left and right arrow keys",
   play: "Play", pause: "Pause", prevYear: "Previous year", nextYear: "Next year",
@@ -305,7 +326,7 @@ const en = {
   searchUnits: "Search units, addresses, lineage…", searchUnitsLabel: "Search directory",
   countUnits: (a, b) => a + " / " + b + " units",
   importExcel: "Import Excel", exportExcel: "Export Excel",
-  directoryNote: (file) => "All data comes from " + file + " in the repository root (sheets Fact and Comp-Shanghai / Semi-Product / Comp-Product, plus the optional Name-History), compiled into the build. To update: edit the workbook → check it locally with “Import Excel” → overwrite the file in the repository and push; Actions rebuilds automatically. Importing affects only your own browsing session.",
+  directoryNote: (file) => "All data comes from " + file + " in the repository root (sheets 厂所名录 / 器件 / 整机, plus the optional 名称沿革), compiled into the build. To update: edit the workbook → check it locally with “Import Excel” → overwrite the file in the repository and push; Actions rebuilds automatically. Importing affects only your own browsing session.",
   statsNoteYear: (y) => " Undated figures are " + y + "; where a year follows a figure, that year applies. Units follow the source table.",
   thUnit: "Unit", thIndustry: "Industry", thType: "Type", thSpan: "Span",
   thCity: "City", thAddress: "Address",
@@ -321,10 +342,10 @@ const en = {
   exportFail: (m) => "Export failed: " + m,
 
   bootFail: "Could not read the data workbook",
-  bootHint: (file) => "Check that " + file + " in the repository root still contains the sheets “Fact and Comp-Shanghai / Semi-Product / Comp-Product” (Name-History is optional).",
+  bootHint: (file) => "Check that " + file + " in the repository root still contains the sheets “厂所名录 / 器件 / 整机” (名称沿革 is optional).",
 
   introTitle: "How to use",
-  intro1: "Drag the year slider below or press ▶ to play, and watch the factories being founded, split and merged; scroll to zoom, click a node for details. The opening view is fitted to the extent of the present data (Shanghai); zoom out for the national view.",
+  intro1: "Drag the year slider below or press ▶ to play, and watch the factories being founded, split and merged; scroll to zoom, click a node for details. The opening view is fitted to where the data clusters; zoom out for the national view — a few out-of-town bodies named in passing by the gazetteers (Tangshan, Harbin, Lanzhou, Changsha) sit further out.",
   intro2a: "Node colour shows the industry; the shape distinguishes factories, institutes and joint ventures. ",
   intro2b: "Coordinates are not in the source table",
   intro2c: " — they are approximate positions inferred from street addresses (accurate to a few hundred metres at best). Nodes with a red dot have no address on record and sit at the city centre.",
