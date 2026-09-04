@@ -9,18 +9,18 @@
 */
 
   /* ---- 酒仙桥路 ---- 10 家,5 个门牌,朝阳区 */
-  "北京东方电子集团股份有限公司": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路10号" },
-  "北京东光电工厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路12号" },
-  "北京有线电总厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
-  "北京国际交换系统有限公司": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
+  "北京东方电子集团股份有限公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路10号" },
+  "北京东光电工厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路12号" },
+  "北京有线电总厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
+  "北京国际交换系统有限公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路14号" },
   //   ↑ 同一个门牌 酒仙桥路14号 底下 2 家,坐标填一样的即可
-  "北京无线电工具设备厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
-  "北京晨星无线电器材厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
-  "北京第一无线电器材厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+  "北京无线电工具设备厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+  "北京晨星无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
+  "北京第一无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路2号" },
   //   ↑ 同一个门牌 酒仙桥路2号 底下 3 家,坐标填一样的即可
-  "北京第二无线电器材厂": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
-  "北京电子动力公司": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
-  "北京飞行电子总公司": { lat: null, lng: null, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
+  "北京第二无线电器材厂": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
+  "北京电子动力公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
+  "北京飞行电子总公司": { lat: 39.9812, lng: 116.4952, district: "朝阳", precision: "street", note: "酒仙桥路4号" },
   //   ↑ 同一个门牌 酒仙桥路4号 底下 3 家,坐标填一样的即可
 
   /* ---- 东四北大街 ---- 1 家,1 个门牌,东城区 */

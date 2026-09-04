@@ -69,3 +69,25 @@ export const splitChain = (s) =>
     .split(/\s*(?:->|→|—>|-->)\s*/)
     .map((x) => x.trim())
     .filter(Boolean);
+
+/* 同址单位(经纬度完全一致)在图上散开成一朵向日葵花盘,否则彼此叠死。
+   从前是一个圆环,半径随家数线性长 —— 只知道城市、落在天安门那一点上的
+   一百来家,环半径算出来 332px,比半个屏幕还宽;而一圈匀整的点看着像真有
+   那么个环形分布,等于凭排版凭空造出一种格局。
+   改成 r = R·√((i+½)/n)、θ = i·黄金角:外沿有上限,点距大致均匀,位置只
+   跟序号有关 —— 每次刷新都落在同一处,不靠随机。
+   返回屏上像素偏移;调用处按当前缩放倍数折算回图上坐标。 */
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+export function rosette(n, { rMax = 92, gap = 15 } = {}) {
+  if (n < 2) return [];
+  /* 家数少时不必铺到外沿:按目标点距反推一个够用的半径,取小者 */
+  const R = Math.min(rMax, gap * Math.sqrt(n / Math.PI) + 12);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = R * Math.sqrt((i + 0.5) / n);
+    const a = i * GOLDEN_ANGLE - Math.PI / 2;
+    out.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return out;
+}
