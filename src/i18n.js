@@ -126,7 +126,10 @@ const zh = {
   mapLabel: "中国电子工业历史地图",
   viewNational: "全国", viewCity: "城市", noCities: "没有可看的城市",
   barsCap: "柱子", barsStacked: "叠起来", barsGrouped: "并排",
-  barsAllYears: "柱子按全表点数,不随年份变 —— 两百家里只有九十三家写了始建年",
+  barsUndated: "无始建年",
+  barsNote: "彩色一截随年份涨落;灰的一截是志书没写始建年的,压在底下不动",
+  barTip: (p, live, und, tot, y) =>
+    `${p} · ${y} 年在册 ${live}` + (und ? ` · 无始建年 ${und}` : "") + ` · 共 ${tot}`,
   barsUnplaced: (n) => `另有 ${n} 家没有城市可归,柱子上没有它们`,
   districtSuffix: (d) => d + "区",
   clusterTitle: (label, n) => label + " · 当前存续 " + n + " 个单位,点击放大",
@@ -271,7 +274,10 @@ const en = {
   mapLabel: "Historical atlas of China's electronics industry",
   viewNational: "National", viewCity: "City", noCities: "No cities to show",
   barsCap: "BARS", barsStacked: "Stacked", barsGrouped: "Grouped",
-  barsAllYears: "Bars count every unit on record, not the selected year — only 93 of 200 have a founding date",
+  barsUndated: "No founding date",
+  barsNote: "The coloured part follows the year; the grey base is units with no founding date on record",
+  barTip: (p, live, und, tot, y) =>
+    `${p} · ${live} on record in ${y}` + (und ? ` · ${und} undated` : "") + ` · ${tot} total`,
   barsUnplaced: (n) => `${n} more have no city on record and appear on no bar`,
   districtSuffix: (d) => d + " District",
   clusterTitle: (label, n) => label + " · " + n + " active here, click to zoom in",
