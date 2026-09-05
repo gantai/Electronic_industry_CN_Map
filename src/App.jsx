@@ -51,6 +51,13 @@ const CITY_ATTR = CITY_RAW.attribution || "";
 
 /* ---------- helpers ---------- */
 const isAlive = (u, year) => !!u.start && u.start.y <= year && (u.end == null || u.end.y > year);
+
+/* 「够得上放映」——- 一家单位要在时间轴上动起来,至少得同时有:
+     始建年 —— 没有它,任何年份都摆不上去;
+     落到街或区的位置 —— 只知道城市的,落在市中心那一点上,动起来也是一团。
+   两百家里六十七家够得上。其余的不是不算数,是这一段还没考出来;
+   补上年份或地址,自己就进来了 —— 不必另立一份名单去同步。 */
+export const isShowable = (u) => !!u.start && u.precision !== "city";
 const spanText = (u, t) =>
   (u.start ? fmtDate(u.start) : t.undatedSpan) + "–" + (u.end ? fmtDate(u.end) : "…");
 /** 英文界面下,表内若给了 `Name EN` 就用英文名 */
@@ -100,7 +107,7 @@ function Prism({ x, y, w, h, dx, dy, color, cap = true }) {
   );
 }
 
-function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, lang }) {
+function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, showableOnly, t, lang }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const zoomRef = useRef(null);
@@ -209,6 +216,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     const m = {};
     data.units.forEach((u) => {
       if (!shown.has(u.industry)) return;
+      if (showableOnly && !isShowable(u)) return;
       const p = provinceOf(u.city);
       if (!p) return;
       const row = m[p] || (m[p] = { total: 0, live: 0, undated: 0, factory: 0, institute: 0, jv: 0 });
@@ -219,12 +227,24 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
       if (row[u.type] != null) row[u.type] += 1;
     });
     return m;
-  }, [data.units, shown, year]);
+  }, [data.units, shown, year, showableOnly]);
+
+  /* 不管齐不齐,先按省数一遍 —— 灰下去的省要分清是「一家没有」还是
+     「有但还没考全」,后者不该说成尚未收录 */
+  const provAll = useMemo(() => {
+    const m = {};
+    data.units.forEach((u) => {
+      const p = provinceOf(u.city);
+      if (p) m[p] = (m[p] || 0) + 1;
+    });
+    return m;
+  }, [data.units]);
 
   /* 没有 City 的那几家,一根柱子也落不上 —— 在图上说明白,别让它们无声消失 */
   const unplaceable = useMemo(
-    () => data.units.filter((u) => shown.has(u.industry) && !provinceOf(u.city)).length,
-    [data.units, shown]
+    () => data.units.filter((u) => shown.has(u.industry)
+      && (!showableOnly || isShowable(u)) && !provinceOf(u.city)).length,
+    [data.units, shown, showableOnly]
   );
 
   const clusters = useMemo(() => clusterUnits(data.units, lang), [data.units, lang]);
@@ -423,10 +443,11 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     if (view.mode !== "city") return [];
     return data.units
       .filter((u) => basePos[u.id] && shown.has(u.industry) && precShown.has(u.precision))
+      .filter((u) => !showableOnly || isShowable(u))
       .filter((u) => isExpanded(clusterOf[u.id]))
       .map((u) => ({ u, alive: isAlive(u, year), ghost: !isAlive(u, year) && ghostSet.has(u.id) }))
       .filter((n) => n.alive || n.ghost);
-  }, [view.mode, data.units, basePos, shown, precShown, isExpanded, clusterOf, year, ghostSet]);
+  }, [view.mode, data.units, basePos, shown, precShown, showableOnly, isExpanded, clusterOf, year, ghostSet]);
 
   /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
   const labelSet = useMemo(() => {
@@ -501,6 +522,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     return keep;
   }, [barRows, lang, k]);
 
+  const anyUndated = useMemo(() => barRows.some((r) => r.undated > 0), [barRows]);
+
   const baseOpacity = k <= FADE_FROM ? 1 : Math.max(0, 1 - (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const cityOpacity = k <= FADE_FROM ? 0 : Math.min(1, (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const hovU = hover && byId[hover.id];
@@ -520,11 +543,19 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
         <g transform={"translate(" + zt.x + "," + zt.y + ") scale(" + zt.k + ")"}>
           {baseOpacity > 0 && (
             <g opacity={baseOpacity}>
-              {provPaths.map((p) => (
-                <path key={p.key} d={p.d} className="prov" strokeWidth={0.8 / k}>
-                  <title>{p.name}</title>
-                </path>
-              ))}
+              {provPaths.map((p) => {
+                const n = (provTally[p.name] || {}).total || 0;
+                return (
+                  <path key={p.key} d={p.d} strokeWidth={0.8 / k}
+                    className={"prov" + (view.mode === "national" && !n ? " blank" : "")}>
+                    <title>{n ? t.barTip(provinceLabel(p.name, lang),
+                      (provTally[p.name] || {}).live || 0, (provTally[p.name] || {}).undated || 0, n, year)
+                      : (provAll[p.name]
+                        ? t.provHeld(provinceLabel(p.name, lang), provAll[p.name])
+                        : t.provNone(provinceLabel(p.name, lang)))}</title>
+                  </path>
+                );
+              })}
             </g>
           )}
 
@@ -588,7 +619,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
           {view.mode === "city" && clusterInfo.map((c, ci) => {
             if (isExpanded(ci)) return null;
             const members = c.ids.map((id) => byId[id])
-              .filter((u) => u && shown.has(u.industry) && precShown.has(u.precision));
+              .filter((u) => u && shown.has(u.industry) && precShown.has(u.precision))
+              .filter((u) => !showableOnly || isShowable(u));
             const nAlive = members.filter((m) => isAlive(m, year)).length;
             const hasEvent = evNear.some((v) => [...(v.from || []), ...(v.to || [])].some((id) => c.ids.includes(id)))
               || c.ids.some((id) => glowMap.has(id));
@@ -726,10 +758,12 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
               onClick={() => setBars("grouped")}>{t.barsGrouped}</button>
           </div>
           <div className="barkey">
-            <span className="lg-item">
-              <i className="sw sw-sq" style={{ background: UNDATED_COLOR }} />
-              {t.barsUndated}
-            </span>
+            {anyUndated && (
+              <span className="lg-item">
+                <i className="sw sw-sq" style={{ background: UNDATED_COLOR }} />
+                {t.barsUndated}
+              </span>
+            )}
             {TYPE_ORDER.map((k2) => (
               <span key={k2} className="lg-item">
                 <i className="sw sw-sq" style={{ background: TYPE_META[k2].color }} />
@@ -738,7 +772,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
             ))}
           </div>
           <div className="mono barnote">
-            {t.barsNote}
+            {anyUndated ? t.barsNote : t.barsNoteClean}
             {unplaceable > 0 && <><br />{t.barsUnplaced(unplaceable)}</>}
           </div>
         </div>
@@ -769,7 +803,7 @@ const PREC_TIERS = [
   { key: "city", also: [] },
 ];
 
-function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
+function Legend({ data, shown, setShown, precShown, setPrecShown, showableOnly, setShowableOnly, t, lang }) {
   const industries = useMemo(
     () => Array.from(new Set(data.units.map((u) => u.industry))),
     [data.units]
@@ -787,6 +821,7 @@ function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
   }, [data.units]);
   const tierN = (tier) => [tier.key, ...tier.also].reduce((n, k) => n + (precCount[k] || 0), 0);
   const hidden = data.units.filter((u) => !precShown.has(u.precision)).length;
+  const nShowable = useMemo(() => data.units.filter(isShowable).length, [data.units]);
   const togglePrec = (tier) => {
     const keys = [tier.key, ...tier.also];
     const next = new Set(precShown);
@@ -827,6 +862,19 @@ function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
           );
         })}
         {hidden > 0 && <span className="lg-item dim">{t.placementHidden(hidden)}</span>}
+      </div>
+
+      {/* 齐全与否 —— 年份和地址都考出来的才动得起来 */}
+      <div className="lg-row">
+        <span className="lg-title mono lg-inline">{t.legendRecords}</span>
+        <button className={"lg-item lg-btn" + (showableOnly ? "" : " off")}
+          onClick={() => setShowableOnly((v) => !v)} title={t.showableHint}>
+          <i className="sw sw-square" style={{ background: "#BBD3EC" }} />
+          {t.showableOnly}<span className="dim mono lg-n">{nShowable}</span>
+        </button>
+        <span className="lg-item dim">
+          {showableOnly ? t.showablePut(data.units.length - nShowable) : t.showableAll(data.units.length)}
+        </span>
       </div>
 
       <div className="lg-row">
@@ -1613,6 +1661,9 @@ export default function App() {
      落在市中心只是没处放,不是它们在市中心;几十家叠在一个点上,既看不清,
      又像是在说它们都挤在天安门。要看的时候点开即可,一家也没丢。 */
   const [precShown, setPrecShown] = useState(() => new Set(["given", "street", "district"]));
+  /* 只放年份与地址都考出来的那一批。默认开着 —— 缺一样,时间轴上就动不起来。
+     关掉能看见全部家底,包括还没考出来的。 */
+  const [showableOnly, setShowableOnly] = useState(true);
 
   const byId = useMemo(() => Object.fromEntries(data.units.map((u) => [u.id, u])), [data.units]);
 
@@ -1732,9 +1783,10 @@ export default function App() {
           <>
             <MapView data={data} byId={byId} year={year} sel={sel}
               setSel={(id) => { setSel(id); if (id) setIntroOpen(false); }} flyReq={flyReq} shown={shown}
-              precShown={precShown} t={t} lang={lang} />
+              precShown={precShown} showableOnly={showableOnly} t={t} lang={lang} />
             <Legend data={data} shown={shown} setShown={setShown}
-              precShown={precShown} setPrecShown={setPrecShown} t={t} lang={lang} />
+              precShown={precShown} setPrecShown={setPrecShown}
+              showableOnly={showableOnly} setShowableOnly={setShowableOnly} t={t} lang={lang} />
             {!selU && introOpen && (
               <div className="panel introcard">
                 <div className="panel-h">
@@ -1865,6 +1917,9 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .mapsvg{display:block;width:100%;height:100%}
 .prov{fill:rgba(216,231,246,.05);stroke:rgba(216,231,246,.4)}
 .prov:hover{fill:rgba(216,231,246,.09)}
+/* 一家也没收到的省 —— 压成灰,和「收了但眼下为零」区分开 */
+.prov.blank{fill:rgba(216,231,246,.018);stroke:rgba(216,231,246,.15)}
+.prov.blank:hover{fill:rgba(216,231,246,.05)}
 .city{fill:rgba(216,231,246,.045);stroke:rgba(216,231,246,.33)}
 .city:hover{fill:rgba(216,231,246,.1)}
 .attrib{position:absolute;right:14px;bottom:38px;z-index:10;font-size:9.5px;color:var(--dim);
