@@ -124,7 +124,10 @@ const zh = {
 
   /* 地图 */
   mapLabel: "中国电子工业历史地图",
-  zoomIn: "放大", zoomOut: "缩小", fitData: "回到数据范围",
+  viewNational: "全国", viewCity: "城市", noCities: "没有可看的城市",
+  barsCap: "柱子", barsStacked: "叠起来", barsGrouped: "并排",
+  barsAllYears: "柱子按全表点数,不随年份变 —— 两百家里只有九十三家写了始建年",
+  barsUnplaced: (n) => `另有 ${n} 家没有城市可归,柱子上没有它们`,
   districtSuffix: (d) => d + "区",
   clusterTitle: (label, n) => label + " · 当前存续 " + n + " 个单位,点击放大",
   locVague: " · 坐标待定位",
@@ -266,7 +269,10 @@ const en = {
   previewTitle: "You are viewing a file you imported. The published data is unchanged. Click to discard the preview.",
 
   mapLabel: "Historical atlas of China's electronics industry",
-  zoomIn: "Zoom in", zoomOut: "Zoom out", fitData: "Fit to data",
+  viewNational: "National", viewCity: "City", noCities: "No cities to show",
+  barsCap: "BARS", barsStacked: "Stacked", barsGrouped: "Grouped",
+  barsAllYears: "Bars count every unit on record, not the selected year — only 93 of 200 have a founding date",
+  barsUnplaced: (n) => `${n} more have no city on record and appear on no bar`,
   districtSuffix: (d) => d + " District",
   clusterTitle: (label, n) => label + " · " + n + " active here, click to zoom in",
   locVague: " · location approximate",
@@ -361,12 +367,32 @@ export const STR = { zh, en };
 export const strings = (lang) => STR[lang] || STR.zh;
 
 /** 受控词表的按语言取值 */
-export const industryLabel = (k, lang) => (lang === "en" ? INDUSTRY_EN[k] || k : k);
+/* Industry 那一栏空着的有五十八家 —— 从前它们连图上的点都没有,
+   因为筛选集合是拿 filter(Boolean) 建的,空串永远不在里头。
+   空着也是一类,给它一个名字,别让它无声消失。 */
+export const industryLabel = (k, lang) =>
+  (!k ? (lang === "en" ? "Unspecified" : "未注明") : (lang === "en" ? INDUSTRY_EN[k] || k : k));
 export const typeLabel = (k, lang, zhLabel) => (lang === "en" ? TYPE_EN[k] || k : zhLabel);
 export const eventLabel = (k, lang) => (lang === "en" ? EVENT_EN[k] || k : k);
 export const statLabel = (key, lang, zhLabel) => (lang === "en" ? STAT_EN[key] || zhLabel : zhLabel);
 export const basisLabel = (k, lang) => (lang === "en" ? BASIS_EN[k] || k : k);
 export const districtLabel = (d, lang) => (lang === "en" ? DISTRICT_EN[d] || d : d);
+
+/* 省名 —— 只为国家尺度那张柱状图。中文界面照写志书的全称,
+   英文界面去掉「省」「市」「自治区」,和图上别处的地名一个体例。 */
+export const PROVINCE_EN = {
+  "北京市": "Beijing", "上海市": "Shanghai", "天津市": "Tianjin", "重庆市": "Chongqing",
+  "河北省": "Hebei", "山西省": "Shanxi", "辽宁省": "Liaoning", "吉林省": "Jilin",
+  "黑龙江省": "Heilongjiang", "江苏省": "Jiangsu", "浙江省": "Zhejiang", "安徽省": "Anhui",
+  "福建省": "Fujian", "江西省": "Jiangxi", "山东省": "Shandong", "河南省": "Henan",
+  "湖北省": "Hubei", "湖南省": "Hunan", "广东省": "Guangdong", "海南省": "Hainan",
+  "四川省": "Sichuan", "贵州省": "Guizhou", "云南省": "Yunnan", "陕西省": "Shaanxi",
+  "甘肃省": "Gansu", "青海省": "Qinghai", "台湾省": "Taiwan",
+  "内蒙古自治区": "Inner Mongolia", "广西壮族自治区": "Guangxi", "西藏自治区": "Tibet",
+  "宁夏回族自治区": "Ningxia", "新疆维吾尔自治区": "Xinjiang",
+  "香港特别行政区": "Hong Kong", "澳门特别行政区": "Macau",
+};
+export const provinceLabel = (p, lang) => (lang === "en" ? PROVINCE_EN[p] || p : p);
 export const cityLabel = (c, lang) => (lang === "en" ? c : CITY_ZH[c] || c);
 
 /** 浏览器语言 → 默认界面语言 */
