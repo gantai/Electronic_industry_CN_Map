@@ -23,6 +23,9 @@ const EXPAND_PX = 90;   // 同城单位散开所需的屏上跨度
 const BAR_MAX = 168;    // 最高一根;再高,顶上的数字要出画面
 const BAR_FLOOR = 5;    // 只有一两家的省,给个看得见的下限
 const BAR_W = 15, BAR_D = 7;
+/* 没写始建年的那一截 —— 灰蓝,和三种类型色都不撞,又不至于暗到看不见 */
+const UNDATED_COLOR = "#6C86A6";
+const segColor = (key) => (key === "undated" ? UNDATED_COLOR : TYPE_META[key].color);
 /* 放大上限:约当视野宽 7 km。再放大只会把「街段级近似」的落点显示得
    像实测点位,超出数据本身的精度,故到此为止。 */
 const MAX_K = 1200;
@@ -194,22 +197,29 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
       .sort((a, b) => b.n - a.n || a.city.localeCompare(b.city));
   }, [data.units]);
 
-  /* 按省点数,分工厂 / 研究所 / 合资三档。
-     不看年份 —— 两百家里只有九十三家写了始建年,按年过滤会把另外一百零七家
-     算成零,读图的人会当作那年真没有这些厂。行业开关照旧作数,那是明摆着的
-     筛选,不是史料的缺口。 */
+  /* 按省点数。柱子分两截:
+       上截 —— 那一年在册的,按工厂 / 研究所 / 合资分色,随时间轴涨落;
+       下截 —— 志书没写始建年的,灰的,压在底下不动。
+     两百家里只有九十三家写了年份,单按年份过滤,北京那根到头也只有 61 家,
+     另外九十四家在任何年份都不出现 —— 读图的人会当作那年真没有这些厂。
+     所以不筛掉,压在底下:时间轴推得动的是能考的那一截,考不出年份的那一截
+     一直在，一眼看得出这批家底有多少是没年份的。
+     行业开关照旧作数 —— 那是明摆着的筛选,不是史料的缺口。 */
   const provTally = useMemo(() => {
     const m = {};
     data.units.forEach((u) => {
       if (!shown.has(u.industry)) return;
       const p = provinceOf(u.city);
       if (!p) return;
-      const row = m[p] || (m[p] = { total: 0, factory: 0, institute: 0, jv: 0 });
+      const row = m[p] || (m[p] = { total: 0, live: 0, undated: 0, factory: 0, institute: 0, jv: 0 });
       row.total += 1;
+      if (!u.start) { row.undated += 1; return; }
+      if (!isAlive(u, year)) return;
+      row.live += 1;
       if (row[u.type] != null) row[u.type] += 1;
     });
     return m;
-  }, [data.units, shown]);
+  }, [data.units, shown, year]);
 
   /* 没有 City 的那几家,一根柱子也落不上 —— 在图上说明白,别让它们无声消失 */
   const unplaceable = useMemo(
@@ -456,17 +466,25 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
       .map((p) => ({ p, tal: provTally[p.name] }))
       .filter((r) => r.tal && r.tal.total > 0 && isFinite(r.p.c[0]));
     if (!rows.length) return [];
+    /* 比例尺照全表的总数定死,不随年份变 —— 否则拖时间轴时柱子会一边长高
+       一边被重新缩放,涨落就看不出来了 */
     const max = Math.max(...rows.map((r) => r.tal.total));
     const per = BAR_MAX / Math.max(max, 1);
     return rows.map(({ p, tal }) => {
-      const segs = TYPE_ORDER.filter((key) => tal[key] > 0)
-        .map((key) => ({ key, n: tal[key], h: Math.max(BAR_FLOOR, tal[key] * per) }));
+      const segs = [
+        ...(tal.undated > 0
+          ? [{ key: "undated", n: tal.undated, h: Math.max(BAR_FLOOR, tal.undated * per) }] : []),
+        ...TYPE_ORDER.filter((key) => tal[key] > 0)
+          .map((key) => ({ key, n: tal[key], h: Math.max(BAR_FLOOR, tal[key] * per) })),
+      ];
+      if (!segs.length) return null;
       /* 叠起来的按总数算高,并排的按最高那根算 —— 数字标在顶上,别压着柱子 */
       const hTop = bars === "stacked"
         ? segs.reduce((a, s) => a + s.h, 0)
         : Math.max(...segs.map((s) => s.h), 0);
-      return { name: p.name, x: p.c[0], y: p.c[1], total: tal.total, segs, hTop };
-    });
+      return { name: p.name, x: p.c[0], y: p.c[1], total: tal.total,
+               live: tal.live, undated: tal.undated, segs, hTop };
+    }).filter(Boolean);
   }, [view.mode, provPaths, provTally, bars]);
 
   /* 省名互相压住的时候,让家数多的那个 —— 北京和河北的标注点隔着十来像素,
@@ -510,19 +528,20 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
             </g>
           )}
 
-          {/* 国家尺度的柱子 —— 一省一处,按类型分色。
+          {/* 国家尺度的柱子 —— 一省一处。灰的那一截是志书没写始建年的,
+              压在底下不动;彩的那一截是当年在册的,跟着时间轴涨落。
               高度是线性的:两百家里一百九十二家在京沪两地,柱子确实一头沉,
               那是数据本身,不是画法。压成对数会让人把倍数看错。 */}
           {view.mode === "national" && barRows.map((r) => (
             <g key={r.name} className="provbar">
-              <title>{`${provinceLabel(r.name, lang)} · ${r.total}`}</title>
+              <title>{t.barTip(provinceLabel(r.name, lang), r.live, r.undated, r.total, year)}</title>
               <circle cx={r.x} cy={r.y} r={1.6 / k} fill="#7E9BBD" opacity=".8" />
               {bars === "stacked" ? (() => {
                 let base = r.y;
                 return r.segs.map((s, i) => {
                   const el = (
                     <Prism key={s.key} x={r.x - BAR_W / 2} y={base} w={BAR_W / k} h={s.h / k}
-                      dx={BAR_D / k} dy={(BAR_D * 0.62) / k} color={TYPE_META[s.key].color}
+                      dx={BAR_D / k} dy={(BAR_D * 0.62) / k} color={segColor(s.key)}
                       cap={i === r.segs.length - 1} />
                   );
                   base -= s.h / k;
@@ -531,11 +550,13 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
               })() : r.segs.map((s, i) => (
                 <Prism key={s.key} x={r.x - BAR_W + (i * (BAR_W * 0.62 + 1.6)) / k} y={r.y}
                   w={(BAR_W * 0.62) / k} h={s.h / k}
-                  dx={(BAR_D * 0.7) / k} dy={(BAR_D * 0.44) / k} color={TYPE_META[s.key].color} />
+                  dx={(BAR_D * 0.7) / k} dy={(BAR_D * 0.44) / k} color={segColor(s.key)} />
               ))}
               <text x={r.x} y={r.y - r.hTop / k - 7 / k} textAnchor="middle"
                 fontSize={12 / k} className="maplabel barval" strokeWidth={3.2 / k}>
-                {bars === "stacked" ? r.total : r.segs.map((s) => s.n).join("/")}
+                {bars === "stacked"
+                  ? (r.undated ? `${r.live}+${r.undated}` : String(r.live))
+                  : r.segs.map((s) => s.n).join("/")}
               </text>
               {barNamed.has(r.name) && (
                 <text x={r.x} y={r.y + 13 / k} textAnchor="middle"
@@ -705,6 +726,10 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
               onClick={() => setBars("grouped")}>{t.barsGrouped}</button>
           </div>
           <div className="barkey">
+            <span className="lg-item">
+              <i className="sw sw-sq" style={{ background: UNDATED_COLOR }} />
+              {t.barsUndated}
+            </span>
             {TYPE_ORDER.map((k2) => (
               <span key={k2} className="lg-item">
                 <i className="sw sw-sq" style={{ background: TYPE_META[k2].color }} />
@@ -713,7 +738,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
             ))}
           </div>
           <div className="mono barnote">
-            {t.barsAllYears}
+            {t.barsNote}
             {unplaceable > 0 && <><br />{t.barsUnplaced(unplaceable)}</>}
           </div>
         </div>
