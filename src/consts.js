@@ -14,11 +14,14 @@ export const INDUSTRY_META = {
 export const INDUSTRY_FALLBACK = { color: "#9FB8D4", en: "Other" };
 export const industryMeta = (k) => INDUSTRY_META[k] || INDUSTRY_FALLBACK;
 
-/* 单位类型 —— 决定节点形状(由 Industry / Founder 推断,见 xlsxio.js) */
+/* 单位类型 —— 决定节点形状(由 Industry / Founder 推断,见 xlsxio.js)。
+   color 只在国家尺度的柱状图上用得着:图上的点按行业着色,柱子按类型分段。
+   研究所两处同色,是有意的 —— 同一类东西不该换两身衣裳。 */
+export const TYPE_ORDER = ["factory", "institute", "jv"];
 export const TYPE_META = {
-  factory: { label: "工厂", shape: "circle" },
-  institute: { label: "研究所", shape: "square" },
-  jv: { label: "合资企业", shape: "ring" },
+  factory: { label: "工厂", shape: "circle", color: "#7ED8E8" },
+  institute: { label: "研究所", shape: "square", color: "#8FD9A8" },
+  jv: { label: "合资企业", shape: "ring", color: "#C9B8FF" },
 };
 
 /* 沿革事件类型 —— 由「Founder」列的措辞推定 */

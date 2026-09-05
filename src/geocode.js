@@ -43,6 +43,27 @@ CITY_FALLBACK["长沙"] = CITY_FALLBACK.Changsha;
 
 export const DEFAULT_FALLBACK = CITY_FALLBACK.Shanghai;
 
+/* 市 → 省。省名照 china.geo.json 的写法,「省」「市」「自治区」一并写全,
+   国家尺度上要拿它去认那张底图上的多边形。
+   添新城市的时候这里也得添一行,否则那座城的厂所在全国图上没有柱子 ——
+   `gaz verify` 会把漏掉的报出来。 */
+export const CITY_PROVINCE = {
+  Shanghai: "上海市", Beijing: "北京市", Tianjin: "天津市",
+  Nanjing: "江苏省", Tangshan: "河北省", Harbin: "黑龙江省",
+  Lanzhou: "甘肃省", Changsha: "湖南省",
+};
+CITY_PROVINCE["上海"] = CITY_PROVINCE.Shanghai;
+CITY_PROVINCE["北京"] = CITY_PROVINCE.Beijing;
+CITY_PROVINCE["天津"] = CITY_PROVINCE.Tianjin;
+CITY_PROVINCE["南京"] = CITY_PROVINCE.Nanjing;
+CITY_PROVINCE["唐山"] = CITY_PROVINCE.Tangshan;
+CITY_PROVINCE["哈尔滨"] = CITY_PROVINCE.Harbin;
+CITY_PROVINCE["兰州"] = CITY_PROVINCE.Lanzhou;
+CITY_PROVINCE["长沙"] = CITY_PROVINCE.Changsha;
+
+/** City 列 → 省名(china.geo.json 的写法);认不出返回 "" */
+export const provinceOf = (city) => CITY_PROVINCE[String(city || "").trim()] || "";
+
 /** City 列 → 兜底落点。认不出的城市仍回落到 DEFAULT_FALLBACK。 */
 export function cityAt(city) {
   const raw = String(city == null ? "" : city).trim();

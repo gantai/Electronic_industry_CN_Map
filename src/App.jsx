@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as d3 from "d3";
-import { Play, Pause, ChevronLeft, ChevronRight, X, Plus, Minus, Upload, Download, Search, Crosshair } from "lucide-react";
+import { Play, Pause, ChevronLeft, ChevronRight, X, Upload, Download, Search } from "lucide-react";
 import GEO_RAW from "./china.geo.json";
 import CITY_RAW from "./city.geo.json";
-import { INDUSTRY_META, industryMeta, TYPE_META, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
+import { INDUSTRY_META, industryMeta, TYPE_META, TYPE_ORDER, EVENT_META, eventMeta, STAT_FIELDS, PRECISION_LABEL } from "./consts.js";
+import { provinceOf } from "./geocode.js";
 import { strings, detectLang, industryLabel, typeLabel, eventLabel, statLabel, basisLabel,
-  districtLabel, cityLabel, PRECISION_EN } from "./i18n.js";
+  districtLabel, cityLabel, provinceLabel, PRECISION_EN } from "./i18n.js";
 import { clampYear, fmtDate, fmtNum, stripLeadingDate, rosette } from "./utils.js";
 import { parseWorkbook, exportWorkbook, nameAt, EMPTY_DATA } from "./xlsxio.js";
 import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
@@ -18,6 +19,10 @@ import { loadBundledWorkbook, SOURCE_FILE } from "./data.js";
    ============================================================ */
 
 const EXPAND_PX = 90;   // 同城单位散开所需的屏上跨度
+/* 国家尺度那些柱子的尺寸,都按屏上像素算 */
+const BAR_MAX = 168;    // 最高一根;再高,顶上的数字要出画面
+const BAR_FLOOR = 5;    // 只有一两家的省,给个看得见的下限
+const BAR_W = 15, BAR_D = 7;
 /* 放大上限:约当视野宽 7 km。再放大只会把「街段级近似」的落点显示得
    像实测点位,超出数据本身的精度,故到此为止。 */
 const MAX_K = 1200;
@@ -77,6 +82,21 @@ function clusterUnits(units, lang, thresholdDeg = 0.6) {
 }
 
 /* ============================================================ MAP ============================================================ */
+/* 立体柱子:正面、右侧面、顶面各一块。画成方块也能读出高低,可两根同高的
+   柱子并排时,平面色块会糊成一片;加个侧面,边界就自己出来了。 */
+function Prism({ x, y, w, h, dx, dy, color, cap = true }) {
+  if (!(h > 0)) return null;
+  const dim = d3.color(color).darker(0.9).formatHex();
+  const lit = d3.color(color).brighter(0.55).formatHex();
+  return (
+    <g>
+      <polygon points={`${x},${y} ${x + w},${y} ${x + w},${y - h} ${x},${y - h}`} fill={color} />
+      <polygon points={`${x + w},${y} ${x + w + dx},${y - dy} ${x + w + dx},${y - h - dy} ${x + w},${y - h}`} fill={dim} />
+      {cap && <polygon points={`${x},${y - h} ${x + w},${y - h} ${x + w + dx},${y - h - dy} ${x + dx},${y - h - dy}`} fill={lit} />}
+    </g>
+  );
+}
+
 function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, lang }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
@@ -86,6 +106,10 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [zt, setZt] = useState(() => d3.zoomIdentity);
   const [hover, setHover] = useState(null);
+  /* 视野:整个中国,还是某一座城。取代从前的放大/缩小/回到数据范围三个钮。 */
+  const [view, setView] = useState({ mode: "national", city: "" });
+  const [bars, setBars] = useState("stacked");   // stacked | grouped
+  const [pickOpen, setPickOpen] = useState(false);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -116,8 +140,13 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
 
   const geoPath = useMemo(() => (projection ? d3.geoPath(projection) : null), [projection]);
   const provPaths = useMemo(
-    () => (geoPath ? GEO.features.map((f, i) => ({ d: geoPath(f), key: i, name: f.properties && f.properties.name })) : []),
-    [geoPath]
+    () => (geoPath ? GEO.features.map((f, i) => ({
+      d: geoPath(f), key: i, name: f.properties && f.properties.name,
+      /* cp 是 china.geo.json 自带的标注点,比多边形形心稳 —— 形心会掉进
+         海南、舟山那样的碎岛之间。没有 cp 才退回形心。 */
+      c: (f.properties && f.properties.cp && projection(f.properties.cp)) || geoPath.centroid(f),
+    })) : []),
+    [geoPath, projection]
   );
   const cityPaths = useMemo(
     () => (geoPath ? CITY.features.map((f, i) => ({
@@ -152,6 +181,41 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     });
     return m;
   }, [data.units]);
+
+  /* 城市清单。数的是那座城全部的厂所,和柱子一个口径 —— 这张单子同时也是
+     一份收录情况表。落点开关滤掉多少,由图例那一行去说。按家数排。 */
+  const cityList = useMemo(() => {
+    const m = new Map();
+    data.units.forEach((u) => {
+      const c = String(u.city || "").trim();
+      if (c) m.set(c, (m.get(c) || 0) + 1);
+    });
+    return [...m.entries()].map(([city, n]) => ({ city, n }))
+      .sort((a, b) => b.n - a.n || a.city.localeCompare(b.city));
+  }, [data.units]);
+
+  /* 按省点数,分工厂 / 研究所 / 合资三档。
+     不看年份 —— 两百家里只有九十三家写了始建年,按年过滤会把另外一百零七家
+     算成零,读图的人会当作那年真没有这些厂。行业开关照旧作数,那是明摆着的
+     筛选,不是史料的缺口。 */
+  const provTally = useMemo(() => {
+    const m = {};
+    data.units.forEach((u) => {
+      if (!shown.has(u.industry)) return;
+      const p = provinceOf(u.city);
+      if (!p) return;
+      const row = m[p] || (m[p] = { total: 0, factory: 0, institute: 0, jv: 0 });
+      row.total += 1;
+      if (row[u.type] != null) row[u.type] += 1;
+    });
+    return m;
+  }, [data.units, shown]);
+
+  /* 没有 City 的那几家,一根柱子也落不上 —— 在图上说明白,别让它们无声消失 */
+  const unplaceable = useMemo(
+    () => data.units.filter((u) => shown.has(u.industry) && !provinceOf(u.city)).length,
+    [data.units, shown]
+  );
 
   const clusters = useMemo(() => clusterUnits(data.units, lang), [data.units, lang]);
   const clusterInfo = useMemo(() => {
@@ -271,10 +335,6 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     return out;
   }, [evNear, posOf, year, byId, shown, precShown]);
 
-  const zoomBy = (f) => {
-    if (svgRef.current && zoomRef.current)
-      d3.select(svgRef.current).transition().duration(230).call(zoomRef.current.scaleBy, f);
-  };
   const flyTo = useCallback((x, y, kk, dur = 620) => {
     if (!svgRef.current || !zoomRef.current || !size.w) return;
     const tr = d3.zoomIdentity.translate(size.w / 2 - kk * x, size.h / 2 - kk * y).scale(kk);
@@ -292,28 +352,54 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     return [a[Math.floor(a.length * 0.04)], a[Math.ceil(a.length * 0.96) - 1]];
   };
 
-  const fitData = useCallback((dur) => {
+  /* 套到一组单位上。给的是哪座城,就框那座城。 */
+  const fitUnits = useCallback((us, dur) => {
     if (!projection || !size.w) return;
-    const pts = data.units.map((u) => basePos[u.id]).filter(Boolean);
+    const pts = us.map((u) => basePos[u.id]).filter(Boolean);
     if (!pts.length) return;
     const [x0, x1] = trimmed(pts.map((p) => p[0]));
     const [y0, y1] = trimmed(pts.map((p) => p[1]));
     const spanX = Math.max(x1 - x0, 1e-6), spanY = Math.max(y1 - y0, 1e-6);
     const kk = Math.max(1, Math.min(MAX_K, 0.78 * Math.min(size.w / spanX, size.h / spanY)));
     flyTo((x0 + x1) / 2, (y0 + y1) / 2, kk, dur);
-  }, [projection, size, data.units, basePos, flyTo]);
+  }, [projection, size, basePos, flyTo]);
 
+  /* 全国:退回原始比例,整张中国图正好铺满 —— 投影本来就是照它套的 */
+  const fitNation = useCallback((dur = 620) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const s = d3.select(svgRef.current);
+    (dur ? s.transition().duration(dur) : s).call(zoomRef.current.transform, d3.zoomIdentity);
+  }, []);
+
+  const goCity = useCallback((city, dur = 620) => {
+    setView({ mode: "city", city });
+    setPickOpen(false);
+    fitUnits(data.units.filter((u) => String(u.city || "").trim() === city), dur);
+  }, [data.units, fitUnits]);
+
+  const goNational = useCallback(() => {
+    setView({ mode: "national", city: "" });
+    setPickOpen(false);
+    fitNation();
+  }, [fitNation]);
+
+  /* 开屏落在全国图上 —— 一张图先给个总览,再由人挑城市进去 */
   useEffect(() => {
     if (lastData.current !== data) { lastData.current = data; didFit.current = false; }
     if (didFit.current || !projection || !size.w) return;
     didFit.current = true;
-    fitData(0);
-  }, [projection, size, data, fitData]);
+    fitNation(0);
+  }, [projection, size, data, fitNation]);
 
+  /* 从名录里点一家进来:先切到它所在的城,再飞过去 —— 否则站在全国图上
+     突然放大到一条街,读图的人不知道自己到了哪里。 */
   useEffect(() => {
     if (!flyReq || !projection) return;
     const p = basePos[flyReq.id];
-    if (p) flyTo(p[0], p[1], Math.min(MAX_K, Math.max(k, 320)));
+    if (!p) return;
+    const city = String((byId[flyReq.id] || {}).city || "").trim();
+    if (city && view.city !== city) setView({ mode: "city", city });
+    flyTo(p[0], p[1], Math.min(MAX_K, Math.max(k, 320)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyReq, projection]);
 
@@ -322,13 +408,15 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     setHover({ id, x: ev.clientX - r.left, y: ev.clientY - r.top });
   };
 
+  /* 全国图上不画厂所的点 —— 那一层是柱状图,一省一根,点上去只会糊成一片 */
   const nodeList = useMemo(() => {
+    if (view.mode !== "city") return [];
     return data.units
       .filter((u) => basePos[u.id] && shown.has(u.industry) && precShown.has(u.precision))
       .filter((u) => isExpanded(clusterOf[u.id]))
       .map((u) => ({ u, alive: isAlive(u, year), ghost: !isAlive(u, year) && ghostSet.has(u.id) }))
       .filter((n) => n.alive || n.ghost);
-  }, [data.units, basePos, shown, precShown, isExpanded, clusterOf, year, ghostSet]);
+  }, [view.mode, data.units, basePos, shown, precShown, isExpanded, clusterOf, year, ghostSet]);
 
   /* 贪心避让:标注太密时按「产品记录多者优先」保留,其余只在选中/悬停时显示 */
   const labelSet = useMemo(() => {
@@ -359,6 +447,42 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
     return out;
   }, [nodeList, posOf, zt, k, size, labelOf, glowMap]);
 
+  /* 柱子的几何 —— 高度按屏上像素算,再除以 k 折回图上坐标,
+     于是缩放时柱子跟着地图走,不会一放大就顶穿天。
+     最高那根定死 168px:再高,顶上的数字就出了画面。 */
+  const barRows = useMemo(() => {
+    if (view.mode !== "national") return [];
+    const rows = provPaths
+      .map((p) => ({ p, tal: provTally[p.name] }))
+      .filter((r) => r.tal && r.tal.total > 0 && isFinite(r.p.c[0]));
+    if (!rows.length) return [];
+    const max = Math.max(...rows.map((r) => r.tal.total));
+    const per = BAR_MAX / Math.max(max, 1);
+    return rows.map(({ p, tal }) => {
+      const segs = TYPE_ORDER.filter((key) => tal[key] > 0)
+        .map((key) => ({ key, n: tal[key], h: Math.max(BAR_FLOOR, tal[key] * per) }));
+      /* 叠起来的按总数算高,并排的按最高那根算 —— 数字标在顶上,别压着柱子 */
+      const hTop = bars === "stacked"
+        ? segs.reduce((a, s) => a + s.h, 0)
+        : Math.max(...segs.map((s) => s.h), 0);
+      return { name: p.name, x: p.c[0], y: p.c[1], total: tal.total, segs, hTop };
+    });
+  }, [view.mode, provPaths, provTally, bars]);
+
+  /* 省名互相压住的时候,让家数多的那个 —— 北京和河北的标注点隔着十来像素,
+     两个名字叠在一起谁也读不成。让掉的那个还有柱顶的数字和悬停提示。
+     和单位标注那边一个路数:先排重要的,占住地方,后来的躲开。 */
+  const barNamed = useMemo(() => {
+    const keep = new Set(), boxes = [];
+    [...barRows].sort((a, b) => b.total - a.total).forEach((r) => {
+      const w = (provinceLabel(r.name, lang).length * 6.5 + 8) / k, h = 13 / k;
+      const bx = { x0: r.x - w / 2, x1: r.x + w / 2, y0: r.y + 6 / k, y1: r.y + 6 / k + h };
+      if (boxes.some((o) => bx.x0 < o.x1 && bx.x1 > o.x0 && bx.y0 < o.y1 && bx.y1 > o.y0)) return;
+      boxes.push(bx); keep.add(r.name);
+    });
+    return keep;
+  }, [barRows, lang, k]);
+
   const baseOpacity = k <= FADE_FROM ? 1 : Math.max(0, 1 - (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const cityOpacity = k <= FADE_FROM ? 0 : Math.min(1, (k - FADE_FROM) / (FADE_TO - FADE_FROM));
   const hovU = hover && byId[hover.id];
@@ -386,8 +510,44 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
             </g>
           )}
 
+          {/* 国家尺度的柱子 —— 一省一处,按类型分色。
+              高度是线性的:两百家里一百九十二家在京沪两地,柱子确实一头沉,
+              那是数据本身,不是画法。压成对数会让人把倍数看错。 */}
+          {view.mode === "national" && barRows.map((r) => (
+            <g key={r.name} className="provbar">
+              <title>{`${provinceLabel(r.name, lang)} · ${r.total}`}</title>
+              <circle cx={r.x} cy={r.y} r={1.6 / k} fill="#7E9BBD" opacity=".8" />
+              {bars === "stacked" ? (() => {
+                let base = r.y;
+                return r.segs.map((s, i) => {
+                  const el = (
+                    <Prism key={s.key} x={r.x - BAR_W / 2} y={base} w={BAR_W / k} h={s.h / k}
+                      dx={BAR_D / k} dy={(BAR_D * 0.62) / k} color={TYPE_META[s.key].color}
+                      cap={i === r.segs.length - 1} />
+                  );
+                  base -= s.h / k;
+                  return el;
+                });
+              })() : r.segs.map((s, i) => (
+                <Prism key={s.key} x={r.x - BAR_W + (i * (BAR_W * 0.62 + 1.6)) / k} y={r.y}
+                  w={(BAR_W * 0.62) / k} h={s.h / k}
+                  dx={(BAR_D * 0.7) / k} dy={(BAR_D * 0.44) / k} color={TYPE_META[s.key].color} />
+              ))}
+              <text x={r.x} y={r.y - r.hTop / k - 7 / k} textAnchor="middle"
+                fontSize={12 / k} className="maplabel barval" strokeWidth={3.2 / k}>
+                {bars === "stacked" ? r.total : r.segs.map((s) => s.n).join("/")}
+              </text>
+              {barNamed.has(r.name) && (
+                <text x={r.x} y={r.y + 13 / k} textAnchor="middle"
+                  fontSize={10 / k} className="maplabel dim" strokeWidth={3 / k}>
+                  {provinceLabel(r.name, lang)}
+                </text>
+              )}
+            </g>
+          ))}
+
           {/* 区界底图:省界淡出的同时淡入,城市尺度上提供方位 */}
-          {cityOpacity > 0 && (
+          {view.mode === "city" && cityOpacity > 0 && (
             <g opacity={cityOpacity}>
               {cityPaths.map((p) => (
                 <path key={p.key} d={p.d} className="city" strokeWidth={0.9 / k}>
@@ -404,7 +564,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
           )}
 
           {/* 折叠的城市徽标 */}
-          {clusterInfo.map((c, ci) => {
+          {view.mode === "city" && clusterInfo.map((c, ci) => {
             if (isExpanded(ci)) return null;
             const members = c.ids.map((id) => byId[id])
               .filter((u) => u && shown.has(u.industry) && precShown.has(u.precision));
@@ -426,7 +586,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
           })}
 
           {/* 事件连线 */}
-          {arcs.map((a) => (
+          {view.mode === "city" && arcs.map((a) => (
             <g key={a.key} opacity={a.fade} pointerEvents="none">
               <path d={a.d} fill="none" stroke={a.meta.color} strokeWidth={1.7 / k}
                 strokeDasharray={a.meta.dash ? a.meta.dash.map((dd) => dd / k).join(" ") : undefined}
@@ -509,12 +669,55 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, t, l
         </div>
       )}
 
-      {/* zoom controls */}
-      <div className="mapcontrols">
-        <button className="icobtn" onClick={() => zoomBy(1.6)} aria-label={t.zoomIn}><Plus size={15} /></button>
-        <button className="icobtn" onClick={() => zoomBy(1 / 1.6)} aria-label={t.zoomOut}><Minus size={15} /></button>
-        <button className="icobtn" onClick={() => fitData(420)} aria-label={t.fitData}><Crosshair size={15} /></button>
+      {/* 视野切换 —— 从前是放大 / 缩小 / 回到数据范围三个钮。
+          滚轮与拖动照旧管用,这里管的是「看哪一片」,不是「放多大」。 */}
+      <div className="viewpick">
+        <div className="seg">
+          <button className={"segbtn" + (view.mode === "national" ? " on" : "")}
+            onClick={goNational}>{t.viewNational}</button>
+          <button className={"segbtn" + (view.mode === "city" ? " on" : "")}
+            onClick={() => setPickOpen((v) => !v)} aria-expanded={pickOpen}>
+            {view.mode === "city" ? cityLabel(view.city, lang) : t.viewCity}
+            <svg width="8" height="5" viewBox="0 0 8 5" aria-hidden="true"><path d="M0,0 L4,5 L8,0" fill="currentColor" /></svg>
+          </button>
+        </div>
+        {pickOpen && (
+          <div className="citylist">
+            {cityList.map((c) => (
+              <button key={c.city} className={"cityrow" + (view.city === c.city ? " on" : "")}
+                onClick={() => goCity(c.city)}>
+                <span>{cityLabel(c.city, lang)}</span><span className="mono">{c.n}</span>
+              </button>
+            ))}
+            {!cityList.length && <div className="cityrow dimrow">{t.noCities}</div>}
+          </div>
+        )}
       </div>
+
+      {/* 国家尺度上柱子怎么排 */}
+      {view.mode === "national" && (
+        <div className="barpick">
+          <span className="mono barcap">{t.barsCap}</span>
+          <div className="seg">
+            <button className={"segbtn" + (bars === "stacked" ? " on" : "")}
+              onClick={() => setBars("stacked")}>{t.barsStacked}</button>
+            <button className={"segbtn" + (bars === "grouped" ? " on" : "")}
+              onClick={() => setBars("grouped")}>{t.barsGrouped}</button>
+          </div>
+          <div className="barkey">
+            {TYPE_ORDER.map((k2) => (
+              <span key={k2} className="lg-item">
+                <i className="sw sw-sq" style={{ background: TYPE_META[k2].color }} />
+                {typeLabel(k2, lang)}
+              </span>
+            ))}
+          </div>
+          <div className="mono barnote">
+            {t.barsAllYears}
+            {unplaceable > 0 && <><br />{t.barsUnplaced(unplaceable)}</>}
+          </div>
+        </div>
+      )}
 
       {/* scale bar */}
       {scaleBar && (
@@ -543,7 +746,7 @@ const PREC_TIERS = [
 
 function Legend({ data, shown, setShown, precShown, setPrecShown, t, lang }) {
   const industries = useMemo(
-    () => Array.from(new Set(data.units.map((u) => u.industry).filter(Boolean))),
+    () => Array.from(new Set(data.units.map((u) => u.industry))),
     [data.units]
   );
   const toggle = (ind) => {
@@ -1380,7 +1583,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [introOpen, setIntroOpen] = useState(true);
   const [flyReq, setFlyReq] = useState(null);
-  const [shown, setShown] = useState(() => new Set(boot.data.units.map((u) => u.industry).filter(Boolean)));
+  const [shown, setShown] = useState(() => new Set(boot.data.units.map((u) => u.industry)));
   /* 落点档次的开关。**默认不显「市中心」那一档** —— 那些单位志书没写地址,
      落在市中心只是没处放,不是它们在市中心;几十家叠在一个点上,既看不清,
      又像是在说它们都挤在天安门。要看的时候点开即可,一家也没丢。 */
@@ -1428,7 +1631,7 @@ export default function App() {
         const next = parseWorkbook(new Uint8Array(ev.target.result));
         setSel(null);
         setOverride(next);
-        setShown(new Set(next.units.map((u) => u.industry).filter(Boolean)));
+        setShown(new Set(next.units.map((u) => u.industry)));
         setPreview(file.name || t.localFile);
         showToast(t.importOk(next.counts));
       } catch (err) {
@@ -1652,7 +1855,35 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
   padding:6px 9px;border-radius:2px;max-width:250px;z-index:15}
 .tt-name{font-family:var(--serif);font-size:13px}
 .tt-meta{font-size:10px;color:var(--dim);margin-top:1px}
-.mapcontrols{position:absolute;top:12px;left:12px;display:flex;flex-direction:column;gap:5px;z-index:10}
+/* 视野切换 —— 占的是从前放大/缩小那三个钮的位置 */
+.viewpick{position:absolute;top:12px;left:12px;z-index:10;display:flex;flex-direction:column;gap:5px}
+.seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;
+  background:rgba(10,24,43,.9);width:max-content}
+.segbtn{padding:6px 13px;font-size:12.5px;color:var(--paper2);display:flex;align-items:center;gap:6px;
+  border-right:1px solid var(--line)}
+.segbtn:last-child{border-right:none}
+.segbtn:hover{color:var(--yellow)}
+.segbtn.on{background:var(--yellow);color:#0E2440;font-weight:600}
+.segbtn.on:hover{color:#0E2440}
+.citylist{background:rgba(10,24,43,.97);border:1px solid var(--line);border-radius:5px;
+  padding:3px 0;min-width:176px;max-height:min(52vh,340px);overflow:auto}
+.cityrow{display:flex;justify-content:space-between;gap:20px;width:100%;padding:5px 11px;
+  font-size:12px;color:var(--paper2);border-left:2px solid transparent}
+.cityrow:hover{background:rgba(216,231,246,.07);color:var(--paper)}
+.cityrow.on{background:rgba(242,193,78,.16);border-left-color:var(--yellow);color:var(--paper)}
+.cityrow .mono{color:var(--dim);font-size:11px}
+.dimrow{color:var(--dim);justify-content:flex-start}
+/* 柱子的开关摆右上,离图例远些,免得两块面板挤在一起 */
+.barpick{position:absolute;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;
+  align-items:flex-end;gap:6px;max-width:270px}
+.barcap{font-size:9.5px;color:var(--dim);letter-spacing:.1em}
+.barkey{display:flex;flex-direction:column;gap:3px;align-items:flex-start;
+  background:rgba(10,24,43,.9);border:1px solid var(--line);border-radius:5px;padding:7px 10px}
+.sw-sq{border-radius:2px}
+.barnote{font-size:9.5px;color:var(--dim);text-align:right;line-height:1.5;
+  background:rgba(10,24,43,.8);border-radius:3px;padding:4px 7px}
+.provbar{cursor:default}
+.barval{fill:var(--paper);font-weight:600}
 .icobtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
   border:1px solid var(--line);border-radius:2px;background:rgba(13,29,51,.85);color:var(--paper2)}
 .icobtn:hover{border-color:var(--yellow);color:var(--yellow)}
