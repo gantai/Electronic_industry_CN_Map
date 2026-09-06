@@ -1008,7 +1008,9 @@ function LineageView({ data, year, setYear, sel, setSel, t, lang }) {
     if (singles.length) families.push({ members: singles, label: t.famOther, isOther: true });
 
     const PXY = 15, LEFT = 18, TOP = 34, ROW = 34;
-    const x = (yy) => LEFT + (yy - yearMin) * PXY;
+    /* 早于轴起点的,横条从轴的左端起画 —— 不这么夹住,它会画到画布外面去,
+       等于凭空消失。真正的年份在详情面板里照旧写着。 */
+    const x = (yy) => LEFT + (Math.max(yy, yearMin) - yearMin) * PXY;
     let cy = TOP;
     const rowsY = {}, headers = [];
     families.forEach((f) => {
@@ -1281,17 +1283,31 @@ function ProductsView({ data, gotoUnit, byId, t, lang }) {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
+    /* 连厂所的别名一并检索:志书里「上无十三」与「上海电子计算机厂」是一家,
+       在产品页搜哪一个都该找得到 */
+    const unitWords = (r) => (r.unitIds || [])
+      .map((id) => byId[id])
+      .filter(Boolean)
+      .flatMap((u) => [u.name, u.nameEn, ...(u.aliases || [])])
+      .filter(Boolean).join(" ");
     return rows.filter((r) =>
       [r.product, (r.aliases || []).join(" "), r.factoryText, r.instText, r.userText,
-       r.output, r.personnel, r.remark, r.timeRaw]
+       r.output, r.personnel, r.remark, r.timeRaw, unitWords(r)]
         .filter(Boolean).join(" ").toLowerCase().includes(s));
-  }, [rows, q]);
+  }, [rows, q, byId]);
 
-  const unitChips = (r) => r.unitIds.map((id) => (
-    <button key={id} className="chipbtn mono" onClick={() => gotoUnit(id, r.date ? r.date.y : null)}>
-      {byId[id] ? byId[id].alt || unitName(byId[id], lang) : id}
-    </button>
-  ));
+  const unitChips = (r) => r.unitIds.map((id) => {
+    const u = byId[id];
+    /* 牌面上是简称,别名挂在 title 里 —— 一行放不下那么多写法 */
+    const other = u ? [unitName(u, lang), ...(u.aliases || [])]
+      .filter((n) => n && n !== (u.alt || unitName(u, lang))) : [];
+    return (
+      <button key={id} className="chipbtn mono" onClick={() => gotoUnit(id, r.date ? r.date.y : null)}
+        title={other.length ? t.alsoKnown + " " + other.join("、") : undefined}>
+        {u ? u.alt || unitName(u, lang) : id}
+      </button>
+    );
+  });
 
   return (
     <div className="pagepad">
@@ -1810,6 +1826,9 @@ export default function App() {
             <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} t={t} lang={lang} />
             {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
               t={t} lang={lang} onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
+            {/* 谱系页也留着年份尺 —— 年份本来就是两页共用的一个数,
+                只在地图页给尺子,从这边过去就没处调了 */}
+            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} t={t} lang={lang} />
           </>
         )}
 
