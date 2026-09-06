@@ -10,6 +10,7 @@
 """
 
 import io
+import json
 import os
 import re
 import shutil
@@ -1651,6 +1652,42 @@ def test_later_rename():
     check(not any("1906" in x or "19060000" in x for x in f), "决不写出 1906 这样的年份")
 
 
+def test_i18n_key_parity():
+    """中英两张字表的键必须一样多。
+
+    出过一次事故:图例「落点」那一行的四个键只写进了英文表,中文表没有。
+    中文界面下 t.precTier 是 undefined,读它的 .street 就抛,React 整棵树
+    渲染不出来 —— 整张图白着,而英文界面好端端的,所以很久没人发觉。
+    strings() 如今两表合着取,漏了键也不会再炸;可漏掉的那一句会悄悄
+    显示成外文。这一项就是把「悄悄」变成「出声」。"""
+    print("中英字表的键对不对得上")
+    node = shutil.which("node")
+    if not node:
+        print("  · 这台机器没装 node,跳过(装了 node 再跑就查得到)")
+        return
+    import subprocess
+    tmp = tempfile.mkdtemp(prefix="gaz-i18n-")
+    try:
+        js = os.path.join(tmp, "keys.mjs")
+        _write(js, (
+            'const m = await import(%s);\n'
+            'const k = (l) => Object.keys(m.strings(l)).sort();\n'
+            'console.log(JSON.stringify({zh: k("zh"), en: k("en")}));\n'
+        ) % json.dumps(os.path.join(REPO, "src", "i18n.js")))
+        out = subprocess.run([node, js], capture_output=True, timeout=30,
+                             encoding="utf-8", errors="replace")
+        if out.returncode != 0:
+            check(False, "node 读得出 i18n.js(报错:%s)" % (out.stderr or "").strip()[:120])
+            return
+        got = json.loads(out.stdout)
+        zh, en = set(got["zh"]), set(got["en"])
+        eq(sorted(en - zh), [], "英文有、中文缺的键")
+        eq(sorted(zh - en), [], "中文有、英文缺的键")
+        check(len(zh) > 100, "键的数目像那么回事(%d 个)" % len(zh))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     for fn in (test_dates, test_names, test_pipeline, test_vault,
                test_book, test_flat_heads, test_fixes, test_users,
@@ -1666,7 +1703,8 @@ def main():
                test_old_sheet_name,
                test_old_review_workbook,
                test_verify_founder_years,
-               test_later_rename):
+               test_later_rename,
+               test_i18n_key_parity):
         fn()
     print()
     if FAILED:
