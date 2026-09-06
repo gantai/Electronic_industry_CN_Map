@@ -147,6 +147,14 @@ const zh = {
   attribution: "区县界线取自 geoBoundaries(gbOpen CHN ADM3,simplified),CC BY 4.0",
   legendIndustry: "行业 INDUSTRY(点击筛选)",
   legendFactory: "工厂", legendInstitute: "研究所", legendJv: "合资", legendVague: "坐标待定位",
+  legendPlacement: "落点",
+  precTier: { street: "按街", district: "按区", city: "按市(址不详)" },
+  precHint: {
+    street: "志书写明了门牌,落点由它推出来 —— 只有这一档算是知道它在哪儿",
+    district: "只知道在哪个区,落点取那个区的中央,同区的都落在这一个点上",
+    city: "志书没写地址 —— 落在市中心,是没有别处可放。默认不上图,点一下才显示",
+  },
+  placementHidden: (n) => n + " 家未上图",
 
   /* 年份标尺 */
   rulerLabel: (y) => "年份标尺,当前 " + y + " 年,左右方向键调整",
@@ -383,10 +391,13 @@ const en = {
   introBtn: "Open the Lineage timeline →",
 };
 
-export const STR = { zh, en };
 
 /** 依当前语言取一套文字 */
-export const strings = (lang) => STR[lang] || STR.zh;
+/* 两张表合着取:某一语言漏了一个键,拿另一张的顶上,而不是给出 undefined。
+   漏过一次 —— 「落点」那一行只写进了英文表,中文界面一读 t.precTier.street
+   就炸,整张图白着,而英文界面好端端的。少一句译文是瑕疵,白屏是事故;
+   宁可露出一句外文,也不能让整站打不开。 */
+export const strings = (lang) => (lang === "en" ? { ...zh, ...en } : { ...en, ...zh });
 
 /** 受控词表的按语言取值 */
 /* Industry 那一栏空着的有五十八家 —— 从前它们连图上的点都没有,
