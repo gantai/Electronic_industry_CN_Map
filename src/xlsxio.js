@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { PLACES, ALIASES, cityAt } from "./geocode.js";
 import CITY_GEO from "./city.geo.json";
-import { YEAR_FALLBACK, EVENT_META } from "./consts.js";
+import { YEAR_FALLBACK, YEAR_FLOOR, EVENT_META } from "./consts.js";
 import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitChain,
          stripLeadingDate } from "./utils.js";
 
@@ -591,7 +591,7 @@ export function parseWorkbook(buf) {
   return {
     units, semi, comp, events, statsYear,
     namedUnits: Object.keys(explicitNames).length,
-    yearMin: Math.floor((lo - 3) / 5) * 5,
+    yearMin: Math.max(YEAR_FLOOR, Math.floor((lo - 3) / 5) * 5),
     yearMax: Math.ceil((hi + 3) / 5) * 5,
     counts: { units: units.length, semi: semi.length, comp: comp.length, events: events.length },
   };

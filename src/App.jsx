@@ -1008,7 +1008,9 @@ function LineageView({ data, year, setYear, sel, setSel, t, lang }) {
     if (singles.length) families.push({ members: singles, label: t.famOther, isOther: true });
 
     const PXY = 15, LEFT = 18, TOP = 34, ROW = 34;
-    const x = (yy) => LEFT + (yy - yearMin) * PXY;
+    /* 早于轴起点的,横条从轴的左端起画 —— 不这么夹住,它会画到画布外面去,
+       等于凭空消失。真正的年份在详情面板里照旧写着。 */
+    const x = (yy) => LEFT + (Math.max(yy, yearMin) - yearMin) * PXY;
     let cy = TOP;
     const rowsY = {}, headers = [];
     families.forEach((f) => {
