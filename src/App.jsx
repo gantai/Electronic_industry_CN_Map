@@ -1810,6 +1810,9 @@ export default function App() {
             <LineageView data={data} year={year} setYear={setYear} sel={sel} setSel={setSel} t={t} lang={lang} />
             {selU && <DetailPanel u={selU} data={data} byId={byId} statsYear={data.statsYear} year={year}
               t={t} lang={lang} onClose={() => setSel(null)} gotoUnit={gotoUnit} />}
+            {/* 谱系页也留着年份尺 —— 年份本来就是两页共用的一个数,
+                只在地图页给尺子,从这边过去就没处调了 */}
+            <Ruler data={data} year={year} setYear={setYear} playing={playing} setPlaying={togglePlay} t={t} lang={lang} />
           </>
         )}
 
