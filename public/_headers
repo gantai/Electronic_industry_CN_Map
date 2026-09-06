@@ -1,0 +1,15 @@
+# Cloudflare Pages 读这个文件(GitHub Pages 不读,留着也无妨)。
+#
+# 缘故:index.html 里写死了带指纹的脚本名(assets/index-XXXXXXXX.js),
+# 每构建一次名字就变。浏览器若把旧的 index.html 存住不放,它会去要一个
+# 早已不在的脚本 —— 404,脚本不跑,白屏。无痕窗口没有缓存,所以照常。
+# 所以:html 每次都回源问一句;带指纹的静态件反正改名就是新文件,尽管存。
+
+/
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
