@@ -1652,6 +1652,136 @@ def test_later_rename():
     check(not any("1906" in x or "19060000" in x for x in f), "决不写出 1906 这样的年份")
 
 
+def test_affiliation():
+    """隶属与性质:两轴分开认,并列的标题一个也不取。
+
+    盯的是三处最容易出错的地方 —— 都是在《北京工业志·电子志》第四篇上
+    实打实栽过的跟头:
+
+    一、并了两类的表题(「直属与中央在京」)不能挑一个,63 家里还有集体企业;
+    二、一家厂自己那一节的标题(「第二十一节北京市调谐器厂」)不是分类,
+        里头的「北京市」是厂名的一截;
+    三、隔壁那张表的表题会漏进正文 —— 转换稿里表格与表题都是「正文」。
+    """
+    print("隶属与性质")
+    from gazetteer import affil
+
+    # —— 标题:分类用的认,并列的、说不清的都不认
+    eq(affil.affil_of_head("(一)部、省直属单位")[0], "部或省属",
+       "「部、省直属」并得明白,单立一类收着")
+    eq(affil.affil_of_head("第二章中央在京电子工业企业")[0], "部属", "中央在京 → 部属")
+    eq(affil.affil_of_head("第三章行业归口电子工业企业")[0], "归口", "行业归口 → 归口")
+    eq(affil.affil_of_head("表4-31995年末北京市属中外合资电子工业企业名录")[0], "市属",
+       "市属 → 市属")
+    eq(affil.affil_of_head("表4-11995年末直属与中央在京电子工业企业名录")[0], "",
+       "「直属与中央在京」并着两类,一个也不取")
+    eq(affil.affil_of_head("第一章直属电子工业企业")[0], "",
+       "光说「直属」没说直属于谁,不取")
+    eq(affil.affil_of_head("第二十一节北京市调谐器厂")[0], "",
+       "一家厂自己的节标题不是分类 ——「北京市」是厂名的一截")
+
+    # —— 正文:明说的认,「划归」不认(那是有年份的变动,归机构沿革)
+    eq(affil.affil_of("深圳电子集团公司是深圳市人民政府直接领导的行业性企业集团")[0], "市属",
+       "「市人民政府直接领导」→ 市属")
+    eq(affil.affil_of("1965年7月，该研究所改建为第四机械工业部直属的北京建中机器厂")[0],
+       "部属", "「四机部直属」→ 部属")
+    eq(affil.affil_of("1974年，该厂下放北京市，实行部、市双重领导")[0], "双重领导",
+       "「部、市双重领导」单算一类,不认成部属或市属")
+    eq(affil.affil_of("1978年，划归北京市仪表工业局领导")[0], "",
+       "「划归」是有年份的变动,进机构沿革,不填这一栏")
+    eq(affil.affil_of("该公司直属单位有：热电厂、工业气体厂、煤气厂")[0], "",
+       "「公司直属单位有」说的是它下头有谁,不是它归谁")
+    eq(affil.affil_of("该厂为原电子部惟一电声器件骨干生产厂")[0], "",
+       "「电子部惟一骨干厂」没说隶属,不认")
+
+    # —— 性质
+    eq(affil.nature_of("全民企业")[0], "全民", "全民企业")
+    eq(affil.nature_of("集体企业")[0], "集体", "集体企业")
+    eq(affil.nature_of("北京爱立信通信系统有限公司")[0], "",
+       "光「有限公司」不算股份制")
+    eq(affil.nature_of("北京东方电子集团股份有限公司")[0], "股份制", "股份有限 → 股份制")
+
+    # —— 代号只作旁证
+    eq(affil.code_of("北京有线电总厂(国营738厂）"), "738", "阿拉伯数字的代号")
+    eq(affil.code_of("国营二六一厂"), "261", "中文数字的代号")
+    check(affil.looks_central("797"), "七字头是部属的旁证")
+    check(not affil.looks_central("261"), "二字头不是")
+
+    # —— 表格与表题是「正文」里的杂物,认正文时要躲开
+    check(not affil.is_prose('<div style="text-align: center;">表4-2……名录</div>'),
+          "表题不算正文 —— 不躲开,隔壁那张表的分类会记到这一家头上")
+    check(affil.is_prose("该厂1957年建成投产。"), "正常的句子算正文")
+
+    # —— 名录表:表题定隶属,行里那栏定性质
+    md = ('<div style="text-align: center;">表1 1995年末行业归口电子工业企业名录</div>\n'
+          "<table><tr><td>单位名称</td><td>性质</td></tr>"
+          "<tr><td>北京甲字无线电厂</td><td>集体企业</td></tr>"
+          "<tr><td>北京乙字电子公司（国营999厂)</td><td>全民企业</td></tr></table>\n")
+    got = affil.read_tables(md)
+    eq(got["北京甲字无线电厂"]["隶属"], "归口", "表题定隶属")
+    eq(got["北京甲字无线电厂"]["性质"], "集体", "行里那栏定性质")
+    eq(got["北京乙字电子公司"]["性质"], "全民", "括号里的代号不进名字")
+
+    # 「续表」的表头常被 OCR 揉坏,按表头认列就认错位 —— 整行扫一遍才稳
+    md2 = ('<div style="text-align: center;">表2 1995年末行业归口电子工业企业名录</div>\n'
+           "<table><tr><td>单位名称</td><td>成立 日期 性质</td><td></td></tr>"
+           "<tr><td>北京丙字电子厂</td><td>/年 1956</td><td>全民企业</td></tr></table>\n")
+    eq(affil.read_tables(md2)["北京丙字电子厂"]["性质"], "全民",
+       "表头被揉坏了,整行找得着「全民企业」")
+
+    # —— 定谳:高一等的说了话,低一等的不算;同一等两说不一,一个也不取
+    eq(affil.pick([("表", "归口", "表题"), ("标题", "中外合资", "第四章")])[0], "归口",
+       "表说了话,标题不再算")
+    eq(affil.pick([("文", "市属", "甲"), ("文", "部属", "乙")])[0], "",
+       "同一等两说不一,空着等人看")
+    eq(affil.pick([("文", "市属", "甲"), ("文", "部属", "乙")])[2], "两说",
+       "两说不一要说得出是两说")
+    eq(affil.pick([])[0], "", "什么线索也没有,空着")
+
+
+def test_affiliation_pipeline():
+    """整条路走一遍:抽出来 → 进「待核」→ 核过 → 落进总表。"""
+    print("隶属与性质走完整条路")
+    md = ("# 第一章行业归口电子工业企业\n\n"
+          "## 第一节北京甲字无线电厂\n\n"
+          "北京甲字无线电厂建于1958年，是集体企业。厂址位于朝阳区酒仙桥路5号。\n\n"
+          "## 第二节北京乙字电子厂\n\n"
+          "北京乙字电子厂建于1960年，是深圳市人民政府直接领导的企业。\n")
+    res = EX.extract(md, book="试志", city="Beijing")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(by["北京甲字无线电厂"]["隶属"], "归口", "章标题说归口,继承下来")
+    eq(by["北京甲字无线电厂"]["性质"], "集体", "正文说集体企业")
+    # 正文明说的压得住章标题 —— 标题是第三等,正文是第二等
+    eq(by["北京乙字电子厂"]["隶属"], "市属", "正文明说的压得住章标题")
+    check("据章节标题" in by["北京甲字无线电厂"]["Remark"],
+          "据标题定的要在备注里说明,页序会错乱")
+
+    tmp = tempfile.mkdtemp(prefix="gaz-aff-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        toxlsx.append(x, backup=False, units=[
+            {"Unit": "北京甲字无线电厂", "City": "Beijing", "Source": "试志·一页",
+             "隶属": "归口", "性质": "集体"}])
+        rows = {r["raw"]: r for r in toxlsx.read_units_full(x)}
+        eq(rows["北京甲字无线电厂"]["隶属"], "归口", "写进总表,读得回来")
+        eq(rows["北京甲字无线电厂"]["性质"], "集体", "性质同上")
+
+        # 手填写岔一个字,verify 要拦下来
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
+        h = toxlsx._headers(ws, 2)
+        for i in range(3, ws.max_row + 1):
+            if str(ws.cell(row=i, column=1).value or "").strip() == "北京甲字无线电厂":
+                ws.cell(row=i, column=h["隶属"]).value = "市直属"
+        wb.save(x)
+        got = [t for t in toxlsx.verify(x) if t[0] == "隶属" and "北京甲字" in t[1]]
+        check(got, "手填「市直属」不在取值里,verify 报出来")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_i18n_key_parity():
     """中英两张字表的键必须一样多。
 
@@ -1704,7 +1834,8 @@ def main():
                test_old_review_workbook,
                test_verify_founder_years,
                test_later_rename,
-               test_i18n_key_parity):
+               test_i18n_key_parity,
+               test_affiliation, test_affiliation_pipeline):
         fn()
     print()
     if FAILED:

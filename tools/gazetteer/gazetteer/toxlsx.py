@@ -14,6 +14,8 @@ import shutil
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
+from . import affil
+
 # 标签名一律用中文,跟文档里的说法对上。从前是英文,而且第一张还叫
 # 「Fact and Comp-Shanghai」—— 那时只收上海,后来北京、天津的厂所也进了这一张,
 # 名字没跟着改;「Semi-Product」与「Comp-Product」则是两个谁也认不准的缩写。
@@ -185,6 +187,14 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 _ensure_column(ws, "区", header_row=1)
                 h = _headers(ws, 2)
                 ws.cell(row=row, column=h["区"]).value = str(r["district"]).strip()
+            # 隶属(归哪一级主管)与性质(什么所有制)是两件事,分两栏
+            # —— 混作一栏就写不出「市属 · 集体企业」,图上也没法分别筛。
+            # 记的是志书写作那一年的状态;哪年划归了谁进「机构沿革」。
+            for label in ("隶属", "性质"):
+                if r.get(label) not in (None, ""):
+                    _ensure_column(ws, label, header_row=1)
+                    h = _headers(ws, 2)
+                    ws.cell(row=row, column=h[label]).value = str(r[label]).strip()
             # 数字是哪一年的 —— 志书各章截取的年份不一致(上海多是 1990,
             # 北京第四篇是 1995),不记下来,一个数字就等于没说
             if r.get("统计年") not in (None, ""):
@@ -389,6 +399,8 @@ def read_units_full(xlsx_path):
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
         rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
         rec["district"] = ws.cell(row=r, column=h["区"]).value if "区" in h else None
+        for label in ("隶属", "性质"):
+            rec[label] = ws.cell(row=r, column=h[label]).value if label in h else None
         out.append(rec)
     return out
 
@@ -934,6 +946,17 @@ def verify(xlsx_path, geocode_js=None):
                                 "沿革链里有个 %s 年 —— 电子工业里没有这个年份,"
                                 "多半是「19xx年（后改名…」被切开算出来的,回稿子上核" % y,
                                 "%s·沿革·%s" % (key, y)))
+
+        # 隶属 / 性质 只认那几个词。手填时写「市直属」「国营」也读得懂,
+        # 可站点按字面分类,写岔一个字,这一家就自己单成一类,图上再也归不了队。
+        for label, vocab in (("隶属", affil.AFFIL_VALUES), ("性质", affil.NATURE_VALUES)):
+            if label not in h:
+                continue
+            v = str(ws.cell(row=r, column=h[label]).value or "").strip()
+            if v and v not in vocab:
+                bad.append(("隶属", where,
+                            "「%s」写作「%s」—— 只认这几个:%s" % (label, v, "、".join(vocab)),
+                            "%s·%s" % (key, label)))
 
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None

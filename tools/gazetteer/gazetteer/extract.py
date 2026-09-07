@@ -27,7 +27,7 @@
 import re
 from collections import Counter, OrderedDict, defaultdict
 
-from . import cndate
+from . import affil, cndate
 
 # ---------------------------------------------------------------- 词表
 
@@ -810,6 +810,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
             min_mentions=2, auto_keep=None):
     blocks = read_blocks(md_text)
     kidx = known_index(known)
+    rosters = affil.read_tables(md_text)   # 名录表说的隶属与性质,一等线索
 
     def src(page, head=""):
         return make_source(book, page, head)
@@ -933,6 +934,57 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         if len(pages) > 1:
             remark.append("见 p.%d–%d" % (pages[0], pages[-1]))
 
+        # —— 隶属与性质。两轴分开记,取信次序:名录表 > 正文 > 章节标题。
+        #    缘由与那条「标题最不可靠」的教训,都在 affil.py 篇首。
+        bare_nm = re.sub(r"[（(].*?[)）]", "", nm)
+        roster = (rosters.get(nm) or rosters.get(bare_nm)) if facts else None
+        cand_a = [("表", roster["隶属"], roster["表"])] if roster else []
+        cand_n = [("表", roster["性质"], roster["表"])] if roster else []
+        prose = [s for s in sents if affil.is_prose(s)]
+        for s in prose:
+            a, _hit = affil.affil_of(s)
+            if a:
+                cand_a.append(("文", a, s))
+                break
+        for s in prose:
+            n, _hit = affil.nature_of(s)
+            if n:
+                cand_n.append(("文", n, s))
+                break
+        # 标题只认**分类用的**那种(「第四章中外合资电子工业企业」「(一)部、省直属单位」)。
+        # 一家厂自己那一节的标题不算 ——「第二十一节北京市调谐器厂」里的「北京市」
+        # 是厂名的一截,拿它断隶属,等于拿名字给自己作证。
+        # 另外,只是被顺带提到的单位(role=提及)一概不立字段,与本模块开篇的规矩一致:
+        # 它落在谁的章底下是偶然,那章不是它的。
+        for h in (head0.split("·") if (head0 and has_entry) else []):
+            hn = head_name(h)
+            if hn and (hn in nm or nm in hn):
+                continue
+            a, _ = affil.affil_of_head(h)
+            if a:
+                cand_a.append(("标题", a, h))
+            n, _ = affil.nature_of(h)
+            if n:
+                cand_n.append(("标题", n, h))
+        aff, aff_why, aff_from = affil.pick(cand_a)
+        nat, nat_why, nat_from = affil.pick(cand_n)
+        for label, val, why, whence in (("隶属", aff, aff_why, aff_from),
+                                        ("性质", nat, nat_why, nat_from)):
+            if whence == "两说":
+                remark.append("%s两说:%s —— 未填,待核" % (label, why))
+            elif whence == "标题":
+                # 转换稿的页序会错乱,一串厂跟错了章的事出过(见 affil.py)
+                remark.append("%s据章节标题「%s」,页序或有错乱,须核" % (label, why))
+            elif val:
+                ev[label] = why
+        code = affil.code_of(text)
+        if code and affil.looks_central(code):
+            if aff and aff != "部属":
+                remark.append("代号%s是七、八字头(建厂时多为部属),现记%s —— 中间应有一次划归"
+                              % (code, aff))
+            elif not aff:
+                remark.append("代号%s是七、八字头,疑为部属,待考" % code)
+
         row = OrderedDict()
         row["别名"] = "、".join(find_aliases(text, nm))
         row["keep"] = "y" if (auto_keep and conf >= auto_keep) else "?"
@@ -948,6 +1000,8 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["City"] = city_of(nm, city)
         row["Add."] = addr
         row["district"] = find_district([addr_ev] if addr_ev else sents)
+        row["隶属"] = aff
+        row["性质"] = nat
         for key, _ in STAT_PATTERNS:
             row[key] = stats.get(key, "")
         row["统计年"] = stat_year or ""
