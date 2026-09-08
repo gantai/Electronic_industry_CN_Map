@@ -40,8 +40,12 @@ import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gazetteer import (bookmd as BOOK, cndate, extract as EX,  # noqa: E402
+from gazetteer import (bookmd as BOOK, cndate, console, extract as EX,  # noqa: E402
                        notes as NOTES, toxlsx, tsvio, vault as VAULT)
+
+# 接了管道(`| Select-String …`),Python 改按 GBK 写,而 GBK 里没有「✓」——
+# 不管它,打头一个勾就抛 UnicodeEncodeError。见 gazetteer/console.py
+TICK, CROSS = console.init()
 
 def _self():
     """这个脚本在你机器上该怎么敲。
@@ -136,7 +140,7 @@ def cmd_check(args):
                            ("zhiconv", "扫描件 → Markdown", ZHICONV_INSTALL)):
         try:
             __import__(mod)
-            print("  [✓] %-12s %s" % (mod, what))
+            print("  [%s] %-12s %s" % (TICK, mod, what))
         except ImportError:
             print("  [ ] %-12s %s\n       装法:%s" % (mod, what, how))
     try:
@@ -157,7 +161,7 @@ def cmd_check(args):
         who = run("git", "config", "user.name")
         mail = run("git", "config", "user.email")
         if who and mail:
-            print("  [✓] git          提交署名:%s <%s>" % (who, mail))
+            print("  [%s] git          提交署名:%s <%s>" % (TICK, who, mail))
         else:
             print("  [ ] git          没设署名,git commit 会拒绝\n"
                   '       装法:git config --global user.name "你的名字"\n'
@@ -166,8 +170,8 @@ def cmd_check(args):
     npm = run("npm", "--version") or run("npm.cmd", "--version")
     node = run("node", "--version")
     if npm and node:
-        print("  [✓] Node/npm     node %s、npm %s —— npm run dev 看本地那张图"
-              % (node, npm))
+        print("  [%s] Node/npm     node %s、npm %s —— npm run dev 看本地那张图"
+              % (TICK, node, npm))
     else:
         print("  [ ] Node/npm     没装,本地看不了图(线上不受影响 —— "
               "GitHub 那头自带)\n"
@@ -766,8 +770,8 @@ def cmd_geocode_check(args):
     print("填好坐标的 %d 条:对得上 %d、擦着区界 %d、**落错区 %d**、出了区界 %d"
           % (len(done), ok, len(near), len(bad), len(nodist)))
     for name, lat, lng, want, got, city, km in bad:
-        print("  ✗ %-20s 写着「%s」,可 %.4f, %.4f 落在%s%s —— 离「%s」还有 %.1f 公里"
-              % (name, want, lat, lng, city, got, want, km))
+        print("  %s %-20s 写着「%s」,可 %.4f, %.4f 落在%s%s —— 离「%s」还有 %.1f 公里"
+              % (CROSS, name, want, lat, lng, city, got, want, km))
     for name, lat, lng, want in nodist:
         print("  ? %-20s %.4f, %.4f 不在任何一个区界里%s"
               % (name, lat, lng, ("(表里写着「%s」)" % want) if want else ""))

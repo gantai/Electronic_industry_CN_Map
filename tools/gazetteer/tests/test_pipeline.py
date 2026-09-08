@@ -21,10 +21,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
-from gazetteer import (bookmd, cndate, extract as EX, notes,  # noqa: E402
+from gazetteer import (bookmd, cndate, console, extract as EX, notes,  # noqa: E402
                        toxlsx, tsvio, vault)
 
 FAILED = []
+
+# Windows 上把输出接进管道(`| Select-String 隶属`),Python 改按 GBK 写,
+# 而 GBK 里没有「✓」—— 不管它,第一条就抛 UnicodeEncodeError,整场跑不完
+TICK, CROSS = console.init()
 
 # geocode.js 里 CITY_FALLBACK 收了哪几个市 —— extract.OTHER_CITY 不能比它多,
 # 多出来的市在图上没有落点,认出来反而会掉进上海的兜底里
@@ -34,7 +38,7 @@ GEOCODE_CITIES = set(re.findall(
 
 
 def check(cond, what):
-    print(("  ✓ " if cond else "  ✗ ") + what)
+    print(("  %s " % (TICK if cond else CROSS)) + what)
     if not cond:
         FAILED.append(what)
 
@@ -1782,6 +1786,36 @@ def test_affiliation_pipeline():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_console_marks():
+    """接了管道也别炸 —— Windows 上的 GBK 里没有「✓」。
+
+    `python … | Select-String 隶属` 这么一接,Python 就不按控制台的编码写,
+    改按系统的编码写;简体中文 Windows 上那是 GBK。打头一个勾就
+    UnicodeEncodeError,整场跑断在第一条上,看着像代码坏了 —— 实则一个字
+    也没算错。真在这上头栽过一回。"""
+    print("接了管道也写得出记号")
+    gbk = io.TextIOWrapper(io.BytesIO(), encoding="gbk", newline="")
+    utf = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="")
+
+    check(not console.writable("✓", gbk), "GBK 里确实没有「✓」—— 这才是病根")
+    eq(console.marks(utf), ("✓", "✗"), "写得出就照旧用「✓」")
+    eq(console.marks(gbk), ("√", "×"), "写不出退到 GBK 有的「√」「×」,不是满屏问号")
+    check(console.writable("".join(console.marks(gbk)), gbk), "退下来的这一对写得出去")
+
+    # 真写一遍 —— 挑得对不对,写出去才算数
+    tick, cross = console.init(gbk)
+    gbk.write("  %s 甲\n  %s 乙\n" % (tick, cross))
+    gbk.flush()
+    got = gbk.buffer.getvalue().decode("gbk")
+    check("甲" in got and "乙" in got, "中文照样写得出")
+    check(tick in got, "记号也写出去了(%r)" % got.strip())
+
+    # 说不出自己什么编码的流(StringIO、被人换过的 stdout),退到 ASCII 那一对 ——
+    # 退无可退也只该退记号,不该拿整场输出去赌
+    eq(console.marks(io.StringIO()), ("+", "!"), "问不出编码的流,退到 ASCII")
+    check(console.init(io.StringIO()), "init 对着这种流也不炸")
+
+
 def test_i18n_key_parity():
     """中英两张字表的键必须一样多。
 
@@ -1835,7 +1869,8 @@ def main():
                test_verify_founder_years,
                test_later_rename,
                test_i18n_key_parity,
-               test_affiliation, test_affiliation_pipeline):
+               test_affiliation, test_affiliation_pipeline,
+               test_console_marks):
         fn()
     print()
     if FAILED:
