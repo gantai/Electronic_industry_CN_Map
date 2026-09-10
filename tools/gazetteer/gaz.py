@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """gaz —— 把一本地方志变成这张地图上的数据。
 
-    gaz guide   --vault D:\\Archive  《电子工业地图流程》:一份 .md 到地图更新
+    gaz guide   --vault D:\\Archive  《电子工业地图流程》:一本志书的 PDF 到地图更新
     gaz version                   手里这一份工具是什么时候的、该不该更新
     gaz diff                      工作簿跟 git 里那份差在哪儿(二进制,git 只说「变了」)
     gaz verify                    验一验(只报,不动手;默认只报新的)
