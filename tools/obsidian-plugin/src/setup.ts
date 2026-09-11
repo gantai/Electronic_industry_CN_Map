@@ -95,3 +95,65 @@ export function summarize(d: Detected): string {
   if (d.vaultUnits) rows.push("库里厂所笔记 " + d.vaultUnits);
   return rows.join("\n");
 }
+
+// ---------------------------------------------------------------- 自己找
+
+/** 这几个文件夹一概不进 —— 又大又深,而且断不会把仓库放在里头 */
+export const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".obsidian", "AppData", "Windows", "Program Files",
+  "Program Files (x86)", "ProgramData", "$Recycle.Bin", "System Volume Information",
+  "OneDriveTemp", "Recovery", "PerfLogs", "dist", "build", "__pycache__", "venv",
+  ".venv", "site-packages", "Temp", "Cache",
+]);
+
+export interface Fs {
+  exists(p: string): boolean;
+  /** 这个目录底下有哪几个**子目录**(不含文件)。读不动就回空 */
+  listDirs(p: string): string[];
+}
+
+/**
+ * 从几个起点往下找搁着 `tools/gazetteer/gaz.py` 的那一层。
+ *
+ * 一层一层横着找(不是一头扎到底),所以 `D:\Coding\CN_Map` 这种搁在浅处的
+ * 很快就中。**限了深度,也限了总共看多少个目录** —— 找不着是小事,
+ * 把 Obsidian 卡死是大事。
+ */
+export function scanForRepo(
+  roots: string[],
+  fs: Fs,
+  maxDepth = 3,
+  budget = 3000,
+): string | null {
+  let seen = 0;
+  let level = roots.filter((r) => r && fs.exists(r));
+  for (let depth = 0; depth <= maxDepth; depth++) {
+    const next: string[] = [];
+    for (const dir of level) {
+      if (++seen > budget) return null;
+      if (fs.exists(joinPath(dir, ...GAZ_MARK))) return dir;
+      if (depth < maxDepth) {
+        for (const name of fs.listDirs(dir)) {
+          if (!SKIP_DIRS.has(name) && !name.startsWith(".")) next.push(joinPath(dir, name));
+        }
+      }
+    }
+    if (!next.length) break;
+    level = next;
+  }
+  return null;
+}
+
+/** 先从哪几处找起 —— 库所在的那个盘排在最前,它多半跟仓库同一个盘 */
+export function candidateRoots(vaultRoot: string): string[] {
+  const out: string[] = [];
+  const m = /^([A-Za-z]:)[\\/]/.exec(vaultRoot);
+  if (m) out.push(m[1] + "\\");
+  for (const d of ["D:\\", "C:\\", "E:\\", "F:\\"]) if (!out.includes(d)) out.push(d);
+  // 不在 Windows 上(开发时)就从家目录起
+  if (!m && vaultRoot.startsWith("/")) {
+    const home = vaultRoot.split("/").slice(0, 3).join("/");
+    out.unshift(home);
+  }
+  return out;
+}

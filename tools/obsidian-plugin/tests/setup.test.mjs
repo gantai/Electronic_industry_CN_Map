@@ -108,3 +108,83 @@ test("认出来的几样摆给人看,缺的也明说", () => {
   assert.match(t, /python/);
   assert.match(t, /厂所/);
 });
+
+// ---------------------------------------------------------------- 自己找
+
+import { candidateRoots, scanForRepo } from "../build/setup.js";
+
+/** 假的文件系统:给一份「目录 → 子目录」的图,外加哪几个文件在 */
+function fakeFs(tree, files) {
+  return {
+    exists: (p) => files.includes(p) || Object.hasOwn(tree, p),
+    listDirs: (p) => tree[p] ?? [],
+  };
+}
+
+const TREE = {
+  "D:\\": ["Coding", "Archive", "$Recycle.Bin", "Windows"],
+  "D:\\Coding": ["CN_Map", "别的项目"],
+  "D:\\Coding\\CN_Map": ["src", "tools", "node_modules"],
+  "D:\\Archive": ["厂所", "材料"],
+};
+const FS = fakeFs(TREE, ["D:\\Coding\\CN_Map\\tools\\gazetteer\\gaz.py"]);
+
+test("自己找:浅处的仓库找得着", () => {
+  assert.equal(scanForRepo(["D:\\"], FS), "D:\\Coding\\CN_Map");
+});
+
+test("自己找:起点就是仓库本身,当场就中", () => {
+  assert.equal(scanForRepo(["D:\\Coding\\CN_Map"], FS), "D:\\Coding\\CN_Map");
+});
+
+test("自己找:不进 node_modules、$Recycle.Bin、Windows 这类", () => {
+  const visited = [];
+  const spy = {
+    exists: FS.exists,
+    listDirs: (p) => { visited.push(p); return FS.listDirs(p); },
+  };
+  scanForRepo(["D:\\"], spy);
+  assert.ok(!visited.some((p) => p.includes("node_modules")), "不该进 node_modules");
+  assert.ok(!visited.some((p) => p.includes("$Recycle.Bin")), "不该进回收站");
+  assert.ok(!visited.some((p) => p.includes("Windows")), "不该进 Windows");
+});
+
+test("自己找:深度到头就收手,不会一直往下翻", () => {
+  const deep = {
+    "C:\\": ["a"], "C:\\a": ["b"], "C:\\a\\b": ["c"],
+    "C:\\a\\b\\c": ["d"], "C:\\a\\b\\c\\d": [],
+  };
+  const fs = fakeFs(deep, ["C:\\a\\b\\c\\d\\tools\\gazetteer\\gaz.py"]);
+  assert.equal(scanForRepo(["C:\\"], fs, 3), null, "第 4 层的够不着 —— 限了深度");
+  assert.equal(scanForRepo(["C:\\"], fs, 4), "C:\\a\\b\\c\\d", "放宽一层就够得着");
+});
+
+test("自己找:看够了本数就停 —— 宁可找不着,不可把 Obsidian 卡死", () => {
+  const wide = { "C:\\": [] };
+  for (let i = 0; i < 500; i++) {
+    wide["C:\\"].push("d" + i);
+    wide["C:\\d" + i] = [];
+  }
+  const fs = fakeFs(wide, []);
+  let looked = 0;
+  const counted = { exists: (p) => { looked++; return fs.exists(p); }, listDirs: fs.listDirs };
+  assert.equal(scanForRepo(["C:\\"], counted, 3, 50), null);
+  assert.ok(looked <= 120, "本数限住了,看的次数不该失控(实看 " + looked + ")");
+});
+
+test("自己找:起点不存在就跳过,不报错", () => {
+  assert.equal(scanForRepo(["Z:\\", "D:\\"], FS), "D:\\Coding\\CN_Map");
+});
+
+test("从哪几处找起:库在哪个盘,那个盘排头一个", () => {
+  const r = candidateRoots("E:\\库\\Archive");
+  assert.equal(r[0], "E:\\");
+  assert.ok(r.includes("D:\\") && r.includes("C:\\"));
+  assert.equal(new Set(r).size, r.length, "不该有重的");
+});
+
+test("从哪几处找起:库就在 D 盘时不重复列 D", () => {
+  const r = candidateRoots("D:\\Archive");
+  assert.equal(r[0], "D:\\");
+  assert.equal(r.filter((x) => x === "D:\\").length, 1);
+});

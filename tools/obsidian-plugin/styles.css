@@ -191,3 +191,12 @@
   border-left-color: var(--text-error);
   color: var(--text-error);
 }
+.gaz-setup-more {
+  margin-top: 6px;
+}
+.gaz-setup-link {
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}

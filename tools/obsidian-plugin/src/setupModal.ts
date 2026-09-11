@@ -3,15 +3,30 @@
    如今设置本身就在这张卡片里办完:挑一个文件,别的几样它自己认。 */
 
 import { App, Modal, Notice, Setting } from "obsidian";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import {
-  GAZ_MARK, branchOf, findRepoRoot, joinPath, pickPython,
-  PYTHON_TRIES, repoProblem, summarize, type Detected,
+  GAZ_MARK, branchOf, candidateRoots, findRepoRoot, joinPath, pickPython,
+  PYTHON_TRIES, repoProblem, scanForRepo, summarize, type Detected, type Fs,
 } from "./setup";
 import { capture } from "./runner";
 import type { GazSettings } from "./settings";
 
 type ElectronFile = File & { path?: string };
+
+/** 喂给 setup.ts 里那几个纯函数的真家伙 */
+const REAL_FS: Fs = {
+  exists: (p) => existsSync(p),
+  listDirs: (p) => {
+    try {
+      return readdirSync(p, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+    } catch {
+      // 没权限的目录多得很(系统盘尤其),读不动就当它是空的,别声张
+      return [];
+    }
+  },
+};
 
 export class SetupModal extends Modal {
   private repo: string;
@@ -44,7 +59,10 @@ export class SetupModal extends Modal {
 
     const s = new Setting(contentEl)
       .setName("仓库目录")
-      .setDesc("CN_Map 那个文件夹,如 D:\\Coding\\CN_Map");
+      .setDesc(
+        "CN_Map 那个文件夹。在资源管理器里打开它,**地址栏整条路径复制过来**," +
+        "粘在这里就行(点一下地址栏空白处,路径会变成可复制的文字)。",
+      );
     s.addText((t) => {
       t.setPlaceholder("D:\\Coding\\CN_Map")
         .setValue(this.repo)
@@ -53,17 +71,36 @@ export class SetupModal extends Modal {
           this.check();
         });
       this.box = t.inputEl;
-      t.inputEl.style.width = "260px";
+      t.inputEl.style.width = "280px";
     });
 
-    /* 让人挑**仓库里随便一个文件**,再从它往上找到仓库根。
-       挑整个文件夹会把 node_modules 里上万个文件枚举一遍,能把窗口卡住;
-       指名去挑 tools\gazetteer\gaz.py 又太难为人。挑 README、挑工作簿,都行。 */
-    const picker = contentEl.createEl("input", { type: "file" });
-    picker.style.display = "none";
+    /* 挑文件那条路不牢靠 —— Electron 里藏起来的 <input type=file> 有时
+       压根不弹窗,按了没反应。所以**自己找**才是正路:粘路径永远管用,
+       自动找是省那一道手工;挑文件退居第三,能用就用,不能用不碍事。 */
+    s.addButton((b) =>
+      b
+        .setButtonText("自己找")
+        .setTooltip("在几个盘的浅处找搁着 tools\\gazetteer\\gaz.py 的那一层")
+        .onClick(() => void this.hunt()),
+    );
+
+    this.say = contentEl.createEl("pre", { cls: "gaz-facts" });
+
+    const more = contentEl.createDiv({ cls: "gaz-setup-more" });
+    const picker = more.createEl("input", { type: "file" });
+    /* 不用 display:none —— 藏成那样,Electron 有时就不弹窗了(按了没反应)。
+       挪到屏幕外头,元素还在、还点得动。 */
+    picker.style.position = "fixed";
+    picker.style.left = "-10000px";
+    picker.style.width = "1px";
+    picker.style.height = "1px";
+    picker.style.opacity = "0";
     picker.addEventListener("change", () => {
       const f = picker.files?.[0] as ElectronFile | undefined;
-      if (!f?.path) return;
+      if (!f?.path) {
+        this.tell("这条路在这台机器上不灵 —— 把路径粘进上头那一栏吧。", true);
+        return;
+      }
       const root = findRepoRoot(f.path, existsSync);
       if (!root) {
         this.tell(
@@ -73,18 +110,16 @@ export class SetupModal extends Modal {
         );
         return;
       }
-      this.repo = root;
-      if (this.box) this.box.value = root;
-      this.check();
+      this.setRepo(root);
     });
-    s.addButton((b) =>
-      b
-        .setButtonText("挑个文件…")
-        .setTooltip("挑仓库里随便一个文件,它自己往上找到仓库根")
-        .onClick(() => picker.click()),
-    );
-
-    this.say = contentEl.createEl("pre", { cls: "gaz-facts" });
+    const pick = more.createEl("a", {
+      cls: "gaz-setup-link",
+      text: "或者挑仓库里随便一个文件(有的机器上这个弹不出窗,那就粘路径)",
+    });
+    pick.onclick = (e) => {
+      e.preventDefault();
+      picker.click();
+    };
 
     new Setting(contentEl)
       .addButton((b) => {
@@ -96,8 +131,33 @@ export class SetupModal extends Modal {
       })
       .addButton((b) => b.setButtonText("待会儿再说").onClick(() => this.close()));
 
+    // 一开就自己找 —— 找着了这张卡片等于不用填,找不着再请人粘路径
     if (this.repo) this.check();
-    else this.tell("按「挑个文件…」,挑仓库里随便一个文件就行。");
+    else void this.hunt();
+  }
+
+  private setRepo(dir: string): void {
+    this.repo = dir;
+    if (this.box) this.box.value = dir;
+    this.check();
+  }
+
+  /** 自己去几个盘的浅处找。找得着就填上,找不着直说,不闷着 */
+  private async hunt(): Promise<void> {
+    this.tell("找着…(只翻几个盘的浅处,翻不了多久)");
+    // 让这一句先画出来,再动手翻盘
+    await new Promise((r) => setTimeout(r, 30));
+    const found = scanForRepo(candidateRoots(this.vaultRoot), REAL_FS);
+    if (!found) {
+      this.tell(
+        "几个盘的浅处都没见着 tools\\gazetteer\\gaz.py。\n" +
+        "仓库大概搁得深了些 —— 在资源管理器里打开 CN_Map,把地址栏那条路径" +
+        "复制过来,粘到上头那一栏。",
+        true,
+      );
+      return;
+    }
+    this.setRepo(found);
   }
 
   private tell(text: string, bad = false): void {
