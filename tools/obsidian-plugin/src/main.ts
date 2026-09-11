@@ -9,6 +9,7 @@ import { STEPS, missing, type Cmd, type Step, type Vals } from "./steps";
 import { blockPublish, commitPlan, pendingCmd, publishPlan, pullPlan, statusCmd, type Plan } from "./gitops";
 import { capture, describe, runAll, type RunHandle } from "./runner";
 import { ConfirmModal, PromptModal, StepFormModal } from "./modal";
+import { SetupModal } from "./setupModal";
 import { FlowView, VIEW_TYPE } from "./view";
 
 export default class GazPlugin extends Plugin {
@@ -28,6 +29,11 @@ export default class GazPlugin extends Plugin {
       id: "open-panel",
       name: "打开流程面板",
       callback: () => void this.openPanel(),
+    });
+    this.addCommand({
+      id: "setup",
+      name: "认一下仓库(重新设置)",
+      callback: () => void this.openSetup(),
     });
 
     /* 每一步各自也是一条命令 —— Ctrl+P 敲得到,配得上快捷键 */
@@ -84,14 +90,30 @@ export default class GazPlugin extends Plugin {
 
   // ---------------------------------------------------------------- 跑
 
-  /** 设置齐不齐。不齐就说一句,并把设置页打开 —— 光一句「没配好」太不客气 */
+  /** 库自己在硬盘上的哪儿 —— 猜「库里厂所笔记那一支」要用。问不出就算了 */
+  private vaultRoot(): string {
+    const a = this.app.vault.adapter as { getBasePath?: () => string };
+    return typeof a.getBasePath === "function" ? a.getBasePath() : "";
+  }
+
+  /** 头一回用的那张卡片:挑个文件,别的几样它自己认 */
+  async openSetup(): Promise<void> {
+    new SetupModal(this.app, this.settings, this.vaultRoot(), async (d) => {
+      this.settings.repoDir = d.repoDir;
+      if (d.python) this.settings.python = d.python;
+      if (d.branch) this.settings.branch = d.branch;
+      if (d.vaultUnits && !this.settings.vaultUnits) this.settings.vaultUnits = d.vaultUnits;
+      await this.saveSettings();
+      (await this.view())?.refreshSetup();
+    }).open();
+  }
+
+  /** 设置齐不齐。不齐就**把设置这件事办了** ——
+   *  从前只弹一句「先去设置里填」,可设置在哪儿,那句话一个字没说。 */
   private ready(): boolean {
-    const gap = settingsGap(this.settings);
-    if (gap) {
-      new Notice(gap, 8000);
-      return false;
-    }
-    return true;
+    if (!settingsGap(this.settings)) return true;
+    void this.openSetup();
+    return false;
   }
 
   async runStep(step: Step): Promise<void> {

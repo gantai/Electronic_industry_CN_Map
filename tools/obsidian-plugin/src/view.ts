@@ -3,6 +3,7 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import { STEPS, groups, type Cmd, type Step } from "./steps";
 import { describe } from "./runner";
+import { settingsGap } from "./settings";
 import type GazPlugin from "./main";
 
 export const VIEW_TYPE = "gaz-flow";
@@ -12,6 +13,7 @@ const MAX_LINES = 4000;
 
 export class FlowView extends ItemView {
   private logEl!: HTMLElement;
+  private setupEl!: HTMLElement;
   private statusEl!: HTMLElement;
   private stopBtn!: HTMLButtonElement;
   private lines = 0;
@@ -41,6 +43,8 @@ export class FlowView extends ItemView {
       cls: "gaz-sub",
       text: "志书 PDF → 待核工作簿 → 总表 → 上线",
     });
+
+    this.setupEl = root.createDiv({ cls: "gaz-setup" });
 
     const steps = root.createDiv({ cls: "gaz-steps" });
     for (const g of groups()) {
@@ -74,6 +78,26 @@ export class FlowView extends ItemView {
 
     this.logEl = root.createDiv({ cls: "gaz-log" });
     this.write("按一条,它跑什么会先摆出来。", "note");
+    this.refreshSetup();
+  }
+
+  /** 设置齐了就把顶上那张卡片收起来,没齐就摆着 —— 不必等人点了才说 */
+  refreshSetup(): void {
+    if (!this.setupEl) return;
+    this.setupEl.empty();
+    const gap = settingsGap(this.plugin.settings);
+    if (!gap) {
+      this.setupEl.addClass("is-done");
+      return;
+    }
+    this.setupEl.removeClass("is-done");
+    this.setupEl.createEl("div", { cls: "gaz-setup-title", text: "还没认仓库" });
+    this.setupEl.createEl("div", {
+      cls: "gaz-setup-text",
+      text: "这个插件替你跑仓库里的 gaz,得先知道仓库在哪儿。按一下,挑个文件就好。",
+    });
+    const b = this.setupEl.createEl("button", { cls: "mod-cta", text: "认一下仓库" });
+    b.onclick = () => void this.plugin.openSetup();
   }
 
   private stepRow(parent: HTMLElement, s: Step): void {
