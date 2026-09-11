@@ -34,6 +34,7 @@ export const PRECISION_EN = {
   street: "street-level approximation",
   district: "district-level approximation",
   city: "city-level (address unrecorded)",
+  province: "province-level (city unrecorded)",
 };
 export const BASIS_EN = {
   "名称沿革表": "the 名称沿革 sheet",
@@ -148,11 +149,14 @@ const zh = {
   legendIndustry: "行业 INDUSTRY(点击筛选)",
   legendFactory: "工厂", legendInstitute: "研究所", legendJv: "合资", legendVague: "坐标待定位",
   legendPlacement: "落点",
-  precTier: { street: "按街", district: "按区", city: "按市(址不详)" },
+  precTier: { street: "按街", district: "按区", city: "按市(址不详)",
+              province: "按省(市不详)" },
   precHint: {
     street: "志书写明了门牌,落点由它推出来 —— 只有这一档算是知道它在哪儿",
     district: "只知道在哪个区,落点取那个区的中央,同区的都落在这一个点上",
     city: "志书没写地址 —— 落在市中心,是没有别处可放。默认不上图,点一下才显示",
+    province: "省志通篇没说在哪个市 —— 落在省中心。扔在省会是假话,扔进兜底" +
+      "就到了上海人民广场。默认不上图,点一下才显示",
   },
   placementHidden: (n) => n + " 家未上图",
 
@@ -313,11 +317,13 @@ const en = {
   legendFactory: "Factory", legendInstitute: "Institute", legendJv: "Joint venture",
   legendVague: "Location approximate",
   legendPlacement: "PLACEMENT",
-  precTier: { street: "Street", district: "District", city: "City centre (no address)" },
+  precTier: { street: "Street", district: "District", city: "City centre (no address)",
+              province: "Province centre (no city)" },
   precHint: {
     street: "The gazetteer gives a street address and the point is inferred from it — only this tier means we know where it stood",
     district: "District only; the point is the district centroid, shared by every unit in that district",
     city: "No address on record — the city centre is where they go for want of anywhere else. Hidden by default; click to show",
+    province: "A provincial gazetteer that never names the city — placed at the province centre. Not the capital, which would be a false claim. Hidden by default; click to show",
   },
   placementHidden: (n) => n + " hidden",
 

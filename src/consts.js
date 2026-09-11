@@ -61,4 +61,5 @@ export const PRECISION_LABEL = {
   street: "街道级近似",
   district: "区级近似",
   city: "市级近似(地址待考)",
+  province: "省级近似(市县待考)",
 };

@@ -57,7 +57,9 @@ const isAlive = (u, year) => !!u.start && u.start.y <= year && (u.end == null ||
      落到街或区的位置 —— 只知道城市的,落在市中心那一点上,动起来也是一团。
    两百家里六十七家够得上。其余的不是不算数,是这一段还没考出来;
    补上年份或地址,自己就进来了 —— 不必另立一份名单去同步。 */
-export const isShowable = (u) => !!u.start && u.precision !== "city";
+/* 演示那一档只收落得实的:按市、按省两档都是「不知道在哪儿」,
+   一个堆在市中心,一个堆在省中心,推着时间轴看只会看出一团。 */
+export const isShowable = (u) => !!u.start && u.precision !== "city" && u.precision !== "province";
 const spanText = (u, t) =>
   (u.start ? fmtDate(u.start) : t.undatedSpan) + "–" + (u.end ? fmtDate(u.end) : "…");
 /** 英文界面下,表内若给了 `Name EN` 就用英文名 */
@@ -662,7 +664,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
             const shape = (TYPE_META[u.type] || TYPE_META.factory).shape;
             const isSel = sel === u.id;
             const born = u.start && u.start.y === year && !ghost;
-            const vague = u.precision === "city";
+            const vague = u.precision === "city" || u.precision === "province";
             const glow = glowMap.get(u.id);
             const showLabel = isSel || labelSet.has(u.id) || (hover && hover.id === u.id);
             return (
@@ -716,7 +718,7 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
           <div className="tt-name">{labelOf(hovU)}</div>
           <div className="tt-meta mono">
             {industryLabel(hovU.industry, lang)} · {spanText(hovU, t)}
-            {hovU.precision === "city" ? t.locVague : ""}
+            {hovU.precision === "city" || hovU.precision === "province" ? t.locVague : ""}
           </div>
           {nameAt(hovU, year, lang).historical && <div className="tt-meta">{t.listedAs(unitName(hovU, lang))}</div>}
         </div>
@@ -801,6 +803,7 @@ const PREC_TIERS = [
   { key: "street", also: ["given"] },
   { key: "district", also: [] },
   { key: "city", also: [] },
+  { key: "province", also: [] },
 ];
 
 function Legend({ data, shown, setShown, precShown, setPrecShown, showableOnly, setShowableOnly, t, lang }) {
@@ -854,8 +857,8 @@ function Legend({ data, shown, setShown, precShown, setPrecShown, showableOnly, 
           return (
             <button key={tier.key} className={"lg-item lg-btn" + (on ? "" : " off")}
               onClick={() => togglePrec(tier)} title={t.precHint[tier.key]}>
-              <i className={"sw" + (tier.key === "city" ? " sw-uncertain" : "")}
-                style={tier.key === "city" ? undefined
+              <i className={"sw" + (tier.key === "city" || tier.key === "province" ? " sw-uncertain" : "")}
+                style={tier.key === "city" || tier.key === "province" ? undefined
                   : { background: "#BBD3EC", opacity: tier.key === "district" ? .45 : 1 }} />
               {t.precTier[tier.key]}<span className="dim mono lg-n">{n}</span>
             </button>
@@ -1624,7 +1627,8 @@ function DirectoryView({ data, gotoUnit, onImportFile, onExport, t, lang }) {
                 <td className="small">{cityLabel(u.city, lang) || <span className="dimtext">—</span>}</td>
                 <td className="small">
                   {u.address || <span className="dimtext">{t.noAddressShort}</span>}
-                  {u.precision === "city" && <div className="dimtext mono small">{t.vagueShort}</div>}
+                  {(u.precision === "city" || u.precision === "province")
+                    && <div className="dimtext mono small">{t.vagueShort}</div>}
                 </td>
                 {STAT_FIELDS.map((f) => (
                   <StatCell key={f.key} value={u.stats[f.key]} year={u.statsYear} />

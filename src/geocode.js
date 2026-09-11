@@ -19,6 +19,8 @@
 /* 市级兜底落点 —— 表内没写地址、PLACES 里也没有对照的单位,落在本市市中心,
    界面上标作「坐标待定位」。**按 City 列分城**:否则新添的北京厂所会一律
    落到上海人民广场去。key 兼收中英两种写法,大小写不论(见 cityAt)。 */
+import CHINA_GEO from "./china.geo.json";
+
 export const CITY_FALLBACK = {
   Shanghai: { lat: 31.2304, lng: 121.4737, label: "上海" },   // 人民广场
   Beijing: { lat: 39.9042, lng: 116.4074, label: "北京" },     // 天安门
@@ -63,6 +65,24 @@ CITY_PROVINCE["长沙"] = CITY_PROVINCE.Changsha;
 
 /** City 列 → 省名(china.geo.json 的写法);认不出返回 "" */
 export const provinceOf = (city) => CITY_PROVINCE[String(city || "").trim()] || "";
+
+/** 这个市有没有落点。没有,就只能退到省 —— 再退就是上海人民广场了 */
+export const hasCity = (city) => !!CITY_FALLBACK[String(city || "").trim()];
+
+/* 省 → 省中心点。不另备一张表:china.geo.json 每个省自带 `cp`,
+   那是画地图用的标注点,比多边形形心稳(形心会掉进海里、掉进邻省)。
+
+   省志里总有一批单位,通篇没说在哪个市 ——「省电子器件研究所」之类。
+   它们既不能扔在省会(那是假话,图上还叠成一坨),也不能扔进上海的兜底。
+   落在省中心、标明「按省」,才是它们实际的份量。 */
+const PROVINCE_CP = {};
+for (const f of CHINA_GEO.features || []) {
+  const p = f.properties || {};
+  if (p.name && Array.isArray(p.cp)) PROVINCE_CP[p.name] = { lat: p.cp[1], lng: p.cp[0], label: p.name };
+}
+
+/** 省名 → 落点。省名要跟 china.geo.json 写法一致(「江苏省」不是「江苏」) */
+export const provinceAt = (name) => PROVINCE_CP[String(name || "").trim()] || null;
 
 /** City 列 → 兜底落点。认不出的城市仍回落到 DEFAULT_FALLBACK。 */
 export function cityAt(city) {

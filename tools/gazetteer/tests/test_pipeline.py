@@ -1816,6 +1816,99 @@ def test_console_marks():
     check(console.init(io.StringIO()), "init 对着这种流也不炸")
 
 
+def test_province_volume():
+    """省志:市由每一家自己定,定不下来的空着、只记省。
+
+    市志一本一个市,`--city Beijing` 一给就完了。省志不行 —— 一本里十几个市。
+    照市志那套办,`city_of` 会把全省的厂都记成省会那一个,图上叠成一坨,
+    而且一声不吭。这一条盯着的就是「不许拿省会顶替」。
+
+    两种编法都要过:志书有按市编的,也有按行业编的(标题里一个市名也没有)。
+    """
+    print("省志:哪一家在哪个市")
+    from gazetteer import place
+
+    # —— 认市县:只认标题与厂址字样紧后头,不认散句
+    eq(place.in_head("第二节 苏州市"), ["苏州"], "标题里的市")
+    eq(place.in_head("第四节 常熟县"), ["常熟"], "县也认")
+    eq(place.in_address("厂址位于苏州市人民路45号。"), ["苏州"], "厂址里的市")
+    eq(place.in_address("厂址位于江苏省常熟县城关镇。"), ["常熟"],
+       "隔着省名也认得;「县城关镇」不该把「常熟县」吃掉")
+    eq(place.in_address("该厂产品获江苏省优质产品奖。"), [],
+       "奖项不是厂址 —— 没有厂址字样,进不来")
+    eq(place.in_address("1985年获得北京市科技进步二等奖。"), [],
+       "「获得北京市科技进步奖」是荣誉,不是它在哪儿")
+    eq(place.in_head("开拓市场"), [], "「市场」不是市")
+    eq(place.in_head("全省十几个省市"), [], "「省市」不是某一个市")
+    eq(place.in_head("县级以上企业"), [], "「县级」不是某一个县")
+
+    # —— 按市编:标题说了算
+    by_city = ("# 第三章 企业选介\n\n## 第一节 南京市\n\n### 一、南京无线电厂\n"
+               "南京无线电厂建于1936年，厂址位于南京市中山东路12号。\n\n"
+               "## 第二节 苏州市\n\n### 一、吴县半导体厂\n"
+               "吴县半导体厂建于1970年，位于苏州市吴县城关镇。\n")
+    res = EX.extract(by_city, book="江苏省志", province="江苏省")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(by["吴县半导体厂"]["City"], "苏州",
+       "在苏州那一节底下,就归苏州 —— 不该照厂名认出个「吴县」来")
+    eq(by["吴县半导体厂"]["省"], "江苏省", "省记下来")
+
+    # —— 按行业编:标题里没有市名,靠厂址
+    by_trade = ("# 第三章 企业选介\n\n## 第一节 无线电整机\n\n### 一、江苏电视机厂\n"
+                "江苏电视机厂建于1972年，厂址在无锡市解放东路8号。\n\n"
+                "### 二、上海协作电子厂\n"
+                "上海协作电子厂建于1960年，厂址位于上海市中山北路9号。\n\n"
+                "### 三、省电子器件研究所\n"
+                "省电子器件研究所建于1965年，是江苏省直属单位。\n")
+    res = EX.extract(by_trade, book="江苏省志", province="江苏省")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(by["江苏电视机厂"]["City"], "无锡",
+       "名字冠的是省名,可厂址写着无锡 —— 以厂址为准")
+    eq(by["上海协作电子厂"]["City"], "Shanghai", "外地协作单位照旧归它自己那个市")
+    eq(by["上海协作电子厂"]["省"], "", "外地的不记本省")
+    eq(by["省电子器件研究所"]["City"], "", "通篇没说在哪个市 —— 空着才是实话")
+    eq(by["省电子器件研究所"]["省"], "江苏省", "只记到省")
+    check("市未定" in by["省电子器件研究所"]["Remark"], "空着要说一句,不闷着")
+
+    # —— 最要紧的一条:决不拿省会顶替
+    for r in res["units"]:
+        check(not (r["City"] == "Nanjing" and r["Unit"] != "南京无线电厂"),
+              "%s 不该被记成省会" % r["Unit"])
+
+    # —— 市志那一路一个字也没变
+    res = EX.extract(by_trade, book="某市志", city="Beijing")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(by["省电子器件研究所"]["City"], "Beijing", "不给 --province 就照旧,跟着书走")
+    eq(by.get("省电子器件研究所", {}).get("省", ""), "", "市志不填省那一栏")
+
+
+def test_province_column():
+    """省那一栏:写进总表、读得回来、写错了拦得住。"""
+    print("省那一栏")
+    tmp = tempfile.mkdtemp(prefix="gaz-prov-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        toxlsx.append(x, backup=False, log=lambda *a: None, units=[
+            {"Unit": "苏州试验无线电厂", "City": "苏州", "省": "江苏省", "Source": "试·一页"}])
+        rows = {r["raw"]: r for r in toxlsx.read_units_full(x)}
+        eq(rows["苏州试验无线电厂"]["省"], "江苏省", "写进去,读得回来")
+
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.sheet_of(wb, toxlsx.SHEET_UNITS)
+        h = toxlsx._headers(ws, 2)
+        for i in range(3, ws.max_row + 1):
+            if str(ws.cell(row=i, column=1).value or "").strip() == "苏州试验无线电厂":
+                ws.cell(row=i, column=h["省"]).value = "江苏"
+        wb.save(x)
+        got = [t for t in toxlsx.verify(x) if t[0] == "省"]
+        check(got, "省名写成「江苏」(缺个「省」字),verify 拦下来")
+        check("china.geo" not in (got[0][2] if got else ""), "话说得明白,不甩术语")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_i18n_key_parity():
     """中英两张字表的键必须一样多。
 
@@ -1870,6 +1963,7 @@ def main():
                test_later_rename,
                test_i18n_key_parity,
                test_affiliation, test_affiliation_pipeline,
+               test_province_volume, test_province_column,
                test_console_marks):
         fn()
     print()

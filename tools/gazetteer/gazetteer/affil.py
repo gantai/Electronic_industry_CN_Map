@@ -225,13 +225,11 @@ def _is_unit(name):
     return len(n) >= 5 and n.endswith(_NAME_TAIL)
 
 
-def read_tables(md_text):
-    """名录表里的隶属与性质 → {单位正名: {"隶属","性质","据","表"}}。
+def iter_tables(md_text):
+    """一张一张地把名录表交出来:(表题, 表头那一行, 余下各行)。
 
-    表题定这一张的隶属(「行业归口……名录」→ 归口);表里另有「性质」一栏的,
-    逐行取。表题认不出隶属的(并了两类的、产量表)照收单位名与性质,
-    隶属留空 —— **宁可空着,也不替它挑一个**。"""
-    out = {}
+    单独拆出来,是因为不止隶属要用 —— 省志的名录表还有一栏「所在地」,
+    认市要用它(见 place.py)。两处各读各的列,走的是同一趟表。"""
     marks = [(m.start(), m.group(1) or m.group(2)) for m in _TITLE_RE.finditer(md_text)]
     for tm in _TABLE_RE.finditer(md_text):
         title = ""
@@ -240,17 +238,28 @@ def read_tables(md_text):
                 title = txt.strip()
             else:
                 break
-        if not title or _NOT_ROSTER.search(title):
+        rows = _ROW_RE.findall(tm.group(0))
+        if not title or not rows:
+            continue
+        head = [_cell(c) for c in _CELL_RE.findall(rows[0])]
+        body = [[_cell(c) for c in _CELL_RE.findall(r)] for r in rows[1:]]
+        yield title, head, body
+
+
+def read_tables(md_text):
+    """名录表里的隶属与性质 → {单位正名: {"隶属","性质","据","表"}}。
+
+    表题定这一张的隶属(「行业归口……名录」→ 归口);表里另有「性质」一栏的,
+    逐行取。表题认不出隶属的(并了两类的、产量表)照收单位名与性质,
+    隶属留空 —— **宁可空着,也不替它挑一个**。"""
+    out = {}
+    for title, head, body in iter_tables(md_text):
+        if _NOT_ROSTER.search(title):
             continue
         t_affil, _ = affil_of_head(title)
         t_nat, _ = nature_of(title)
-        rows = _ROW_RE.findall(tm.group(0))
-        if not rows:
-            continue
-        head = [_cell(c) for c in _CELL_RE.findall(rows[0])]
         nat_col = next((i for i, h in enumerate(head) if "性质" in h), None)
-        for row in rows[1:]:
-            cells = [_cell(c) for c in _CELL_RE.findall(row)]
+        for cells in body:
             if not cells or not _is_unit(cells[0]):
                 continue
             rec = out.setdefault(_bare_name(cells[0]),

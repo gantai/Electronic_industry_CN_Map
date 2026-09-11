@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { PLACES, ALIASES, cityAt } from "./geocode.js";
+import { PLACES, ALIASES, cityAt, hasCity, provinceAt, provinceOf } from "./geocode.js";
 import CITY_GEO from "./city.geo.json";
 import { YEAR_FALLBACK, YEAR_FLOOR, EVENT_META } from "./consts.js";
 import { parseCNDate, baseName, parenAlias, parenAliases, splitAliases, splitChain,
@@ -247,6 +247,7 @@ function parseUnits(ws) {
   const cStatsYear = col("统计年", "Stats Year", "数据年份");
   /* 志书写明的区。查不到门牌时,靠它落到区一级,不必全挤在市中心 */
   const cDistrict = col("区", "District", "区县");
+  const cProvince = col("省", "Province", "省份");
   const cLat = col("Lat", "Latitude", "纬度");
   const cLng = col("Lng", "Lon", "Longitude", "经度");
   /* A 列无表头,即单位名称 */
@@ -288,7 +289,14 @@ function parseUnits(ws) {
 
     const place = PLACES[name] || {};
     /* 兜底落点按 City 列分城,免得外地厂所一律落在上海 */
-    const fallback = cityAt(cell(r, cCity));
+    /* 市认不得就退到省 —— 省志带来的市名(苏州、常熟)geocode.js 多半还没有
+       落点,照旧退到 DEFAULT_FALLBACK,那一家就落到上海人民广场去了,
+       而且一声不吭。有省名就落在省中心,标明「按省」,是实话。 */
+    const cityName = String(cell(r, cCity) || "").trim();
+    const provName = String(cell(r, cProvince) || "").trim() || provinceOf(cityName);
+    const cityOK = hasCity(cityName);
+    const provAt = cityOK ? null : provinceAt(provName);
+    const fallback = cityOK ? cityAt(cityName) : (provAt || cityAt(cityName));
     const latOverride = cLat >= 0 ? numCell(r, cLat) : null;
     const lngOverride = cLng >= 0 ? numCell(r, cLng) : null;
     const hasOwn = latOverride != null && lngOverride != null;
@@ -319,7 +327,8 @@ function parseUnits(ws) {
       lng: hasOwn ? lngOverride : hasPlace ? place.lng : atZone ? atZone.lng : fallback.lng,
       precision: hasOwn ? "given"
         : hasPlace ? place.precision || "district"
-          : atZone ? "district" : "city",
+          : atZone ? "district" : (provAt ? "province" : "city"),
+      province: provName,
       district: hasPlace || hasOwn ? place.district || "" : (atZone ? zone : ""),
       locNote: place.note || "",
       stats,

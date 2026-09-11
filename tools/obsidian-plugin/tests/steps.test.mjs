@@ -189,3 +189,22 @@ test("没有什么可上线的,也拦下来", () => {
 test("干净、且确有要发布的,才放行", () => {
   assert.equal(blockPublish("", "a1b2c3 补录某某志\n"), null);
 });
+
+test("第三步:省志填省名,不填 City —— 省会不该当全书的默认", () => {
+  const [c] = run("volume", { key: "第三章", province: "江苏省" });
+  assert.ok(c.args.includes("--province"));
+  assert.ok(!c.args.includes("--city"), "填了省就不该再传 --city");
+  assert.deepEqual(c.args.slice(-2), ["--province", "江苏省"]);
+});
+
+test("第三步:市志照旧只传 --city", () => {
+  const [c] = run("volume", { key: "第四篇", city: "Beijing" });
+  assert.ok(c.args.includes("--city"));
+  assert.ok(!c.args.includes("--province"));
+});
+
+test("第三步:两个都填,以省为准", () => {
+  const [c] = run("volume", { key: "x", city: "Beijing", province: "江苏省" });
+  assert.ok(c.args.includes("--province"));
+  assert.ok(!c.args.includes("--city"));
+});

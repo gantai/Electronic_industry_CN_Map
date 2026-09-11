@@ -27,7 +27,7 @@
 import re
 from collections import Counter, OrderedDict, defaultdict
 
-from . import affil, cndate
+from . import affil, cndate, place
 
 # ---------------------------------------------------------------- 词表
 
@@ -799,7 +799,11 @@ OTHER_CITY = OrderedDict([
 
 
 def city_of(name, book_city):
-    """单位名冠了别的市名就归那个市,否则跟着志书走。"""
+    """单位名冠了别的市名就归那个市,否则跟着志书走。
+
+    **book_city 空着时就回空 —— 这正是省志要的。** 一本省志里有十几个市,
+    没有哪一个能当作全书的默认;退回省会,等于把苏州、无锡的厂都记成南京的,
+    图上叠成一坨,而且一声不吭。省志怎么定市,见 place.py。"""
     for zh, en in OTHER_CITY.items():
         if str(name or "").startswith(zh):
             return en
@@ -807,10 +811,15 @@ def city_of(name, book_city):
 
 
 def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
-            min_mentions=2, auto_keep=None):
+            min_mentions=2, auto_keep=None, province=""):
+    """province 一给,就是按省志办:市由每一家自己定(见 place.py),
+    定不下来的空着、记省,**决不拿省会顶替**。"""
     blocks = read_blocks(md_text)
     kidx = known_index(known)
     rosters = affil.read_tables(md_text)   # 名录表说的隶属与性质,一等线索
+    # 省志:先认出这一本讲了哪几个市县,再逐家去定
+    city_vocab, _vh, _va = place.harvest(blocks, md_text) if province else (set(), {}, {})
+    city_roster = place.in_roster(md_text) if province else {}
 
     def src(page, head=""):
         return make_source(book, page, head)
@@ -997,7 +1006,18 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["Start Date"] = start
         row["End Date"] = end
         row["Founder"] = founder
-        row["City"] = city_of(nm, city)
+        if province:
+            got, why = place.city_for(nm, head0, sents, city_vocab, city_roster)
+            # 名字冠着别的省的市名(外地协作单位),那一条照旧压得住本省的推断
+            named = city_of(nm, "")
+            row["City"] = named or got
+            row["省"] = "" if named else province
+            if not row["City"]:
+                remark.append("市未定 —— 标题、厂址、名录表都没说,只记到省")
+            elif not named and why.startswith("标题"):
+                remark.append("市据章节标题(%s),页序或有错乱,须核" % why[3:])
+        else:
+            row["City"] = city_of(nm, city)
         row["Add."] = addr
         row["district"] = find_district([addr_ev] if addr_ev else sents)
         row["隶属"] = aff

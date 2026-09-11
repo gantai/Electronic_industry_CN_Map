@@ -175,8 +175,13 @@ export const STEPS: Step[] = [
     fields: [
       { key: "key", label: "稿子名里的一截", type: "text", required: true,
         placeholder: "第四篇", hint: "如「第三章」。写好几截也行,空格隔开。" },
-      { key: "city", label: "City 列", type: "text", required: true,
+      { key: "city", label: "City 列(市志填这个)", type: "text",
         placeholder: "Beijing", hint: CITY_HINT },
+      { key: "province", label: "省名(省志填这个)", type: "text",
+        placeholder: "江苏省",
+        hint: "**省志填这一栏,把上头那栏空着。** 一本省志里十几个市,没有哪一个能当" +
+              "全书的默认 —— 填了省,市就由每一家自己定(标题 / 厂址 / 名录表)," +
+              "定不下来的空着、只记省,**决不拿省会顶替**。省名写全称,如 江苏省。" },
       { key: "statsYear", label: "统计年", type: "number", placeholder: "1995",
         hint: "志书各章截取的年份不一致(上海多是 1990,北京第四篇是 1995)。空着用默认。" },
       {
@@ -192,7 +197,11 @@ export const STEPS: Step[] = [
         hint: "空着就是仓库里的 `转换稿\\`(或设置里填的那个)。" },
     ],
     build: (v, ctx) => {
-      let a = ["volume", ...v.key.trim().split(/\s+/), "--city", v.city];
+      let a = ["volume", ...v.key.trim().split(/\s+/)];
+      // 省志与市志二选一 —— 两个都填的话以省为准,那是更要紧的那一个
+      a = (v.province ?? "").trim()
+        ? [...a, "--province", v.province.trim()]
+        : opt(a, "--city", v.city);
       a = opt(a, "--stats-year", v.statsYear);
       a = opt(a, "--reflow", v.reflow);
       a = opt(a, "--dir", (v.dir ?? "").trim() || ctx.draftsDir);

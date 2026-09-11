@@ -216,6 +216,7 @@ def cmd_extract(args):
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
     res = EX.extract(md, book=args.book or args.slug, known=known,
                      stats_year=args.stats_year, city=args.city,
+                     province=getattr(args, "province", ""),
                      min_mentions=args.min_mentions, auto_keep=args.auto_keep)
     rd = review_dir(wd)
     tsvio.write(os.path.join(rd, "units.tsv"), res["units"], UNIT_COLS)
@@ -605,7 +606,8 @@ def cmd_book(args):
 
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
     res = EX.extract(text, book=book, known=known, stats_year=args.stats_year,
-                     city=args.city, min_mentions=args.min_mentions, auto_keep=args.auto_keep)
+                     city=args.city, province=getattr(args, "province", ""),
+                     min_mentions=args.min_mentions, auto_keep=args.auto_keep)
 
     rd = review_dir(wd)
     tsvio.write(os.path.join(rd, "units.tsv"), res["units"], UNIT_COLS)
@@ -1008,6 +1010,7 @@ def main(argv=None):
     p.add_argument("--md")
     p.add_argument("--book", help="出处里写的书名(默认用 slug)")
     p.add_argument("--city", default="Shanghai")
+    p.add_argument("--province", default="", help="按省志办:市由每一家自己定,定不下来的空着、只记省。省名写全称,如 江苏省 —— 跟 src/china.geo.json 的写法一致")
     p.add_argument("--stats-year", type=int, default=1990, help="统计断面年,与原表一致")
     p.add_argument("--min-mentions", type=int, default=2)
     p.add_argument("--auto-keep", type=float,
@@ -1060,6 +1063,7 @@ def main(argv=None):
     def _book_opts(p):
         p.add_argument("--out", help="Excel 存到哪(默认与 .md 同目录同名)")
         p.add_argument("--city", default="Shanghai", help="City 列的值,如 Beijing")
+        p.add_argument("--province", default="", help="按省志办:市由每一家自己定,定不下来的空着、只记省。省名写全称,如 江苏省 —— 跟 src/china.geo.json 的写法一致")
         p.add_argument("--book", help="出处里写的书名(默认取《》里那一截)")
         p.add_argument("--stats-year", type=int, default=1990)
         p.add_argument("--min-mentions", type=int, default=2)

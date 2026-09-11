@@ -190,7 +190,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
             # 隶属(归哪一级主管)与性质(什么所有制)是两件事,分两栏
             # —— 混作一栏就写不出「市属 · 集体企业」,图上也没法分别筛。
             # 记的是志书写作那一年的状态;哪年划归了谁进「机构沿革」。
-            for label in ("隶属", "性质"):
+            for label in ("省", "隶属", "性质"):
                 if r.get(label) not in (None, ""):
                     _ensure_column(ws, label, header_row=1)
                     h = _headers(ws, 2)
@@ -361,6 +361,23 @@ def read_places_full(geocode_js):
     return out
 
 
+def read_city_points(geocode_js):
+    """src/geocode.js 的 CITY_FALLBACK 里,哪几个市有落点。
+
+    省志会带进来一批新市名(苏州、常熟……),它们多半还没有落点。
+    没落点不是错 —— 站上会退到省中心,标作「按省」。可**得让人看得见**,
+    不然一个市悄悄少了一个点,谁也不会发觉。"""
+    if not os.path.exists(geocode_js):
+        return set()
+    with open(geocode_js, encoding="utf-8") as f:
+        src = f.read()
+    m = re.search(r"export\s+const\s+CITY_FALLBACK\s*=\s*\{(.*?)\n\};", src, re.S)
+    keys = set(re.findall(r"^\s*([A-Za-z\u4e00-\u9fa5]+)\s*:\s*\{", m.group(1), re.M)) if m else set()
+    # 底下那几行 CITY_FALLBACK["上海"] = … 的中文写法也算
+    keys |= set(re.findall(r'CITY_FALLBACK\["([^"]+)"\]\s*=', src))
+    return keys
+
+
 def read_places(geocode_js):
     """src/geocode.js 的 PLACES 里已经有落点的单位名。"""
     if not os.path.exists(geocode_js):
@@ -399,7 +416,7 @@ def read_units_full(xlsx_path):
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
         rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
         rec["district"] = ws.cell(row=r, column=h["区"]).value if "区" in h else None
-        for label in ("隶属", "性质"):
+        for label in ("省", "隶属", "性质"):
             rec[label] = ws.cell(row=r, column=h[label]).value if label in h else None
         out.append(rec)
     return out
@@ -909,6 +926,7 @@ def verify(xlsx_path, geocode_js=None):
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     bad = []
     elsewhere = set()
+    city_pts = read_city_points(geocode_js) if geocode_js else None
     if geocode_js and os.path.exists(geocode_js):
         for canon, aliases in read_aliases(geocode_js).items():
             elsewhere.add(canon)
@@ -947,6 +965,16 @@ def verify(xlsx_path, geocode_js=None):
                                 "多半是「19xx年（后改名…」被切开算出来的,回稿子上核" % y,
                                 "%s·沿革·%s" % (key, y)))
 
+        # 省名要跟 src/china.geo.json 里那 34 个写法对得上 ——「省」「市」
+        # 「自治区」得写全。差一个字,国家尺度那张图上就找不着这块地方,
+        # 这一家在省一级的柱子里凭空消失。
+        if "省" in h:
+            pv = str(ws.cell(row=r, column=h["省"]).value or "").strip()
+            if pv and not pv.endswith(("省", "市", "自治区", "特别行政区")):
+                bad.append(("省", where,
+                            "省名写作「%s」—— 要写全称(江苏省、北京市、广西壮族自治区)" % pv,
+                            "%s·省" % key))
+
         # 隶属 / 性质 只认那几个词。手填时写「市直属」「国营」也读得懂,
         # 可站点按字面分类,写岔一个字,这一家就自己单成一类,图上再也归不了队。
         for label, vocab in (("隶属", affil.AFFIL_VALUES), ("性质", affil.NATURE_VALUES)):
@@ -957,6 +985,16 @@ def verify(xlsx_path, geocode_js=None):
                 bad.append(("隶属", where,
                             "「%s」写作「%s」—— 只认这几个:%s" % (label, v, "、".join(vocab)),
                             "%s·%s" % (key, label)))
+
+        # 这个市在 geocode.js 里有没有落点 —— 没有,图上就退到省中心
+        if city_pts is not None and "City" in h:
+            cv = str(ws.cell(row=r, column=h["City"]).value or "").strip()
+            if cv and cv not in city_pts:
+                bad.append(("坐标", where,
+                            "「%s」在 geocode.js 里还没有落点 —— 图上退到省中心,"
+                            "标作「按省」。补一对经纬度进 CITY_FALLBACK,"
+                            "这一市的厂就都各归各位了" % cv,
+                            "市·%s" % cv))
 
         lat = ws.cell(row=r, column=h["Lat"]).value if "Lat" in h else None
         lng = ws.cell(row=r, column=h["Lng"]).value if "Lng" in h else None
