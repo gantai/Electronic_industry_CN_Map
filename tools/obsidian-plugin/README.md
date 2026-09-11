@@ -20,13 +20,26 @@
 
 ## 装
 
-一、打包并装进库(库是你在 Obsidian 里打开的那个文件夹,不是仓库):
+一、装进库(库是你在 Obsidian 里打开的那个文件夹,不是仓库):
 
 ```powershell
 cd D:\Coding\CN_Map\tools\obsidian-plugin
-npm install
-npm run deploy -- "D:\Archive"
+.\装.ps1
 ```
+
+**这一步不用 Node,也不用 npm。** `main.js` 是打包好跟着仓库一起来的,
+装插件只是把三个文件抄进库里。只有改了插件源码要重新打包时才用得着 Node。
+
+库不在 `D:\Archive` 的话:`.\装.ps1 -Vault "E:\别处"`。
+
+> [!note] 万一 PowerShell 不让跑脚本
+> 报「禁止运行脚本」就先办一次(只影响你自己这个账户):
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+> 不想改这个设置,就自己抄三个文件 ——
+> `main.js`、`manifest.json`、`styles.css` 抄进
+> `<库>\.obsidian\plugins\dianzi-gongye-ditu\`,一样的。
 
 二、Obsidian 里 **设置 → 第三方插件** 把「电子工业地图流程」打开
 (头一回还要先关掉「安全模式」)。
@@ -41,8 +54,8 @@ npm run deploy -- "D:\Archive"
 | 库里厂所笔记那一支 | `D:\Archive\厂所` | 只有 `push` / `pull` 两条用得着 |
 | 在哪一支上干活 | 见设置里的默认值 | 提交与上线都认这一支 |
 
-改了代码要重装,照上头第一步再跑一遍 `npm run deploy`,然后在插件列表里把它
-关一下再开。
+更新(我这边改过插件之后):`git pull` 拿到新的 `main.js`,再跑一遍 `.\装.ps1`,
+然后在插件列表里把它关一下再开 —— 关开一次,新的才生效。
 
 ## 用
 
@@ -76,10 +89,17 @@ npm run deploy -- "D:\Archive"
 
 ## 改
 
+**改源码才要 Node。** 只是用插件的话,上头那一节就够了。
+
 ```powershell
 cd D:\Coding\CN_Map\tools\obsidian-plugin
+npm install
 npm run check      # 类型、测试、打包,一趟过
 ```
+
+`npm` 说「不是可运行的程序」,就是这台机器没装 Node(或者装完没开新终端 ——
+PATH 只有新起的程序看得见)。装法见《电子工业地图流程》的「装机」一节。
+打包出来的 `main.js` 是要提交的:提交了,别的机器不装 Node 也能装插件。
 
 `src/steps.ts` 与 `src/gitops.ts` **一行 Obsidian 的东西也不碰** —— 拆开就是为了
 测得动:命令拼错了在插件里看不出来,跑起来才知道,而那时候工作簿已经动过了。
