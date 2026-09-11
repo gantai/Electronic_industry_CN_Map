@@ -1,0 +1,9 @@
+{
+  "id": "dianzi-gongye-ditu",
+  "name": "电子工业地图流程",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "在 Obsidian 里跑《电子工业地图流程》八步:志书 PDF → 待核工作簿 → 总表 → 上线。不必再开 PowerShell。",
+  "author": "gantai",
+  "isDesktopOnly": true
+}

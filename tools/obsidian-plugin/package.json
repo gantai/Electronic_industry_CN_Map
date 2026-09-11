@@ -1,0 +1,22 @@
+{
+  "name": "dianzi-gongye-ditu",
+  "version": "0.1.0",
+  "description": "Obsidian 插件:在库里跑《电子工业地图流程》",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build:test && node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "build:test": "esbuild src/steps.ts src/gitops.ts --outdir=build --format=esm --bundle --log-level=warning",
+    "deploy": "npm run build && node deploy.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.6.0"
+  }
+}
