@@ -321,6 +321,30 @@ export const STEPS: Step[] = [
     },
   },
   {
+    /* 面板上原先没有这一条,`gaz geocode-city` 就只能去命令行敲 —— 等于没有。
+       它管的跟上一条不是一回事:上一条出的是**这一章新收的**那些,
+       这一条出的是**总表里早就有、地址早抄好、只差经纬度**的那些。
+       省志一跑,苏州、无锡、常熟这些市冒出来,正靠这一条把它们摆成一张
+       按路排的单子。 */
+    id: "geocodeCity",
+    group: "落点",
+    name: "按路排的落点草稿(总表里欠坐标的)",
+    blurb: "总表里「有地址、没坐标」的单位,按路排成一张单子 —— " +
+           "同一条路的门牌摆在一处,开着地图从街这头看到那头,顺次填下去。",
+    fields: [
+      { key: "city", label: "只做这一个市", type: "text", placeholder: "(空着就做全表)",
+        hint: "填市名(Beijing、苏州)。省志带进来的市照志书原文写中文。" },
+      { key: "out", label: "写到哪儿", type: "text",
+        placeholder: "(空着就是仓库里 落点草稿-<市>.js)" },
+    ],
+    build: (v, ctx) => {
+      let a = ["geocode-city"];
+      a = opt(a, "--city", v.city);
+      a = opt(a, "--out", v.out);
+      return [gaz(ctx, a)];
+    },
+  },
+  {
     id: "geocodeCheck",
     group: "落点",
     name: "核一核落点",
@@ -340,6 +364,27 @@ export const STEPS: Step[] = [
     ],
     build: (v, ctx) => {
       const a = ["push", "--vault", ctx.vaultUnits];
+      if (on(v.force)) a.push("--force");
+      return [gaz(ctx, a)];
+    },
+  },
+  {
+    /* 《流程》那份文档在仓库里,可干活的地方是库 —— 隔着一个文件夹,
+       临时要查一句就得切出去翻。写进库里,搜得到、链得上。 */
+    id: "guide",
+    group: "库",
+    name: "《流程》写进库",
+    blurb: "把《电子工业地图流程》抄一份进 Obsidian 库,好在干活的地方随手查。",
+    readOnly: true,
+    fields: [
+      { key: "vault", label: "写进哪个目录", type: "text",
+        placeholder: "(空着就印在面板上,不落地)",
+        hint: "填个**库里的目录**(D:\\Archive),文件名它自己取;" +
+              "空着就只印出来看,一个文件也不动。" },
+      { key: "force", label: "库里那份改过也照盖", type: "toggle" },
+    ],
+    build: (v, ctx) => {
+      let a = opt(["guide"], "--vault", v.vault);
       if (on(v.force)) a.push("--force");
       return [gaz(ctx, a)];
     },

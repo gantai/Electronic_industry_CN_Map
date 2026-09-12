@@ -155,6 +155,53 @@ test("每一步的 id 不重样,分组次序照 STEPS 排", () => {
   assert.ok(groups().includes("上线") === false, "上线那几条是 git,不在 STEPS 里");
 });
 
+test("凡是要人动手的 gaz 子命令,面板上都得有一条", () => {
+  /* 规矩:除了装更新,动手一律走插件(见仓库根的 CLAUDE.md)。
+     面板上没有的功能等于没有 —— 文档里写得再清楚也到不了人手里。
+     所以 gaz 添了子命令就得在这儿添一条,不然这一条测试绊住。
+
+     名单里少的那几个是有意不摆的:
+       extract / notes / run —— TSV 那条旧路,已由 book + xlsx 取代
+       book                  —— 就是第三步(第三步用 book,不用 volume)
+       dups                  —— 跟着「验一验」一道跑,不单立一条 */
+  const wired = new Set();
+  for (const st of STEPS) {
+    for (const c of st.build({ sure: "true", md: "x.md", slug: "x", xlsx: "x.xlsx",
+                               from: "x.xlsx", pdf: "x.pdf", first: "1", last: "2" }, WIN)) {
+      if (c.exe === WIN.python) wired.add(c.args[1]);
+    }
+  }
+  const want = ["check", "convert", "inspect", "book", "xlsx", "verify", "tidy",
+                "geocode", "geocode-check", "geocode-city", "guide", "push", "pull",
+                "version", "diff"];
+  const gap = want.filter((x) => !wired.has(x));
+  assert.deepEqual(gap, [], "这几条 gaz 子命令面板上没有:" + gap.join("、"));
+});
+
+test("面板跑命令时,git 不许把中文文件名印成八进制", async () => {
+  /* 「?? \350\275\254\346\215\242\347\250\277/…」—— git 默认就这么转义
+     非 ASCII 的路径。提交那一步的清单、拉取那一步的拦阻理由全是文件名,
+     印成那样等于让人对着一串数字猜自己的稿子叫什么。
+     治法是给子进程那三个 GIT_CONFIG_* 变量(等于一次性的
+     -c core.quotePath=false),不动用户自己的 ~/.gitconfig。 */
+  const { capture } = await import("../build/runner.js");
+  const r = await capture({ exe: "node", cwd: process.cwd(),
+    args: ["-e", "process.stdout.write([process.env.GIT_CONFIG_COUNT," +
+                 "process.env.GIT_CONFIG_KEY_0,process.env.GIT_CONFIG_VALUE_0].join('|'))"] });
+  assert.equal(r.code, 0);
+  assert.equal(r.out.trim(), "1|core.quotePath|false");
+});
+
+test("末尾那一行不带换行,也得喂出来", async () => {
+  /* 从前只在遇着 \n 时才喂,末尾不带换行的那一截压在缓冲里不声不响丢掉。
+     平时看不出来(print 自带换行),可 traceback 的末行、没写完就退出的
+     那一行,恰恰是最要紧的几行。 */
+  const { capture } = await import("../build/runner.js");
+  const r = await capture({ exe: "node", cwd: process.cwd(),
+    args: ["-e", "process.stdout.write('头一行\\n末一行没换行')"] });
+  assert.equal(r.out.trim().split("\n").at(-1), "末一行没换行");
+});
+
 // ---------------------------------------------------------------- git
 
 test("上线那一串:六句,顺序不许动", () => {

@@ -46,6 +46,16 @@ export function runOne(cmd: Cmd, sink: RunSink): RunHandle {
           // 颜色码在面板里只会变成一串 ESC[0m
           NO_COLOR: "1",
           GIT_TERMINAL_PROMPT: "0",
+          /* git 默认把非 ASCII 的文件名转义成八进制字节:
+               ?? "\350\275\254\346\215\242\347\250\277/..."
+             那一串摆到面板上,等于让人对着一堆数字猜自己的稿子叫什么
+             (提交那一步的清单、拉取那一步的拦阻理由,全是文件名)。
+             这三个环境变量等于**只对这一次**加一句 -c core.quotePath=false ——
+             不动用户 ~/.gitconfig,也不必把 -c 塞进每一条命令里让人看着碍眼。
+             git 2.31 以前不认这几个变量,那就还是八进制,不至于出错。 */
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "core.quotePath",
+          GIT_CONFIG_VALUE_0: "false",
         },
         windowsHide: true,
       });
@@ -59,8 +69,20 @@ export function runOne(cmd: Cmd, sink: RunSink): RunHandle {
       return;
     }
 
+    /* 按行切开喂给面板。**末尾那一截没有换行也得吐出来** —— 从前只在
+       遇着 \n 时才喂,最后一行不带换行就永远压在 buf 里,不声不响丢掉。
+       (写这一句的起因:一条 `node -e process.stdout.write(...)` 的输出
+       整个没了。gaz 那头 print 自带换行,平时看不出来,可 traceback 的末行、
+       没写完就退出的那一行,正是最要紧的几行。) */
+    const tails: Array<() => void> = [];
     const feed = (stream: "out" | "err") => {
       let buf = "";
+      tails.push(() => {
+        if (buf) {
+          sink.line(buf, stream);
+          buf = "";
+        }
+      });
       return (chunk: Buffer) => {
         buf += chunk.toString("utf8");
         const parts = buf.split(/\r?\n/);
@@ -85,6 +107,7 @@ export function runOne(cmd: Cmd, sink: RunSink): RunHandle {
       resolve(-1);
     });
     child.on("close", (code: number | null) => {
+      for (const flush of tails) flush();
       const c = code ?? -1;
       sink.end?.(cmd, c);
       resolve(c);
