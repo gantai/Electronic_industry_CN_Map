@@ -301,3 +301,12 @@ test("第三步那句话跟它实际干的事对得上", () => {
   assert.ok(!stepById("volume").blurb.includes("按名字找"),
             "得 " + stepById("volume").blurb);
 });
+
+test("第四步要说明白:四张都得核", () => {
+  // 待核工作簿里四张表都有「取否」列。从前只有头一张叫「待核」,另三张挂着
+  // 总表的名字,看着像成品 —— 核完头一张就收工,另三张整张丢掉。
+  const b = stepById("review").blurb;
+  for (const w of ["四张", "器件", "整机", "名称沿革"]) {
+    assert.ok(b.includes(w), "第四步那句话该提到「" + w + "」:得 " + b);
+  }
+});

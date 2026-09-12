@@ -977,6 +977,14 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
                 cand_n.append(("标题", n, h))
         aff, aff_why, aff_from = affil.pick(cand_a)
         nat, nat_why, nat_from = affil.pick(cand_n)
+        # 主管的是**哪一个**机关 —— 只认正文明说的那一句。
+        # 「隶属」说到层级(部属 / 市属),这一栏说出名姓,两栏合起来才是一句
+        # 完整的话:「市属 · 北京市电子工业办公室」。
+        body = ""
+        for s2 in prose:
+            body = affil.body_of(s2)
+            if body:
+                break
         for label, val, why, whence in (("隶属", aff, aff_why, aff_from),
                                         ("性质", nat, nat_why, nat_from)):
             if whence == "两说":
@@ -1021,6 +1029,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["Add."] = addr
         row["district"] = find_district([addr_ev] if addr_ev else sents)
         row["隶属"] = aff
+        row["主管单位"] = body
         row["性质"] = nat
         for key, _ in STAT_PATTERNS:
             row[key] = stats.get(key, "")

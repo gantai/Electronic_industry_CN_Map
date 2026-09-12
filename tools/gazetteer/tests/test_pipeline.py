@@ -415,16 +415,24 @@ def test_book():
         bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
                           log=lambda *a: None)
         wb = openpyxl.load_workbook(out)
-        eq(wb.sheetnames, ["待核", bookmd.UNITS_PREVIEW + "Beijing", toxlsx.SHEET_SEMI,
-                           toxlsx.SHEET_COMP, toxlsx.SHEET_NAMES],
+        eq(wb.sheetnames, [bookmd.REVIEW_UNITS, bookmd.PREVIEW, bookmd.REVIEW_SEMI,
+                           bookmd.REVIEW_COMP, bookmd.REVIEW_NAMES],
            "五张表,要核的那张排在头一个")
-        ws = wb[bookmd.UNITS_PREVIEW + "Beijing"]
+        # 要核的四张一律冠「待核·」。从前只有头一张叫「待核」,另三张挂着总表的
+        # 名字(器件 / 整机 / 名称沿革),看着像成品 —— 整章核完了漏掉三张。
+        eq([n for n in wb.sheetnames if n.startswith("待核·")],
+           [bookmd.REVIEW_UNITS, bookmd.REVIEW_SEMI, bookmd.REVIEW_COMP, bookmd.REVIEW_NAMES],
+           "要核的四张一眼看得出是一套")
+        check("改它不算数" in bookmd.PREVIEW, "预览那张的名字自己就说了改了不算数")
+        check("Beijing" not in bookmd.PREVIEW and "-" not in bookmd.PREVIEW[:6],
+              "预览表名不再缀城市 —— 省志一本里十几个市,缀哪一个都不对")
+        ws = wb[bookmd.PREVIEW]
         eq([c.value for c in ws[1]][:8],
            [None, "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add."],
            "第一行表头与原表一致(A1 照原表留空)")
         eq(ws.cell(row=2, column=9).value, "职工总数", "第二行是统计块的表头")
         eq(ws.cell(row=3, column=4).value, 19561000, "日期写成八位整数")
-        rv = wb["待核"]
+        rv = wb[bookmd.REVIEW_UNITS]
         # 核的是名字,名字与据以判断的原文都摆在最左边
         eq(rv.cell(row=1, column=2).value, "单位", "待核表第二列就是单位名")
         eq(rv.cell(row=1, column=3).value, "别名", "别名紧挨着正名 —— 核的是名字")
@@ -439,7 +447,7 @@ def test_book():
         rv.cell(row=4, column=1).value = ""
         wb.save(out)
         bundle, city2, seen = bookmd.read_review(out)
-        eq(city2, "Beijing", "城市从「厂所名录-北京」这类表名上认")
+        eq(city2, "Beijing", "城市认的是各行自己的 City 列")
         eq(len(bundle["units"]), 1, "两行改成同一个名字,并作一家")
         eq(seen["merged"], 1, "并了几行要报出来")
         eq(bundle["units"][0]["Unit"], "上海无线电十九厂", "并成的那一家用核过的名字")
@@ -645,11 +653,11 @@ def test_edit_in_place():
         wb = openpyxl.load_workbook(x)
         # 一打开就该停在「待核」上 —— 停在预览表上,第一眼看见的是一列光秃秃的
         # 单位名,连「取否」列都没有,不知道该往哪儿写 y
-        eq(wb.sheetnames[0], "待核", "「待核」排在头一张")
-        eq(wb.active.title, "待核", "打开就停在「待核」")
-        eq([w.title for w in wb.worksheets if w.sheet_view.tabSelected], ["待核"],
-           "选中的只有「待核」这一张")
-        rv = wb["待核"]
+        eq(wb.sheetnames[0], bookmd.REVIEW_UNITS, "「%s」排在头一张" % bookmd.REVIEW_UNITS)
+        eq(wb.active.title, bookmd.REVIEW_UNITS, "打开就停在它上头")
+        eq([w.title for w in wb.worksheets if w.sheet_view.tabSelected], [bookmd.REVIEW_UNITS],
+           "选中的只有这一张")
+        rv = wb[bookmd.REVIEW_UNITS]
         head = [c.value for c in rv[1]]
         rv.cell(row=2, column=1).value = "y"
         rv.cell(row=2, column=head.index("单位") + 1).value = "安徽无线电厂"
@@ -726,7 +734,7 @@ def test_aliases():
         bk = os.path.join(tmp, "待核.xlsx")
         bookmd.write_xlsx(bk, r2, city="Beijing", log=lambda *a: None)
         wb = openpyxl.load_workbook(bk)
-        rv = wb["待核"]
+        rv = wb[bookmd.REVIEW_UNITS]
         hd = [c.value for c in rv[1]]
         for i in range(2, rv.max_row + 1):
             if rv.cell(row=i, column=2).value == "辽阳试验计算技术研究所":
@@ -938,7 +946,7 @@ def test_review_name_sheet():
         bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
 
         wb = openpyxl.load_workbook(x)
-        nh = toxlsx.sheet_of(wb, toxlsx.SHEET_NAMES)
+        nh = wb[bookmd.REVIEW_NAMES]
         head = [nh.cell(row=1, column=c).value for c in range(1, 8)]
         eq(head, ["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"],
            "表头写成中文,「Unit」不再看着像「这一行这家叫什么」")
@@ -953,6 +961,96 @@ def test_review_name_sheet():
         eq(sorted(got.keys()), ["From", "Name", "Remark", "Source", "Unit"],
            "读回来还是原来那几个字段名 —— 那句注没混成一列")
         eq((got["Unit"], got["Name"]), want, "中文表头照样对得上原字段")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_review_four_tabs():
+    """四张都冠「待核·」,四张都读得回来。
+
+    从前头一张叫「待核」,另三张挂着总表的名字(器件 / 整机 / 名称沿革)——
+    看着像已经核过的成品,整章核完了只核头一张。四张一律冠「待核·」,
+    一眼看出是一套;读的一头照新名字找,四张一张不落。
+
+    另一件事:城市认的是待核表自己的 City 列,不再认预览表的名字。预览表名
+    从前缀着市名(「厂所名录-北京」),那等于认定一本志只有一个市 —— 省志
+    一本里十几个市,缀哪一个都不对。"""
+    print("待核那四张")
+    tmp = tempfile.mkdtemp(prefix="gaz-four-")
+    try:
+        import openpyxl
+        md, _enc = bookmd.read_text(os.path.join(HERE, "fixture", "上海电子仪表工业志.md"))
+        res = EX.extract(md, book="试志", city="Shanghai")
+        x = os.path.join(tmp, "核.xlsx")
+        bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        # 四张一张不落,「取否」都在 A 列 —— 少一张,那一张核过的就全不进表
+        for tag, name in ((t, bookmd.REVIEW_TABS[t][0])
+                          for t in ("units", "semi", "comp", "names")):
+            ws = wb[name]
+            eq(ws.cell(row=1, column=1).value, "取否", "「%s」的取否在 A 列" % name)
+            check(ws.max_row > 1, "「%s」有行可核" % name)
+            # 四张都点头:每一张的头一行
+            ws.cell(row=2, column=1).value = "y"
+        # 省志用不上的那一栏:主管单位,手填一个
+        rv = wb[bookmd.REVIEW_UNITS]
+        h = {c.value: c.column for c in rv[1]}
+        rv.cell(row=2, column=h["主管单位"]).value = "上海市电子仪表工业局"
+        wb.save(x)
+
+        bundle, city, seen = bookmd.read_review(x)
+        for tag in ("units", "semi", "comp", "names"):
+            eq(len(bundle[tag]), 1, "「%s」那一张读回来一行" % bookmd.REVIEW_TABS[tag][0])
+            check(seen[tag] > 0, "「%s」看过几行要报得出来" % bookmd.REVIEW_TABS[tag][0])
+        eq(city, "Shanghai", "城市认的是行里那一列,不是预览表的名字")
+        eq(bundle["units"][0]["主管单位"], "上海市电子仪表工业局",
+           "手填的主管单位读得回来")
+
+        # 一路落进总表
+        master = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), master)
+        toxlsx.append(master, backup=False, **bundle)
+        rows = {r["raw"]: r for r in toxlsx.read_units_full(master)}
+        got = rows[bundle["units"][0]["Unit"]]
+        eq(got["主管单位"], "上海市电子仪表工业局", "总表里也是这一个")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_province_review_city():
+    """省志:一本里好几个市,城市一行一个,读回来各归各的。
+
+    从前城市是从预览表名末尾认的 —— 一本志一个市。省志一跑,那一处认出来的
+    要么是错的,要么是「Local」这种没头没脑的字。如今各行自己写着哪个市。"""
+    print("省志的城市读回来")
+    tmp = tempfile.mkdtemp(prefix="gaz-provrev-")
+    try:
+        import openpyxl
+        md = ("# 第一章 无锡市\n\n"
+              "## 第一节 无锡甲字无线电厂\n\n"
+              "无锡甲字无线电厂建于1958年，厂址无锡市解放路5号。\n\n"
+              "# 第二章 苏州市\n\n"
+              "## 第一节 苏州乙字电子厂\n\n"
+              "苏州乙字电子厂建于1960年，厂址苏州市人民路8号。\n")
+        res = EX.extract(md, book="江苏省志·电子工业志", province="江苏省")
+        x = os.path.join(tmp, "苏核.xlsx")
+        bookmd.write_xlsx(x, res, book="江苏省志·电子工业志", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        rv = wb[bookmd.REVIEW_UNITS]
+        h = {c.value: c.column for c in rv[1]}
+        for i in range(2, rv.max_row + 1):
+            rv.cell(row=i, column=h["取否"]).value = "y"
+        wb.save(x)
+
+        bundle, city, seen = bookmd.read_review(x)
+        got = {r["Unit"]: r.get("City", "") for r in bundle["units"]}
+        # 市名照志书的写法录中文 —— 京沪津那几个老城才有现成的拼音写法,
+        # 省志里冒出来的市一律照原文。geocode.js 里还没落点的,verify 会报出来。
+        eq(got.get("无锡甲字无线电厂"), "无锡", "无锡那一家归无锡")
+        eq(got.get("苏州乙字电子厂"), "苏州", "苏州那一家归苏州")
+        eq(city, "", "一本里两个市,就不报「这本志是哪个市的」—— 宁可不说")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1366,10 +1464,17 @@ def test_verify_knows_geocode_aliases():
 
 
 def test_old_review_workbook():
-    """手里核了一半的待核本子还挂着英文标签,照样读得回来。
+    """手里核了一半的待核本子还挂着旧标签,照样读得回来。
 
-    标签改名那天,谁手上正核着一章,那一章的工夫不能白费 —— 读的一头新旧
-    两种都认。城市也一样:从前是「Fact and Comp-北京」,如今是「厂所名录-北京」。"""
+    标签改名那天,谁手上正核着一章,那一章的工夫不能白费 —— 读的一头,历来
+    用过的名字一律认。这个本子上的标签改过两回:
+
+    * 头一回改的是那三张平表(Semi-Product → 器件 之类);
+    * 第二回把要核的四张一律冠上「待核·」,预览表末尾那个市名也去掉了。
+
+    城市跟着变:从前一本志只有一个市,城市就写在预览表名末尾(「厂所名录-北京」)
+    ——「待核」表里压根没有 City 列。如今城市一行一个,写在待核表自己的 City
+    列里;读旧本子才退回去照表名认。"""
     print("旧待核本子还认不认")
     tmp = tempfile.mkdtemp(prefix="gaz-oldrev-")
     try:
@@ -1378,27 +1483,44 @@ def test_old_review_workbook():
                          "## 第一节 辽阳无线电厂\n\n"
                          "辽阳无线电厂，创建于1965年3月，厂址辽阳路25号。\n",
                          book="试验志", city="Beijing")
-        rev = os.path.join(tmp, "试验志待核.xlsx")
-        bookmd.write_xlsx(rev, res, city="Beijing", book="试验志", log=lambda *a: None)
 
-        wb = openpyxl.load_workbook(rev)
-        eq(wb.sheetnames[1], bookmd.UNITS_PREVIEW + "Beijing", "新本子挂中文标签")
+        # 两代旧标签各试一遍:中间那一代(器件/整机/名称沿革 + 厂所名录-北京),
+        # 和最早那一代(Semi-Product 之类 + Fact and Comp-北京)
+        for gen, preview, flats in (
+                ("中间那一代", bookmd.UNITS_PREVIEW + "Beijing",
+                 {bookmd.REVIEW_SEMI: toxlsx.SHEET_SEMI,
+                  bookmd.REVIEW_COMP: toxlsx.SHEET_COMP,
+                  bookmd.REVIEW_NAMES: toxlsx.SHEET_NAMES}),
+                ("最早那一代", bookmd.UNITS_PREVIEW_OLD + "Beijing",
+                 {bookmd.REVIEW_SEMI: toxlsx.OLD_NAMES[toxlsx.SHEET_SEMI],
+                  bookmd.REVIEW_COMP: toxlsx.OLD_NAMES[toxlsx.SHEET_COMP],
+                  bookmd.REVIEW_NAMES: toxlsx.OLD_NAMES[toxlsx.SHEET_NAMES]})):
+            rev = os.path.join(tmp, "试验志待核-%s.xlsx" % gen)
+            bookmd.write_xlsx(rev, res, city="Beijing", book="试验志", log=lambda *a: None)
 
-        # 改回旧标签,当作是改名以前做的那一份
-        wb[bookmd.UNITS_PREVIEW + "Beijing"].title = bookmd.UNITS_PREVIEW_OLD + "Beijing"
-        for new_name, old_name in toxlsx.OLD_NAMES.items():
-            if new_name in wb.sheetnames:
+            wb = openpyxl.load_workbook(rev)
+            eq(wb.sheetnames[0], bookmd.REVIEW_UNITS, "新本子挂「待核·」那一套(%s)" % gen)
+
+            # 改回旧标签,当作是改名以前做的那一份
+            wb[bookmd.PREVIEW].title = preview
+            wb[bookmd.REVIEW_UNITS].title = "待核"
+            for new_name, old_name in flats.items():
                 wb[new_name].title = old_name
-        # 核过一行:取否写 y
-        rv = wb["待核"]
-        h = {c.value: c.column for c in rv[1]}
-        rv.cell(row=2, column=h["取否"]).value = "y"
-        wb.save(rev)
+            # 旧本子的待核表没有 City 列 —— 整列删掉,城市只剩表名上那一处
+            rv = wb["待核"]
+            h = {c.value: c.column for c in rv[1]}
+            rv.delete_cols(h["City"])
+            h = {c.value: c.column for c in rv[1]}
+            check("City" not in h, "这一份的待核表确实没有 City 列(%s)" % gen)
+            rv.cell(row=2, column=h["取否"]).value = "y"
+            wb.save(rev)
 
-        bundle, city, seen = bookmd.read_review(rev)
-        eq(city, "Beijing", "城市从旧写法的表名上照样认得出")
-        eq(len(bundle["units"]), 1, "核过的那一行读得回来")
-        eq(bundle["units"][0].get("Unit"), "辽阳无线电厂", "读回来的是那一家")
+            bundle, city, seen = bookmd.read_review(rev)
+            eq(city, "Beijing", "城市从旧写法的表名上照样认得出(%s)" % gen)
+            eq(len(bundle["units"]), 1, "核过的那一行读得回来(%s)" % gen)
+            eq(bundle["units"][0].get("Unit"), "辽阳无线电厂", "读回来的是那一家(%s)" % gen)
+            eq(bundle["units"][0].get("City"), "Beijing",
+               "待核表没写城市,就照表名给它补上(%s)" % gen)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1705,6 +1827,23 @@ def test_affiliation():
        "光「有限公司」不算股份制")
     eq(affil.nature_of("北京东方电子集团股份有限公司")[0], "股份制", "股份有限 → 股份制")
 
+    # —— 主管单位:说出名姓的那一个机关
+    eq(affil.body_of("1965年7月，该研究所改建为第四机械工业部直属的北京建中机器厂"),
+       "第四机械工业部", "「四机部直属」→ 第四机械工业部")
+    eq(affil.body_of("深圳电子集团公司是深圳市人民政府直接领导的行业性企业集团"),
+       "深圳市人民政府",
+       "往左只吃地名 ——「团公司是深圳市人民政府」整条认下来就成了鬼名字")
+    eq(affil.body_of("在北京市电子工业办公室领导下，该厂1957年建成投产"),
+       "北京市电子工业办公室", "机关在前、主管词在后,也认")
+    eq(affil.body_of("该厂隶属于北京市电子工业办公室"), "北京市电子工业办公室",
+       "「隶属于」后头跟的那一个")
+    eq(affil.body_of("该厂由江苏省电子工业厅主管"), "江苏省电子工业厅", "省一级的厅也认")
+    eq(affil.body_of("该所属四机部领导"), "四机部", "简称照原文,不替人改成全称")
+    eq(affil.body_of("该厂为原电子部惟一电声器件骨干生产厂"), "",
+       "「电子部惟一骨干厂」没说归谁管,不认")
+    eq(affil.body_of("该公司直属单位有：热电厂、工业气体厂、煤气厂"), "",
+       "说的是它下头有谁,不是它归谁")
+
     # —— 代号只作旁证
     eq(affil.code_of("北京有线电总厂(国营738厂）"), "738", "阿拉伯数字的代号")
     eq(affil.code_of("国营二六一厂"), "261", "中文数字的代号")
@@ -1757,6 +1896,10 @@ def test_affiliation_pipeline():
     eq(by["北京甲字无线电厂"]["性质"], "集体", "正文说集体企业")
     # 正文明说的压得住章标题 —— 标题是第三等,正文是第二等
     eq(by["北京乙字电子厂"]["隶属"], "市属", "正文明说的压得住章标题")
+    # 「隶属」说到层级,「主管单位」说出名姓 —— 两栏合起来才是一句完整的话
+    eq(by["北京乙字电子厂"]["主管单位"], "深圳市人民政府", "主管的是哪一个,单立一栏")
+    eq(by["北京甲字无线电厂"]["主管单位"], "",
+       "章标题只说得出层级,说不出名姓 —— 这一栏宁可空着")
     check("据章节标题" in by["北京甲字无线电厂"]["Remark"],
           "据标题定的要在备注里说明,页序会错乱")
 
@@ -1767,9 +1910,10 @@ def test_affiliation_pipeline():
         shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
         toxlsx.append(x, backup=False, units=[
             {"Unit": "北京甲字无线电厂", "City": "Beijing", "Source": "试志·一页",
-             "隶属": "归口", "性质": "集体"}])
+             "隶属": "归口", "主管单位": "北京市电子工业办公室", "性质": "集体"}])
         rows = {r["raw"]: r for r in toxlsx.read_units_full(x)}
         eq(rows["北京甲字无线电厂"]["隶属"], "归口", "写进总表,读得回来")
+        eq(rows["北京甲字无线电厂"]["主管单位"], "北京市电子工业办公室", "主管单位同上")
         eq(rows["北京甲字无线电厂"]["性质"], "集体", "性质同上")
 
         # 手填写岔一个字,verify 要拦下来
@@ -1954,7 +2098,8 @@ def main():
                test_dups_near_names,
                test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
-               test_review_name_sheet, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
+               test_review_name_sheet, test_review_four_tabs,
+               test_province_review_city, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
                test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
                test_old_sheet_name,

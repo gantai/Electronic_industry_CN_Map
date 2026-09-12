@@ -187,10 +187,12 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), backup=True,
                 _ensure_column(ws, "区", header_row=1)
                 h = _headers(ws, 2)
                 ws.cell(row=row, column=h["区"]).value = str(r["district"]).strip()
-            # 隶属(归哪一级主管)与性质(什么所有制)是两件事,分两栏
-            # —— 混作一栏就写不出「市属 · 集体企业」,图上也没法分别筛。
+            # 隶属(归哪一级)、主管单位(归哪一个)、性质(什么所有制)是三件
+            # 事,分三栏 —— 混作一栏就写不出「市属 · 北京市电子工业办公室 ·
+            # 集体企业」,图上也没法分别筛。「市属」说不出是哪一个局:改归另
+            # 一个局,级没变,主管的那一个变了,只记级就看不见这一笔。
             # 记的是志书写作那一年的状态;哪年划归了谁进「机构沿革」。
-            for label in ("省", "隶属", "性质"):
+            for label in ("省", "隶属", "主管单位", "性质"):
                 if r.get(label) not in (None, ""):
                     _ensure_column(ws, label, header_row=1)
                     h = _headers(ws, 2)
@@ -416,7 +418,7 @@ def read_units_full(xlsx_path):
             rec[key] = ws.cell(row=r, column=h[label]).value if label in h else None
         rec["统计年"] = ws.cell(row=r, column=h["统计年"]).value if "统计年" in h else None
         rec["district"] = ws.cell(row=r, column=h["区"]).value if "区" in h else None
-        for label in ("省", "隶属", "性质"):
+        for label in ("省", "隶属", "主管单位", "性质"):
             rec[label] = ws.cell(row=r, column=h[label]).value if label in h else None
         out.append(rec)
     return out

@@ -23,7 +23,21 @@ from . import cndate
 from . import extract as EX
 from . import toxlsx
 
-# 待核本子里那张预览表,名字末尾带着城市 —— 城市就是从这个名字上取的。
+#: 待核本子里那四张要核的表。**四张都要核** —— 从前头一张就叫「待核」,
+#: 像是只有它要核;另三张挂着总表的名字(器件 / 整机 / 名称沿革),
+#: 看着像成品。四张一律冠「待核·」,一眼看出是一套。
+REVIEW_UNITS = "待核·厂所"
+REVIEW_SEMI = "待核·器件"
+REVIEW_COMP = "待核·整机"
+REVIEW_NAMES = "待核·名称沿革"
+
+#: 照总表体例摆的那一张,只供看与粘,改它不算数。
+#: 从前叫「厂所名录-Shanghai」—— 跟总表那张正表同名,又缀个市名,
+#: 两头都误导:像是正表,又像是只收这一市(其实京沪津的行早混在一张里了),
+#: 省志跑起来更会写出「厂所名录-Local」这种没头没脑的名字。
+PREVIEW = "预览·照总表体例(改它不算数)"
+
+# 旧本子那张预览表,名字末尾带着城市 —— 城市就是从这个名字上取的。
 # 旧本子作「Fact and Comp-北京」,读的时候两种都认。
 UNITS_PREVIEW = "厂所名录-"
 UNITS_PREVIEW_OLD = "Fact and Comp-"
@@ -311,8 +325,8 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         except ValueError:
             return s
 
-    # ---- 厂所名录:两行表头,与原表一模一样
-    sheet = UNITS_PREVIEW + (city or "Local")
+    # ---- 照总表体例的那一张:两行表头,与原表一模一样
+    sheet = PREVIEW
     ws = wb.create_sheet(sheet)
     ws.append(["", "Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
                stats_year] + [""] * 7 + ["Remark", "Source", "别名"])
@@ -329,7 +343,7 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     # 只读「待核」。不写明白,在这儿改半天不算数,还没有一处告诉你。
     note = ws.cell(row=1, column=21,
                    value="↑ 此表照 CN_Electronic_Industry.xlsx 的体例生成,供预览与粘贴。"
-                         "改这里不算数 —— 要改请改「待核」表。")
+                         "改这里不算数 —— 要改请改「" + REVIEW_UNITS + "」那张。")
     note.font = Font(italic=True, color="996600")
     ws.cell(row=1, column=9).alignment = Alignment(horizontal="center")
     for c in range(1, 19):
@@ -348,12 +362,12 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
         w.freeze_panes = "B2"
         return w
 
-    flat(toxlsx.SHEET_SEMI, ["Product", "别名", "Research Insti", "Factory", "产量", "Time",
+    flat(REVIEW_SEMI, ["Product", "别名", "Research Insti", "Factory", "产量", "Time",
                           "Personnel", "Remark"], res["semi"])
-    flat(toxlsx.SHEET_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
+    flat(REVIEW_COMP, ["Product", "字长", "内存", "Speed（次秒）", "Research Insti",
                           "Factory", "用户", "产量", "别名", "Time", "Personnel", "Remark"], res["comp"])
     # 待核那份的沿革表也照总表的次序摆:序、单位、名称、起、至、关系
-    nh = wb.create_sheet(toxlsx.SHEET_NAMES)
+    nh = wb.create_sheet(REVIEW_NAMES)
     # 表头写成中文,把话说死:「Unit」看着像「这一行这家单位叫什么」,而它其实
     # 是钥匙 —— 一家单位的几行都写同一个今名。改叫「单位(今名)」就不会看岔。
     nh.append(["取否", "序", "单位(今名)", "当时名称", "自哪年起", "Remark", "Source"])
@@ -386,9 +400,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     nh_note.font = Font(italic=True, color="996600")
 
     # ---- 待核:核对用的那一张,原文摆在最后一列
-    rv = wb.create_sheet("待核")
+    rv = wb.create_sheet(REVIEW_UNITS)
     rv_head = (["取否", "单位", "别名", "置信", "出处", "据以立论的原文", "行业", "产品",
-                "始建", "终止", "创办", "地址", "省", "区", "隶属", "性质"] + stat_labels
+                "始建", "终止", "创办", "地址", "City", "省", "区",
+                "隶属", "主管单位", "性质"] + stat_labels
                + ["统计年", "备注", "来路", "页"])
     rv.append(rv_head)
     for c in range(1, len(rv_head) + 1):
@@ -398,22 +413,23 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
                    r.get("confidence", ""), r.get("Source", ""),
                    r.get("evidence", ""), r.get("Industry", ""), r.get("Product", ""),
                    num(r.get("Start Date")), num(r.get("End Date")), r.get("Founder", ""),
-                   r.get("Add.", ""), r.get("省", ""), r.get("district", ""),
-                   r.get("隶属", ""), r.get("性质", "")]
+                   r.get("Add.", ""), r.get("City", city), r.get("省", ""),
+                   r.get("district", ""),
+                   r.get("隶属", ""), r.get("主管单位", ""), r.get("性质", "")]
                   + [num(r.get(k)) for k in stat_keys]
                   + [r.get("统计年", ""), r.get("Remark", ""),
                      r.get("role", ""), r.get("page", "")])
     rv.freeze_panes = "D2"
-    for i, wid in enumerate([6, 28, 24, 6, 30, 90, 10, 22, 11, 11, 30, 20, 8, 7, 9, 9]
-                            + [9] * 8 + [8] + [30, 6, 6], start=1):
+    for i, wid in enumerate([6, 28, 24, 6, 30, 90, 10, 22, 11, 11, 30, 20, 10, 8, 7,
+                             9, 20, 9] + [9] * 8 + [8] + [30, 6, 6], start=1):
         rv.column_dimensions[get_column_letter(i)].width = wid
     for row in rv.iter_rows(min_row=2, min_col=6, max_col=6):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
     widths = {sheet: [26, 10, 20, 11, 11, 40, 9, 22] + [9] * 8 + [40, 26],
-              toxlsx.SHEET_SEMI: [6, 28, 20, 26, 24, 8, 11, 14, 30],
-              toxlsx.SHEET_COMP: [6, 30, 8, 12, 14, 30, 24, 26, 8, 20, 14, 16, 34],
-              toxlsx.SHEET_NAMES: [6, 26, 30, 11, 40, 26]}
+              REVIEW_SEMI: [6, 28, 20, 26, 24, 8, 11, 14, 30],
+              REVIEW_COMP: [6, 30, 8, 12, 14, 30, 24, 26, 8, 20, 14, 16, 34],
+              REVIEW_NAMES: [6, 26, 30, 11, 40, 26]}
     for nm, ws_widths in widths.items():
         w = wb[nm]
         for i, wid in enumerate(ws_widths, start=1):
@@ -422,10 +438,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
     # 「待核」排在头一张,打开就停在它上头 —— 从前排在最末,一开文件停在
     # 「Fact and Comp-<城>」预览表上:那张 A 列是一列光秃秃的单位名,表头空着,
     # 又没有「取否」列。要核对的人第一眼看见的,恰恰是唯一改了不算数的那张。
-    wb.move_sheet("待核", offset=-(len(wb.sheetnames) - 1))
-    wb.active = wb.sheetnames.index("待核")
+    wb.move_sheet(REVIEW_UNITS, offset=-(len(wb.sheetnames) - 1))
+    wb.active = wb.sheetnames.index(REVIEW_UNITS)
     for w in wb.worksheets:
-        w.sheet_view.tabSelected = (w.title == "待核")
+        w.sheet_view.tabSelected = (w.title == REVIEW_UNITS)
 
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     try:
@@ -444,10 +460,10 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print):
             % os.path.basename(alt))
         return alt
     log("Excel 已写到 %s" % path)
-    log("  五张表:待核、Semi-Product、Comp-Product、Name-History、%s" % sheet)
-    log("  打开就停在「待核」——「取否」在 A 列,写 y 的行才收。")
-    log("  另外三张(Semi/Comp/Name-History)的「取否」也在 A 列,别漏了;")
-    log("  「%s」是照原表体例排的预览,改它不算数。" % sheet)
+    log("  要核的四张:%s、%s、%s、%s" % (REVIEW_UNITS, REVIEW_SEMI, REVIEW_COMP, REVIEW_NAMES))
+    log("  **四张都要核** ——「取否」都在 A 列,写 y 的行才收,一张漏了那一张就全不进表。")
+    log("  打开停在「%s」上头。" % REVIEW_UNITS)
+    log("  另有「%s」一张,只供看与粘,改它不算数。" % sheet)
     return path
 
 
@@ -463,7 +479,8 @@ REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页"
                "单位": "Unit", "行业": "Industry", "产品": "Product",
                "始建": "Start Date", "终止": "End Date", "创办": "Founder",
                "地址": "Add.", "省": "省", "区": "district",
-               "隶属": "隶属", "性质": "性质",
+               "City": "City", "城市": "City", "市": "City",
+               "隶属": "隶属", "主管单位": "主管单位", "性质": "性质",
                "备注": "Remark", "出处": "Source", "统计年": "统计年",
                "据以立论的原文": "evidence"}
 REVIEW_COLS.update({label: key for key, label in STAT_COLS})
@@ -550,6 +567,36 @@ def merge_by_name(rows):
     return out, merged
 
 
+#: 读回来的时候,每一张认哪些标签 —— 新名在前,从前用过的跟在后头。
+#: 改名那天谁手上正核着一章,那一章的工夫不能白费。
+REVIEW_TABS = {
+    "units": (REVIEW_UNITS, "待核"),
+    "semi": (REVIEW_SEMI, toxlsx.SHEET_SEMI, toxlsx.OLD_NAMES[toxlsx.SHEET_SEMI]),
+    "comp": (REVIEW_COMP, toxlsx.SHEET_COMP, toxlsx.OLD_NAMES[toxlsx.SHEET_COMP]),
+    "names": (REVIEW_NAMES, toxlsx.SHEET_NAMES, toxlsx.OLD_NAMES[toxlsx.SHEET_NAMES]),
+}
+
+
+def review_tab(wb, tag):
+    """这一张在这本待核工作簿里挂的什么标签;一个也不在就 None。"""
+    for name in REVIEW_TABS[tag]:
+        if name in wb.sheetnames:
+            return name
+    return None
+
+
+def book_city_of(wb):
+    """旧本子的城市:预览表名末尾缀的那一截(「厂所名录-北京」/「Fact and Comp-北京」)。
+
+    新本子的预览表不缀城市了 —— 城市写在待核表自己的 City 列里,一行一个。
+    这个函数只为读旧本子留着。"""
+    for name in wb.sheetnames:
+        for prefix in (UNITS_PREVIEW, UNITS_PREVIEW_OLD):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+    return ""
+
+
 def read_review(path):
     """把核过的工作簿读回来:四张表里「取否」写了 y 的行。
 
@@ -557,25 +604,19 @@ def read_review(path):
     的就是你改过的样子。TSV 只当留底,不再回头去读:两处都能改,改了哪一处
     算数就说不清了。
 
-    返回 (四张表的行, 城市)。城市从「厂所名录-北京」这类表名上取
-    (旧本子作「Fact and Comp-北京」,一并认)。"""
+    返回 (四张表的行, 城市, 各表看过几行)。
+
+    城市认的是**每一行自己的 City 列**。从前认的是预览表名末尾那一截
+    (「厂所名录-北京」),那等于认定「一本志只有一个市」—— 省志一本里十几个
+    市,这条就不成立了。市志那一列整列写着同一个市,认出来的还是那一个,
+    不受影响。旧本子的待核表没有 City 列,这才退回去照表名认。"""
     import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True)
-    city = ""
-    for name in wb.sheetnames:
-        for prefix in (UNITS_PREVIEW, UNITS_PREVIEW_OLD):
-            if name.startswith(prefix):
-                city = name[len(prefix):]
-                break
-        if city:
-            break
+    book_city = book_city_of(wb)
 
     bundle, seen = {}, {}
-    for tag, sheet in (("units", "待核"), ("semi", toxlsx.SHEET_SEMI),
-                       ("comp", toxlsx.SHEET_COMP), ("names", toxlsx.SHEET_NAMES)):
-        # 手里做了一半的待核本子还挂着英文标签 —— 两种都认,不然核过的一整章白核
-        name = toxlsx.tab(wb, sheet) if sheet in toxlsx.OLD_NAMES else (
-            sheet if sheet in wb.sheetnames else None)
+    for tag in ("units", "semi", "comp", "names"):
+        name = review_tab(wb, tag)
         if name is None:
             bundle[tag], seen[tag] = [], 0
             continue
@@ -586,12 +627,18 @@ def read_review(path):
             if not _yes(r.pop("keep", "")):
                 continue
             r.pop("evidence", None)
-            if tag == "units" and city and not r.get("City"):
-                r["City"] = city
+            if tag == "units" and book_city and not r.get("City"):
+                r["City"] = book_city
             if tag == "names" and r.get("From") != "":
                 r["From"] = str(r["From"])
             kept.append(r)
         if tag == "units":
             kept, seen["merged"] = merge_by_name(kept)
         bundle[tag] = kept
+
+    # 报出来的那一个城市:各行写的都是同一个,才说得上「这本志是哪个市的」。
+    # 省志各行不同,就不报 —— 宁可不说,不好说错。
+    cities = set(str(r.get("City", "")).strip() for r in bundle["units"])
+    cities.discard("")
+    city = cities.pop() if len(cities) == 1 else book_city
     return bundle, city, seen
