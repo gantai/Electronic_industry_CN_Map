@@ -208,3 +208,30 @@ test("第三步:两个都填,以省为准", () => {
   assert.ok(c.args.includes("--province"));
   assert.ok(!c.args.includes("--city"));
 });
+
+// ---------------------------------------------------------------- 挑稿子那几栏
+
+import { draftsDir } from "../build/steps.js";
+
+test("转换稿目录:设置里没填就是仓库里那一个", () => {
+  assert.equal(draftsDir(WIN), "D:\\Coding\\CN_Map\\转换稿");
+  assert.equal(draftsDir(NIX), "/home/u/CN_Map/转换稿");
+  assert.equal(draftsDir({ ...WIN, draftsDir: "D:\\Archive\\转换稿" }), "D:\\Archive\\转换稿");
+});
+
+test("稿子与待核工作簿从目录里挑,不指望那个选文件框", () => {
+  /* 「浏览…」在这台机器上按了没反应 —— Electron 的选文件框本来就不保准。
+     这三栏的文件都在转换稿那一个已知目录里,列出来挑才稳当。 */
+  for (const [id, key] of [["inspect", "md"], ["review", "xlsx"], ["merge", "from"]]) {
+    const f = stepById(id).fields.find((x) => x.key === key);
+    assert.equal(f.type, "pick", id + " 的「" + f.label + "」该从目录里挑");
+    assert.equal(f.pickFrom, "drafts");
+    assert.ok(f.exts?.length, "得说清楚挑哪种后缀");
+  }
+});
+
+test("PDF 那一栏留着手填 —— 原件不在转换稿里,而且要说明浏览不保准", () => {
+  const f = stepById("convert").fields.find((x) => x.key === "pdf");
+  assert.equal(f.type, "path");
+  assert.match(f.hint, /贴|浏览/, "得告诉人贴路径最稳");
+});

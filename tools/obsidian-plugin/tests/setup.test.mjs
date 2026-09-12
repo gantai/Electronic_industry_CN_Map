@@ -188,3 +188,58 @@ test("从哪几处找起:库就在 D 盘时不重复列 D", () => {
   assert.equal(r[0], "D:\\");
   assert.equal(r.filter((x) => x === "D:\\").length, 1);
 });
+
+// ---------------------------------------------------------------- 挑稿子
+
+import { baseName, listDrafts } from "../build/setup.js";
+
+const DRAFTS = {
+  dirs: { "D:\\CN_Map\\转换稿": ["地方志", "node_modules"], "D:\\CN_Map\\转换稿\\地方志": [] },
+  files: {
+    "D:\\CN_Map\\转换稿": ["《北京工业志》第四篇.md", "《北京工业志》第四篇.xlsx",
+                           "~$开着的.xlsx", "读我.txt"],
+    "D:\\CN_Map\\转换稿\\地方志": ["《江苏省志》第三章.md"],
+    "D:\\CN_Map\\转换稿\\node_modules": ["不该看见.md"],
+  },
+};
+const DFS = {
+  exists: (p) => p in DRAFTS.dirs || p in DRAFTS.files,
+  listDirs: (p) => DRAFTS.dirs[p] ?? [],
+  listFiles: (p) => DRAFTS.files[p] ?? [],
+};
+
+test("挑稿子:只列要的那种后缀", () => {
+  const md = listDrafts("D:\\CN_Map\\转换稿", ["md"], DFS);
+  assert.ok(md.includes("D:\\CN_Map\\转换稿\\《北京工业志》第四篇.md"));
+  assert.ok(!md.some((f) => f.endsWith(".txt")), "别的后缀不列");
+  assert.ok(!md.some((f) => f.endsWith(".xlsx")), "要 md 就别给 xlsx");
+});
+
+test("挑稿子:子目录里的也找得到", () => {
+  const md = listDrafts("D:\\CN_Map\\转换稿", ["md"], DFS);
+  assert.ok(md.includes("D:\\CN_Map\\转换稿\\地方志\\《江苏省志》第三章.md"),
+            "《流程》说分不分子目录都认");
+});
+
+test("挑稿子:Excel 开着留下的 ~$ 锁文件不算稿子", () => {
+  const x = listDrafts("D:\\CN_Map\\转换稿", ["xlsx"], DFS);
+  assert.ok(!x.some((f) => baseName(f).startsWith("~$")), "得 " + JSON.stringify(x));
+  assert.equal(x.length, 1);
+});
+
+test("挑稿子:不进 node_modules", () => {
+  const md = listDrafts("D:\\CN_Map\\转换稿", ["md"], DFS);
+  assert.ok(!md.some((f) => f.includes("node_modules")));
+});
+
+test("挑稿子:目录不在、或问不出文件,回空不报错", () => {
+  assert.deepEqual(listDrafts("D:\\没有这个", ["md"], DFS), []);
+  assert.deepEqual(listDrafts("D:\\CN_Map\\转换稿", ["md"], { ...DFS, listFiles: undefined }), []);
+  assert.deepEqual(listDrafts("", ["md"], DFS), []);
+});
+
+test("末了那一截:两种分隔符都认", () => {
+  assert.equal(baseName("D:\\CN_Map\\转换稿\\某某志.md"), "某某志.md");
+  assert.equal(baseName("/home/u/CN_Map/某某志.md"), "某某志.md");
+  assert.equal(baseName("某某志.md"), "某某志.md");
+});

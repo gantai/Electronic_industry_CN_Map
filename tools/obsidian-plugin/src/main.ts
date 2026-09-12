@@ -122,7 +122,7 @@ export default class GazPlugin extends Plugin {
     /* 「核对」那一步不跑命令,是拿系统默认的程序把工作簿开起来 —— 多半是 Excel。
        这一步没有捷径,也不该有:判断的活儿归人。 */
     if (step.id === "review") {
-      new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, (v) => {
+      new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, ctxOf(this.settings), (v) => {
         this.seeds[step.id] = v;
         void this.openExternally(v.xlsx);
       }).open();
@@ -150,7 +150,7 @@ export default class GazPlugin extends Plugin {
       go({});
       return;
     }
-    new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, (v) => {
+    new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, ctxOf(this.settings), (v) => {
       const gap = missing(step, v);
       if (gap) {
         new Notice(gap);

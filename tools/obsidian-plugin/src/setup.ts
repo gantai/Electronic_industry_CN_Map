@@ -110,6 +110,8 @@ export interface Fs {
   exists(p: string): boolean;
   /** 这个目录底下有哪几个**子目录**(不含文件)。读不动就回空 */
   listDirs(p: string): string[];
+  /** 这个目录底下有哪几个**文件**。挑稿子才用得着,别处不必给 */
+  listFiles?(p: string): string[];
 }
 
 /**
@@ -156,4 +158,48 @@ export function candidateRoots(vaultRoot: string): string[] {
     out.unshift(home);
   }
   return out;
+}
+
+
+// ---------------------------------------------------------------- 挑稿子
+
+/**
+ * 转换稿目录里有哪几份稿子(或待核工作簿)。
+ *
+ * **这是给「浏览…」顶班的。** Electron 里那个 `<input type=file>` 有的机器上
+ * 压根不弹窗,按了没反应 —— 头一回设置那张卡片上已经栽过一次。稿子本来就都在
+ * 一个目录里,列出来让人挑,比开系统的选文件框既稳当又省事。
+ *
+ * 往下找两层就够 ——《流程》说稿子「分不分子目录都认」,可也没人会埋到第三层去;
+ * 限着层数,顺带也就限住了看多少个目录。
+ */
+export function listDrafts(dir: string, exts: string[], fs: Fs, maxDepth = 2): string[] {
+  if (!dir || !fs.listFiles || !fs.exists(dir)) return [];
+  const want = exts.map((e) => "." + e.toLowerCase().replace(/^\./, ""));
+  const hit = (name: string) => want.some((e) => name.toLowerCase().endsWith(e));
+  const out: string[] = [];
+  let level = [dir];
+  for (let depth = 0; depth <= maxDepth && level.length; depth++) {
+    const next: string[] = [];
+    for (const d of level) {
+      for (const f of fs.listFiles(d)) {
+        // Excel 开着会留下 ~$ 打头的锁文件,那不是稿子
+        if (hit(f) && !f.startsWith("~$") && !f.startsWith(".")) out.push(joinPath(d, f));
+      }
+      if (depth < maxDepth) {
+        for (const sub of fs.listDirs(d)) {
+          if (!SKIP_DIRS.has(sub) && !sub.startsWith(".")) next.push(joinPath(d, sub));
+        }
+      }
+    }
+    level = next;
+  }
+  return out.sort();
+}
+
+/** 路径末了那一截 —— 下拉里显示的就是它,整条路径太长 */
+export function baseName(p: string): string {
+  const t = String(p || "").replace(/[\\/]+$/, "");
+  const i = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  return i < 0 ? t : t.slice(i + 1);
 }

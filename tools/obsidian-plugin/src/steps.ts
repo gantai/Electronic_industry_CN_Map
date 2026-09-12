@@ -24,7 +24,7 @@ export interface Cmd {
   cwd: string;
 }
 
-export type FieldType = "text" | "number" | "path" | "select" | "toggle";
+export type FieldType = "text" | "number" | "path" | "pick" | "select" | "toggle";
 
 export interface Field {
   key: string;
@@ -36,8 +36,10 @@ export interface Field {
   required?: boolean;
   value?: string;
   options?: { value: string; label: string }[];
-  /** path 专用:选文件时只看这几种后缀 */
+  /** path / pick 专用:只看这几种后缀 */
   exts?: string[];
+  /** pick 专用:从哪个目录里列文件。眼下只有「转换稿」一处 */
+  pickFrom?: "drafts";
 }
 
 export type Vals = Record<string, string>;
@@ -124,6 +126,8 @@ export const STEPS: Step[] = [
       {
         key: "pdf", label: "志书 PDF", type: "path", required: true,
         exts: ["pdf"], placeholder: "D:\\Archive\\材料\\某某志.pdf",
+        hint: "整条路径贴进来最稳 —— 在资源管理器里点一下地址栏空白处,路径就成了" +
+              "可复制的文字。「浏览…」有的机器上弹不出窗。",
       },
       {
         key: "first", label: "起页", type: "number", required: true,
@@ -161,8 +165,9 @@ export const STEPS: Step[] = [
     blurb: "标题层级、页码锚点、有没有硬断行。本来就是 .md 的稿子也要跑。",
     readOnly: true,
     fields: [
-      { key: "md", label: "稿子", type: "path", required: true, exts: ["md"],
-        placeholder: "转换稿\\《某某志》1999 第三章.md" },
+      { key: "md", label: "稿子", type: "pick", required: true, exts: ["md"],
+        pickFrom: "drafts", placeholder: "转换稿\\《某某志》1999 第三章.md",
+        hint: "转换稿目录里的稿子都列在这儿。不在列里就把整条路径贴进来。" },
     ],
     build: (v, ctx) => [gaz(ctx, ["inspect", v.md])],
   },
@@ -215,8 +220,8 @@ export const STEPS: Step[] = [
     name: "核对 —— 只有人能干的活",
     blurb: "打开待核工作簿,「取否」写 y 的行才收。插件代不了这一步。",
     fields: [
-      { key: "xlsx", label: "待核工作簿", type: "path", required: true, exts: ["xlsx"],
-        placeholder: "转换稿\\《某某志》1999 第三章.xlsx" },
+      { key: "xlsx", label: "待核工作簿", type: "pick", required: true, exts: ["xlsx"],
+        pickFrom: "drafts", placeholder: "转换稿\\《某某志》1999 第三章.xlsx" },
     ],
     /* 用系统默认的程序开它 —— 多半是 Excel。这一条不是 gaz,见 main.ts 的特判 */
     build: () => [],
@@ -228,7 +233,8 @@ export const STEPS: Step[] = [
     name: "并进总表",
     blurb: "核过的行追加进 CN_Electronic_Industry.xlsx。只添不改,先自动备份。",
     fields: [
-      { key: "from", label: "核过的待核工作簿", type: "path", required: true, exts: ["xlsx"] },
+      { key: "from", label: "核过的待核工作簿", type: "pick", required: true, exts: ["xlsx"],
+        pickFrom: "drafts" },
       { key: "dryRun", label: "先空跑一遍(不写)", type: "toggle", value: "true",
         hint: "**头一回先空跑。** 看清楚要添几行、跳过几行,再关掉这个开关真跑。" },
     ],
@@ -342,4 +348,11 @@ export function missing(step: Step, v: Vals): string | null {
     if (f.required && !(v[f.key] ?? "").trim()) return "还没填:" + f.label;
   }
   return null;
+}
+
+
+/** 转换稿在哪个目录。设置里没填就是仓库里的 `转换稿\` —— 跟 gaz 的默认一致 */
+export function draftsDir(ctx: Ctx): string {
+  const sep = ctx.repoDir.includes("\\") ? "\\" : "/";
+  return ctx.draftsDir.trim() || (ctx.repoDir.replace(/[\\/]+$/, "") + sep + "转换稿");
 }

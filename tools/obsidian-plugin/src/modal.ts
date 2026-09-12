@@ -1,11 +1,40 @@
 /* 两个对话框:填参数的、问一句「真跑?」的。 */
 
 import { App, Modal, Setting } from "obsidian";
-import type { Field, Step, Vals } from "./steps";
-import { missing } from "./steps";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import type { Ctx, Field, Step, Vals } from "./steps";
+import { draftsDir, missing } from "./steps";
+import { baseName, listDrafts, type Fs } from "./setup";
 
 /** Electron 给 File 挂了个 path,标准浏览器里没有 —— 选文件拿整条路径全靠它 */
 type ElectronFile = File & { path?: string };
+
+/** 真的文件系统,喂给 setup.ts 里那几个纯函数 */
+const REAL_FS: Fs = {
+  exists: (p) => existsSync(p),
+  listDirs: (p) => kids(p, true),
+  listFiles: (p) => kids(p, false),
+};
+
+function kids(p: string, wantDirs: boolean): string[] {
+  try {
+    return readdirSync(p, { withFileTypes: true })
+      .filter((e) => {
+        // 有的盘上 withFileTypes 认不出类型(网络盘、符号链接),退回去 stat 一次
+        if (typeof e.isDirectory === "function" && (e.isDirectory() || e.isFile())) {
+          return e.isDirectory() === wantDirs;
+        }
+        try {
+          return statSync(p + "/" + e.name).isDirectory() === wantDirs;
+        } catch {
+          return false;
+        }
+      })
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
 
 export class StepFormModal extends Modal {
   private vals: Vals = {};
@@ -15,6 +44,7 @@ export class StepFormModal extends Modal {
     app: App,
     private step: Step,
     private seed: Vals,
+    private ctx: Ctx,
     private onGo: (v: Vals) => void,
   ) {
     super(app);
@@ -82,19 +112,53 @@ export class StepFormModal extends Modal {
     });
 
     if (f.type === "path") {
-      /* Obsidian 里开系统的选文件框,靠的是一个藏起来的 <input type=file>。
-         Electron 给选中的 File 挂了 .path,拿的就是那条整路径。 */
+      /* Obsidian 里开系统的选文件框,靠的是一个 <input type=file>。
+         **别拿 display:none 藏它** —— 藏成那样,Electron 有的机器上压根不弹窗,
+         按了没反应(头一回设置那张卡片上栽过一次)。挪到屏幕外头,还点得动。
+         就算这样也不保准,所以贴路径那条永远开着。 */
       const picker = parent.createEl("input", { type: "file" });
-      picker.style.display = "none";
+      picker.style.position = "fixed";
+      picker.style.left = "-10000px";
+      picker.style.width = "1px";
+      picker.style.height = "1px";
+      picker.style.opacity = "0";
       if (f.exts?.length) picker.accept = f.exts.map((e) => "." + e).join(",");
       picker.addEventListener("change", () => {
         const file = picker.files?.[0] as ElectronFile | undefined;
-        if (file?.path) {
-          this.vals[f.key] = file.path;
-          if (box) box.value = file.path;
+        if (!file?.path) {
+          s.setDesc("这台机器上弹不出选文件框 —— 把整条路径贴进上头那一栏。");
+          return;
         }
+        this.vals[f.key] = file.path;
+        if (box) box.value = file.path;
       });
-      s.addButton((b) => b.setButtonText("浏览…").onClick(() => picker.click()));
+      s.addButton((b) =>
+        b.setButtonText("浏览…")
+          .setTooltip("有的机器上弹不出窗;弹不出就贴路径")
+          .onClick(() => picker.click()));
+    }
+
+    if (f.type === "pick") {
+      /* 稿子与待核工作簿都在转换稿那一个目录里 —— 列出来让人挑,
+         不必去碰那个不保准的选文件框。列不出来(目录空着、还没转稿子)
+         就说一句,那一栏照旧手填。 */
+      const dir = draftsDir(this.ctx);
+      const found = listDrafts(dir, f.exts ?? [], REAL_FS);
+      if (!found.length) {
+        s.setDesc((f.hint ? f.hint + " " : "") +
+          "(" + dir + " 里眼下没有 " + (f.exts ?? []).join(" / ") + " —— 手填整条路径)");
+        return;
+      }
+      s.addDropdown((d) => {
+        d.addOption("", "—— 挑一份(" + found.length + " 份)——");
+        for (const full of found) d.addOption(full, baseName(full));
+        d.setValue(found.includes(this.vals[f.key]) ? this.vals[f.key] : "");
+        d.onChange((v) => {
+          if (!v) return;
+          this.vals[f.key] = v;
+          if (box) box.value = v;
+        });
+      });
     }
   }
 
