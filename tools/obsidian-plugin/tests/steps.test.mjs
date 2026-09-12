@@ -202,6 +202,81 @@ test("末尾那一行不带换行,也得喂出来", async () => {
   assert.equal(r.out.trim().split("\n").at(-1), "末一行没换行");
 });
 
+// ------------------------------------------------------- 选文件框
+
+test("选文件框:新版 Obsidian 搁在 @electron/remote", async () => {
+  const { findDialog } = await import("../build/dialog.js");
+  const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) };
+  const got = findDialog((m) => {
+    if (m === "@electron/remote") return { dialog };
+    throw new Error("没有这个模块");
+  });
+  assert.equal(got, dialog);
+});
+
+test("选文件框:老版搁在 electron.remote,也找得着", async () => {
+  const { findDialog } = await import("../build/dialog.js");
+  const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) };
+  const got = findDialog((m) => {
+    if (m === "@electron/remote") throw new Error("老版没有这个");
+    if (m === "electron") return { remote: { dialog } };
+    throw new Error("没有这个模块");
+  });
+  assert.equal(got, dialog, "头一路不通要接着试下一路,不能就此作罢");
+});
+
+test("选文件框:两处都没有,说出来", async () => {
+  /* 这才是要紧的一条。从前是藏起来的 <input type=file> 去 .click():
+     开不出来时它什么也不做 —— 不报错、不弹窗、按钮按下去一点反应也没有,
+     这个坑这个项目里栽过三次。如今开不出来必定回 unavailable,
+     由界面当场说一句。 */
+  const { findDialog, pickFile } = await import("../build/dialog.js");
+  const none = () => { throw new Error("没有这个模块"); };
+  assert.equal(findDialog(none), null);
+  const r = await pickFile({ exts: ["pdf"] }, none);
+  assert.equal(r.unavailable, true, "开不出来必须说,不许静悄悄什么也不发生");
+  assert.equal(r.path, "");
+});
+
+test("选文件框:挑中了就回整条路径,取消了不算 unavailable", async () => {
+  const { pickFile } = await import("../build/dialog.js");
+  let saw = null;
+  const req = () => ({ dialog: {
+    showOpenDialog: async (o) => { saw = o; return { canceled: false, filePaths: ["D:\\志\\某某志.pdf"] }; },
+  } });
+  const r = await pickFile({ title: "志书 PDF", exts: ["pdf"], startIn: "D:\\Archive" }, req);
+  assert.equal(r.path, "D:\\志\\某某志.pdf");
+  assert.ok(!r.unavailable);
+  assert.deepEqual(saw.properties, ["openFile"]);
+  assert.equal(saw.defaultPath, "D:\\Archive");
+  assert.deepEqual(saw.filters[0].extensions, ["pdf"], "只让挑 pdf");
+
+  const cancelled = await pickFile({}, () => ({ dialog: {
+    showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+  } }));
+  assert.equal(cancelled.path, "");
+  assert.ok(!cancelled.unavailable, "自己取消的不是「开不出来」,别拿告诫吓人");
+});
+
+test("第一步那份 PDF:从库里列着挑,不指望选文件框", async () => {
+  /* 「浏览…」按了没反应,这个坑栽过三次。列表不经 Electron 的对话框,
+     一定列得出来 —— 所以列表是正路,浏览只是给搁在库外头的补漏。 */
+  const f = (stepById("convert").fields ?? []).find((x) => x.key === "pdf");
+  assert.equal(f.type, "pick", "得是列着挑的那一种");
+  assert.equal(f.pickFrom, "vault", "志书原件搁在库里,就从库里列");
+  assert.deepEqual(f.exts, ["pdf"]);
+  assert.equal(f.browse, true, "搁在库外头的还得有「浏览…」兜着");
+});
+
+test("库里的整条路径:两种分隔符不许混着拼", async () => {
+  /* 库根是系统的写法(Windows 上反斜杠),库内的相对路径一律正斜杠。
+     直接拼出来的是 D:\Archive/材料/某某志.pdf 这种半中半西的路径。 */
+  const { joinVault } = await import("../build/setup.js");
+  assert.equal(joinVault("D:\\Archive", "材料/某某志.pdf"), "D:\\Archive\\材料\\某某志.pdf");
+  assert.equal(joinVault("D:\\Archive\\", "某某志.pdf"), "D:\\Archive\\某某志.pdf");
+  assert.equal(joinVault("/home/me/库", "材料/某某志.pdf"), "/home/me/库/材料/某某志.pdf");
+});
+
 // ---------------------------------------------------------------- git
 
 test("上线那一串:六句,顺序不许动", () => {
@@ -302,10 +377,13 @@ test("稿子与待核工作簿从目录里挑,不指望那个选文件框", () =
   }
 });
 
-test("PDF 那一栏留着手填 —— 原件不在转换稿里,而且要说明浏览不保准", () => {
+test("PDF 那一栏三条路都留着:列表、浏览、手填", () => {
+  /* 原件不在转换稿里,在库里 —— 所以列的是库(见底下那条专门的)。
+     列表是正路;搁在库外头的(移动硬盘、下载文件夹)还得有浏览与手填兜着。 */
   const f = stepById("convert").fields.find((x) => x.key === "pdf");
-  assert.equal(f.type, "path");
-  assert.match(f.hint, /贴|浏览/, "得告诉人贴路径最稳");
+  assert.equal(f.type, "pick");
+  assert.equal(f.browse, true);
+  assert.match(f.hint, /贴|浏览|挑/, "得告诉人这几条路怎么走");
 });
 
 test("待核工作簿跟稿子同目录同名 —— 第四、五步据此自己带过来", () => {

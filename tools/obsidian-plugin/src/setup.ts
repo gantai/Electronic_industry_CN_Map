@@ -203,3 +203,15 @@ export function baseName(p: string): string {
   const i = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
   return i < 0 ? t : t.slice(i + 1);
 }
+
+
+/** 库里某个文件的整条路径。
+ *
+ *  Obsidian 那头两种写法各不相同:库根是系统的写法(Windows 上带反斜杠),
+ *  库内的相对路径一律用正斜杠。拼起来要归一,不然传给 python 的是
+ *  `D:\\Archive/材料/某某志.pdf` 这种半中半西的路径。 */
+export function joinVault(base: string, rel: string): string {
+  const b = base.replace(/[\\/]+$/, "");
+  const sep = b.includes("\\") ? "\\" : "/";
+  return b + sep + rel.split("/").join(sep);
+}

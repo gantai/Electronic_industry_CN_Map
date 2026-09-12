@@ -38,8 +38,12 @@ export interface Field {
   options?: { value: string; label: string }[];
   /** path / pick 专用:只看这几种后缀 */
   exts?: string[];
-  /** pick 专用:从哪个目录里列文件。眼下只有「转换稿」一处 */
-  pickFrom?: "drafts";
+  /** pick 专用:从哪儿列文件。
+   *  drafts = 仓库的转换稿目录;vault = 整个 Obsidian 库(库里的原件,如志书 PDF) */
+  pickFrom?: "drafts" | "vault";
+  /** 另给一个「浏览…」按钮,开系统的选文件框。
+   *  **列表是正路,这个是补漏** —— 原件搁在库外头(移动硬盘、下载文件夹)才用得着。 */
+  browse?: boolean;
 }
 
 export type Vals = Record<string, string>;
@@ -124,14 +128,19 @@ export const STEPS: Step[] = [
     blurb: "扫描件 → Markdown。全程最慢的一步,挂着让它跑。",
     fields: [
       {
-        key: "pdf", label: "志书 PDF", type: "path", required: true,
+        /* 从前这一栏只有一个「浏览…」,而那个按钮在有的机器上按了没反应
+           (Electron 里藏起来的 <input type=file>,见 dialog.ts)。
+           如今**先列库里的 PDF 让人挑** —— 原件本来就该搁库里,列表不经
+           Electron 的对话框,一定列得出来。浏览与手填都还在,给搁在库外头的。 */
+        key: "pdf", label: "志书 PDF", type: "pick", required: true, browse: true,
+        pickFrom: "vault",
         exts: ["pdf"], placeholder: "D:\\Archive\\材料\\某某志.pdf",
         hint: "**原件搁在库里(D:\\Archive\\材料),别搁进仓库** —— 一本扫描的志书" +
               "几百 MB,git 会把它永远留在历史里,删掉也还在(仓库的 .gitignore " +
               "挡着 *.pdf,就是这道保险)。进仓库的是转出来的稿子。" +
-              "搁在别处也照跑,这一栏认整条路径。\n" +
-              "整条路径贴进来最稳 —— 在资源管理器里点一下地址栏空白处,路径就成了" +
-              "可复制的文字。「浏览…」有的机器上弹不出窗。",
+              "库里的 PDF 都列在下头,挑一份就是。\n" +
+              "搁在库外头的(移动硬盘、下载文件夹)按「浏览…」,或者把整条路径" +
+              "贴进来 —— 在资源管理器里点一下地址栏空白处,路径就成了可复制的文字。",
       },
       {
         key: "first", label: "起页", type: "number", required: true,

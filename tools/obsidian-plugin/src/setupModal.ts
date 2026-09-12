@@ -9,9 +9,8 @@ import {
   PYTHON_TRIES, repoProblem, scanForRepo, summarize, type Detected, type Fs,
 } from "./setup";
 import { capture } from "./runner";
+import { pickFile } from "./dialog";
 import type { GazSettings } from "./settings";
-
-type ElectronFile = File & { path?: string };
 
 /** 喂给 setup.ts 里那几个纯函数的真家伙 */
 const REAL_FS: Fs = {
@@ -86,39 +85,16 @@ export class SetupModal extends Modal {
 
     this.say = contentEl.createEl("pre", { cls: "gaz-facts" });
 
+    /* 开的是 Electron 自己的对话框(见 dialog.ts),不是藏起来的
+       `<input type=file>` —— 那个从前在这儿按了一点反应也没有。 */
     const more = contentEl.createDiv({ cls: "gaz-setup-more" });
-    const picker = more.createEl("input", { type: "file" });
-    /* 不用 display:none —— 藏成那样,Electron 有时就不弹窗了(按了没反应)。
-       挪到屏幕外头,元素还在、还点得动。 */
-    picker.style.position = "fixed";
-    picker.style.left = "-10000px";
-    picker.style.width = "1px";
-    picker.style.height = "1px";
-    picker.style.opacity = "0";
-    picker.addEventListener("change", () => {
-      const f = picker.files?.[0] as ElectronFile | undefined;
-      if (!f?.path) {
-        this.tell("这条路在这台机器上不灵 —— 把路径粘进上头那一栏吧。", true);
-        return;
-      }
-      const root = findRepoRoot(f.path, existsSync);
-      if (!root) {
-        this.tell(
-          "从「" + f.path + "」往上找了十来层,没见着 tools\\gazetteer\\gaz.py。" +
-          "挑一个**仓库里**的文件试试 —— CN_Electronic_Industry.xlsx 就行。",
-          true,
-        );
-        return;
-      }
-      this.setRepo(root);
-    });
     const pick = more.createEl("a", {
       cls: "gaz-setup-link",
-      text: "或者挑仓库里随便一个文件(有的机器上这个弹不出窗,那就粘路径)",
+      text: "或者挑仓库里随便一个文件(CN_Electronic_Industry.xlsx 就行)",
     });
     pick.onclick = (e) => {
       e.preventDefault();
-      picker.click();
+      void this.browse();
     };
 
     new Setting(contentEl)
@@ -134,6 +110,27 @@ export class SetupModal extends Modal {
     // 一开就自己找 —— 找着了这张卡片等于不用填,找不着再请人粘路径
     if (this.repo) this.check();
     else void this.hunt();
+  }
+
+  /** 挑仓库里随便一个文件,从它往上找仓库根。 */
+  private async browse(): Promise<void> {
+    const r = await pickFile({ title: "挑仓库里随便一个文件" }, (m) => require(m));
+    if (r.unavailable) {
+      this.tell("这套 Obsidian 里开不出系统的选文件框 —— " +
+                "按「自己找」,或者把路径粘进上头那一栏。", true);
+      return;
+    }
+    if (!r.path) return;              // 自己取消的,不必说什么
+    const root = findRepoRoot(r.path, existsSync);
+    if (!root) {
+      this.tell(
+        "从「" + r.path + "」往上找了十来层,没见着 tools\\gazetteer\\gaz.py。" +
+        "挑一个**仓库里**的文件试试 —— CN_Electronic_Industry.xlsx 就行。",
+        true,
+      );
+      return;
+    }
+    this.setRepo(root);
   }
 
   private setRepo(dir: string): void {

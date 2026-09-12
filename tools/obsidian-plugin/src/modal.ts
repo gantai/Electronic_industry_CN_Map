@@ -1,13 +1,11 @@
 /* 两个对话框:填参数的、问一句「真跑?」的。 */
 
-import { App, Modal, Setting } from "obsidian";
+import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import type { Ctx, Field, Step, Vals } from "./steps";
 import { draftsDir, missing } from "./steps";
-import { baseName, listDrafts, type Fs } from "./setup";
-
-/** Electron 给 File 挂了个 path,标准浏览器里没有 —— 选文件拿整条路径全靠它 */
-type ElectronFile = File & { path?: string };
+import { baseName, joinVault, listDrafts, type Fs } from "./setup";
+import { pickFile } from "./dialog";
 
 /** 真的文件系统,喂给 setup.ts 里那几个纯函数 */
 const REAL_FS: Fs = {
@@ -111,42 +109,44 @@ export class StepFormModal extends Modal {
       box = t.inputEl;
     });
 
-    if (f.type === "path") {
-      /* Obsidian 里开系统的选文件框,靠的是一个 <input type=file>。
-         **别拿 display:none 藏它** —— 藏成那样,Electron 有的机器上压根不弹窗,
-         按了没反应(头一回设置那张卡片上栽过一次)。挪到屏幕外头,还点得动。
-         就算这样也不保准,所以贴路径那条永远开着。 */
-      const picker = parent.createEl("input", { type: "file" });
-      picker.style.position = "fixed";
-      picker.style.left = "-10000px";
-      picker.style.width = "1px";
-      picker.style.height = "1px";
-      picker.style.opacity = "0";
-      if (f.exts?.length) picker.accept = f.exts.map((e) => "." + e).join(",");
-      picker.addEventListener("change", () => {
-        const file = picker.files?.[0] as ElectronFile | undefined;
-        if (!file?.path) {
-          s.setDesc("这台机器上弹不出选文件框 —— 把整条路径贴进上头那一栏。");
-          return;
-        }
-        this.vals[f.key] = file.path;
-        if (box) box.value = file.path;
-      });
+    const take = (v: string) => {
+      this.vals[f.key] = v;
+      if (box) box.value = v;
+    };
+
+    if (f.type === "path" || f.browse) {
+      /* 开的是 Electron 自己的 `dialog.showOpenDialog`,不是藏起来的
+         `<input type=file>` —— 那个在有的机器上按了一点反应也没有,
+         这个坑这个项目里栽过三次(见 dialog.ts 开头)。
+         开不出来就当场说一句,决不静悄悄什么也不发生。 */
       s.addButton((b) =>
-        b.setButtonText("浏览…")
-          .setTooltip("有的机器上弹不出窗;弹不出就贴路径")
-          .onClick(() => picker.click()));
+        b.setButtonText("浏览…").onClick(async () => {
+          const r = await pickFile(
+            { title: f.label, exts: f.exts, startIn: this.vaultRoot() },
+            (m) => require(m),
+          );
+          if (r.unavailable) {
+            const say = "这套 Obsidian 里开不出系统的选文件框 —— " +
+                        "从下头的单子里挑,或者把整条路径贴进上头那一栏。";
+            s.setDesc(say);
+            new Notice(say, 8000);
+            return;
+          }
+          if (r.path) take(r.path);
+        }));
     }
 
     if (f.type === "pick") {
-      /* 稿子与待核工作簿都在转换稿那一个目录里 —— 列出来让人挑,
-         不必去碰那个不保准的选文件框。列不出来(目录空着、还没转稿子)
-         就说一句,那一栏照旧手填。 */
-      const dir = draftsDir(this.ctx);
-      const found = listDrafts(dir, f.exts ?? [], REAL_FS);
+      /* **列表是正路。** 稿子与待核工作簿都在转换稿那一个目录里,志书原件在库里 ——
+         列出来让人挑,一步也不经系统的对话框,所以一定列得出来。
+         列不出来(目录空着、库里没有那种文件)就说一句,那一栏照旧手填。 */
+      const fromVault = f.pickFrom === "vault";
+      const found = fromVault ? this.vaultFiles(f.exts ?? [])
+                              : listDrafts(draftsDir(this.ctx), f.exts ?? [], REAL_FS);
+      const where = fromVault ? "库里" : draftsDir(this.ctx) + " 里";
       if (!found.length) {
         s.setDesc((f.hint ? f.hint + " " : "") +
-          "(" + dir + " 里眼下没有 " + (f.exts ?? []).join(" / ") + " —— 手填整条路径)");
+          "(" + where + "眼下没有 " + (f.exts ?? []).join(" / ") + " —— 手填整条路径)");
         return;
       }
       s.addDropdown((d) => {
@@ -154,12 +154,31 @@ export class StepFormModal extends Modal {
         for (const full of found) d.addOption(full, baseName(full));
         d.setValue(found.includes(this.vals[f.key]) ? this.vals[f.key] : "");
         d.onChange((v) => {
-          if (!v) return;
-          this.vals[f.key] = v;
-          if (box) box.value = v;
+          if (v) take(v);
         });
       });
     }
+  }
+
+  /** 库自己在硬盘上的哪儿。问不出就算了 —— 拼不出整条路径,列表就空着。 */
+  private vaultRoot(): string {
+    const a = this.app.vault.adapter as { getBasePath?: () => string };
+    return typeof a.getBasePath === "function" ? a.getBasePath() : "";
+  }
+
+  /** 库里这几种后缀的文件,连整条路径。
+   *
+   *  Obsidian 自己就把库里的文件都索引着(PDF 它本来就认得、还能翻),
+   *  所以这一份单子不必去读磁盘,更不必去碰那个不保准的选文件框。 */
+  private vaultFiles(exts: string[]): string[] {
+    const base = this.vaultRoot();
+    if (!base) return [];
+    const want = new Set(exts.map((e) => e.toLowerCase()));
+    return this.app.vault
+      .getFiles()
+      .filter((t: TFile) => want.has((t.extension || "").toLowerCase()))
+      .map((t: TFile) => joinVault(base, t.path))
+      .sort();
   }
 
   onClose(): void {
