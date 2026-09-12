@@ -8,7 +8,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { STEPS, gaz, gazPath, missing, reviewBookOf, stepById, groups } from "../build/steps.js";
+import { STEPS, draftOut, gaz, gazPath, missing, reviewBookOf, slugOf,
+        stepById, groups } from "../build/steps.js";
 import { blockPublish, parseLog, parseStatus, publishPlan } from "../build/gitops.js";
 
 const WIN = {
@@ -56,6 +57,23 @@ test("第一步 转 PDF:页码与去处都传上了", () => {
     "--out", "转换稿\\《某某志》1999 第三章.md",
     "--lang", "ch",
   ]);
+});
+
+test("第一步:去处空着,照 PDF 的名字写进转换稿", () => {
+  const [c] = run("convert", { pdf: "D:\\Archive\\材料\\某某志.pdf", first: "1", last: "9" });
+  const i = c.args.indexOf("--out");
+  assert.equal(c.args[i + 1], "D:\\Coding\\CN_Map\\转换稿\\某某志.md",
+               "不必让人把去处再打一遍");
+});
+
+test("第一步:去处推得出来,才带得到第二步", () => {
+  assert.equal(
+    draftOut({ pdf: "D:\\Archive\\材料\\某某志.pdf" }, WIN),
+    "D:\\Coding\\CN_Map\\转换稿\\某某志.md",
+  );
+  assert.equal(draftOut({ pdf: "x.pdf", out: "转换稿\\自己起的名.md" }, WIN),
+               "转换稿\\自己起的名.md", "填了就用填的");
+  assert.equal(draftOut({}, WIN), "", "连 PDF 都没挑,推不出什么");
 });
 
 test("第一步:没开「重转」就不该有 --force", () => {
@@ -251,4 +269,35 @@ test("待核工作簿跟稿子同目录同名 —— 第四、五步据此自己
   assert.equal(reviewBookOf("/home/u/转换稿/某某志.md"), "/home/u/转换稿/某某志.xlsx");
   assert.equal(reviewBookOf(""), "", "没挑稿子就没得推");
   assert.equal(reviewBookOf("某某志.xlsx"), "", "本来就不是稿子,不硬推");
+});
+
+test("第七步 落点草稿:必须带 --slug,不然 gaz 张口就退", () => {
+  /* 先前这一条没这一栏,一按只回一句「要给这本志起个名」,什么也没出 ——
+     面板上看着像跑过了,其实一个草稿也没生成。 */
+  const step = stepById("geocode");
+  const f = step.fields.find((x) => x.key === "slug");
+  assert.ok(f, "得有「这本志的名字」那一栏");
+  assert.ok(f.required, "不填就跑,等于白按");
+  const [c] = step.build({ slug: "《某某志》第三章" }, WIN);
+  assert.deepEqual(c.args.slice(1), ["geocode", "--slug", "《某某志》第三章"]);
+});
+
+test("这本志的名字:跟 gaz book 给的一样(文件名去后缀)", () => {
+  /* cmd_book 里是 `slug = args.slug or stem`。两边对不上,
+     第七步就找不着第三步的成果。 */
+  assert.equal(slugOf("D:\\CN_Map\\转换稿\\《某某志》1999 第三章.md"), "《某某志》1999 第三章");
+  assert.equal(slugOf("/home/u/转换稿/某某志.md"), "某某志");
+  assert.equal(slugOf(""), "");
+});
+
+test("认下那一步:没勾就一条命令也不拼", () => {
+  assert.deepEqual(stepById("accept").build({}, WIN), [], "没看过就认,等于把毛病埋了");
+  const cs = stepById("accept").build({ sure: "true" }, WIN);
+  assert.deepEqual(cs[0].args.slice(1), ["verify", "--accept"]);
+});
+
+test("第三步那句话跟它实际干的事对得上", () => {
+  // 改成 book 之后还写着「按名字找稿子」,就是 UI 里明摆着的一句假话
+  assert.ok(!stepById("volume").blurb.includes("按名字找"),
+            "得 " + stepById("volume").blurb);
 });

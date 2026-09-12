@@ -137,9 +137,10 @@ export const STEPS: Step[] = [
       { key: "last", label: "止页", type: "number", required: true,
         hint: "两头各多转几页,胜过少转半章回头重来。" },
       {
-        key: "out", label: "稿子写到哪儿", type: "text", required: true,
-        placeholder: "转换稿\\《某某志》1999 第三章.md",
-        hint: "直接写进 `转换稿`,第二步那道搬家就免了。相对路径按仓库算。",
+        key: "out", label: "稿子写到哪儿", type: "text",
+        placeholder: "(空着就照 PDF 的名字写进转换稿)",
+        hint: "空着就是 `转换稿\\<PDF 的名字>.md` —— 第二步那道搬家也就免了。" +
+              "一本志分几章转的,填个带章次的名字好认(《某某志》1999 第三章.md)。",
       },
       {
         key: "lang", label: "识别语种", type: "select", value: "ch",
@@ -151,7 +152,8 @@ export const STEPS: Step[] = [
       { key: "force", label: "转过一遍也重转", type: "toggle" },
     ],
     build: (v, ctx) => {
-      let a = ["convert", v.pdf, "--first", v.first, "--last", v.last, "--out", v.out];
+      let a = ["convert", v.pdf, "--first", v.first, "--last", v.last,
+               "--out", draftOut(v, ctx)];
       a = opt(a, "--lang", v.lang);
       if (on(v.force)) a.push("--force");
       return [gaz(ctx, a)];
@@ -176,7 +178,7 @@ export const STEPS: Step[] = [
     group: "抽录",
     n: "第三步",
     name: "抽成待核工作簿",
-    blurb: "按名字找稿子,抽出一份待核 Excel。总表这时还没动。",
+    blurb: "上一步那份稿子 → 一份待核 Excel。总表这时还没动。",
     fields: [
       /* 跟第二步挑的是同一份稿子 —— 上一步挑过,这一步就已经填好了。
          先前这儿要人手打「稿子名里的一截」,等于把刚挑好的文件再描述一遍。 */
@@ -266,6 +268,18 @@ export const STEPS: Step[] = [
     },
   },
   {
+    id: "accept",
+    group: "核校",
+    name: "认下眼前这些 —— 往后不再报",
+    blurb: "verify 报的这些,你看过了、决定不改,就记进《已核》。一锅端。",
+    fields: [
+      { key: "sure", label: "上一条「验一验」的结果我已经看过了", type: "toggle",
+        hint: "**先验再认。** 这一条把眼下报的全部记下,往后不再提 —— " +
+              "没看就认,等于把没看过的毛病一并埋了。认多了就去《已核》里删那几行。" },
+    ],
+    build: (v, ctx) => (on(v.sure) ? [gaz(ctx, ["verify", "--accept"])] : []),
+  },
+  {
     id: "tidy",
     group: "核校",
     name: "理一理沿革表",
@@ -287,10 +301,18 @@ export const STEPS: Step[] = [
     name: "落点草稿",
     blurb: "新单位 → src/geocode.js 的条目草稿。只有写明厂址的章才做。",
     fields: [
+      /* 先前这一条没有这一栏,`gaz geocode` 张口就要 --slug,
+         一按就只回一句「要给这本志起个名」,什么也没出。
+         名字跟 `gaz book` 给的一样(稿子的文件名去掉后缀),
+         两边对不上就找不着上一步的成果。 */
+      { key: "slug", label: "这本志的名字", type: "text", required: true,
+        placeholder: "《某某志》1999 第三章",
+        hint: "抽的时候 gaz 拿稿子的文件名当名字,这儿要跟它一样 —— " +
+              "第三步跑过就自己带过来了。" },
       { key: "all", label: "连已有的一起出", type: "toggle" },
     ],
     build: (v, ctx) => {
-      const a = ["geocode"];
+      const a = ["geocode", "--slug", v.slug];
       if (on(v.all)) a.push("--all");
       return [gaz(ctx, a)];
     },
@@ -368,4 +390,29 @@ export function draftsDir(ctx: Ctx): string {
 export function reviewBookOf(md: string): string {
   const t = String(md || "").trim();
   return t && /\.md$/i.test(t) ? t.replace(/\.md$/i, ".xlsx") : "";
+}
+
+
+/** 第一步把稿子写到哪儿。填了就用填的;空着就照 PDF 的名字写进转换稿。
+ *  一处算清楚 —— build() 拿它拼命令,面板拿它往第二步带。 */
+export function draftOut(v: Vals, ctx: Ctx): string {
+  const said = (v.out ?? "").trim();
+  if (said) return said;
+  const pdf = (v.pdf ?? "").trim();
+  if (!pdf) return "";
+  const stem = pdf.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  return joinIn(draftsDir(ctx), stem.replace(/\.pdf$/i, "") + ".md");
+}
+
+function joinIn(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + sep + name;
+}
+
+/** 这本志在 gaz-work 底下叫什么 —— `gaz book` 拿稿子的文件名去掉后缀当名字
+ *  (见 gaz.py 的 cmd_book:`slug = args.slug or stem`)。第七步要跟它一样,
+ *  不然找不着上一步的成果。 */
+export function slugOf(md: string): string {
+  const base = String(md || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  return base.replace(/\.md$/i, "");
 }

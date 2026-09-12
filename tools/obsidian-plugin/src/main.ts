@@ -5,7 +5,8 @@
 
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULTS, GazSettingTab, ctxOf, settingsGap, type GazSettings } from "./settings";
-import { STEPS, missing, reviewBookOf, type Cmd, type Step, type Vals } from "./steps";
+import { STEPS, draftOut, missing, reviewBookOf, slugOf,
+         type Cmd, type Step, type Vals } from "./steps";
 import { blockPublish, commitPlan, pendingCmd, publishPlan, pullPlan, statusCmd, type Plan } from "./gitops";
 import { capture, describe, runAll, type RunHandle } from "./runner";
 import { ConfirmModal, PromptModal, StepFormModal } from "./modal";
@@ -129,13 +130,23 @@ export default class GazPlugin extends Plugin {
       if ((f.key === "xlsx" || f.key === "from") && this.draft) {
         seed[f.key] = reviewBookOf(this.draft);
       }
+      // 第七步要的「这本志的名字」,跟 gaz book 给的一样:稿子文件名去掉后缀
+      if (f.key === "slug" && this.draft) seed[f.key] = slugOf(this.draft);
     }
     return seed;
   }
 
-  /** 表单填完:记住这一份稿子,底下几步跟着走 */
-  private remember(v: Vals): void {
-    if (v.md) this.draft = v.md;
+  /** 表单填完:记住这一份稿子,底下几步跟着走。
+   *  第一步转出来的那一份也算 —— 转完接着看成色、接着抽,是一条线。 */
+  private remember(v: Vals, step: Step): void {
+    if (v.md) {
+      this.draft = v.md;
+      return;
+    }
+    if (step.id === "convert") {
+      const out = draftOut(v, ctxOf(this.settings));
+      if (out) this.draft = out;
+    }
   }
 
   async runStep(step: Step): Promise<void> {
@@ -146,7 +157,7 @@ export default class GazPlugin extends Plugin {
     if (step.id === "review") {
       new StepFormModal(this.app, step, this.seedFor(step), ctxOf(this.settings), (v) => {
         this.seeds[step.id] = v;
-        this.remember(v);
+        this.remember(v, step);
         void this.openExternally(v.xlsx);
       }).open();
       return;
@@ -154,8 +165,12 @@ export default class GazPlugin extends Plugin {
 
     const go = (v: Vals) => {
       this.seeds[step.id] = v;
-      this.remember(v);
+      this.remember(v, step);
       const cmds = step.build(v, ctxOf(this.settings));
+      if (!cmds.length) {
+        new Notice("没勾那一条,什么也没跑。", 6000);
+        return;
+      }
       const needAsk = !step.readOnly || this.settings.confirmReadOnly;
       if (!needAsk) return void this.exec(cmds, step.name);
       new ConfirmModal(
