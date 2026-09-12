@@ -58,6 +58,12 @@
 .gaz-step-btn.gaz-danger:hover {
   border-color: var(--text-error);
 }
+/* 仓库里的插件比装着的新 —— 这一条要跳出来。从前更新没装上时面板一声不吭,
+   看着就像改动没生效。 */
+.gaz-step-btn.gaz-fresh {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-success, var(--background-secondary));
+}
 .gaz-step-icon {
   flex: 0 0 auto;
   color: var(--text-muted);

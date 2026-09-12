@@ -202,6 +202,52 @@ test("末尾那一行不带换行,也得喂出来", async () => {
   assert.equal(r.out.trim().split("\n").at(-1), "末一行没换行");
 });
 
+// ------------------------------------------------------- 装自己
+
+test("装插件:抄的是那三个文件,从仓库到库", async () => {
+  const { plan, srcDir, destDir, PLUGIN_FILES } = await import("../build/install.js");
+  const ps = plan("D:\\Coding\\CN_Map", "D:\\Archive");
+  assert.deepEqual(ps.map((p) => p.name), PLUGIN_FILES);
+  assert.equal(srcDir("D:\\Coding\\CN_Map"), "D:\\Coding\\CN_Map\\tools\\obsidian-plugin");
+  assert.equal(destDir("D:\\Archive"), "D:\\Archive\\.obsidian\\plugins\\dianzi-gongye-ditu");
+  assert.equal(ps[0].from, "D:\\Coding\\CN_Map\\tools\\obsidian-plugin\\main.js");
+  assert.equal(ps[0].to, "D:\\Archive\\.obsidian\\plugins\\dianzi-gongye-ditu\\main.js");
+  // 分隔符跟着走,别混着拼
+  assert.equal(plan("/home/u/CN_Map", "/home/u/库")[0].to,
+               "/home/u/库/.obsidian/plugins/dianzi-gongye-ditu/main.js");
+  assert.deepEqual(plan("", "D:\\Archive"), [], "不知道仓库在哪儿就不猜");
+});
+
+test("装插件:看得出装着的是不是仓库里那一份", async () => {
+  /* 要紧的是 stale 这一种。从前更新没装上时面板一声不吭,人只会以为
+     改动没生效 —— 为这件事来回过三趟。 */
+  const { plan, compare, state, stateText } = await import("../build/install.js");
+  const ps = plan("D:\\repo", "D:\\vault");
+  const digest = (table) => (p) => (p in table ? table[p] : null);
+
+  const same = {};
+  const stale = {};
+  const gone = {};
+  for (const p of ps) {
+    same[p.from] = "aaa"; same[p.to] = "aaa";
+    stale[p.from] = "bbb"; stale[p.to] = "aaa";
+    gone[p.from] = "aaa";
+  }
+  assert.equal(state(compare(ps, digest(same))), "same");
+  assert.equal(state(compare(ps, digest(stale))), "stale");
+  assert.equal(state(compare(ps, digest(gone))), "missing");
+  assert.equal(state(compare(ps, digest({}))), "nosrc", "仓库里没打包好的,先去拉");
+  assert.equal(state([]), "unknown");
+
+  // 只有一个文件不一样,也算旧的 —— 三个抄齐了才算装上
+  const one = { ...same };
+  one[ps[1].from] = "ccc";
+  assert.equal(state(compare(ps, digest(one))), "stale");
+
+  assert.match(stateText("stale"), /装上新的/, "得告诉人按哪一条");
+  assert.match(stateText("missing"), /装\.ps1/, "头一回还得靠那个脚本,说清楚");
+});
+
 // ------------------------------------------------------- 选文件框
 
 test("选文件框:新版 Obsidian 搁在 @electron/remote", async () => {

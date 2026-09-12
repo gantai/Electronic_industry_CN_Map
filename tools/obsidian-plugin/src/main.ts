@@ -4,6 +4,10 @@
    少让人敲字:该问的问清楚,该拦的拦住,跑出来的字摆在眼前。 */
 
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { PLUGIN_ID, compare, destDir, plan, state, stateText,
+         type InstallState } from "./install";
 import { DEFAULTS, GazSettingTab, ctxOf, settingsGap, type GazSettings } from "./settings";
 import { STEPS, draftOut, missing, reviewBookOf, slugOf,
          type Cmd, type Step, type Vals } from "./steps";
@@ -37,6 +41,11 @@ export default class GazPlugin extends Plugin {
       id: "setup",
       name: "认一下仓库(重新设置)",
       callback: () => void this.openSetup(),
+    });
+    this.addCommand({
+      id: "install",
+      name: "装上新的(把仓库里的插件抄进库,再重载)",
+      callback: () => void this.installSelf(),
     });
 
     /* 每一步各自也是一条命令 —— Ctrl+P 敲得到,配得上快捷键 */
@@ -85,6 +94,68 @@ export default class GazPlugin extends Plugin {
 
   private async view(): Promise<FlowView | null> {
     return this.openPanel();
+  }
+
+  // ------------------------------------------------------------ 装自己
+
+  /** 库里装着的插件,跟仓库里那一份对得上么。 */
+  installState(): InstallState {
+    const pairs = plan(this.settings.repoDir, this.vaultRoot());
+    return state(compare(pairs, (p) => {
+      try {
+        return createHash("sha1").update(readFileSync(p)).digest("hex");
+      } catch {
+        return null;                 // 文件不在,或读不动
+      }
+    }));
+  }
+
+  installSay(): string {
+    return stateText(this.installState());
+  }
+
+  /** 把仓库里打包好的三个文件抄进库,再让 Obsidian 重载这个插件。
+   *
+   *  就是 `装.ps1` 干的那件事 —— 搬进面板,省掉「开 PowerShell、再回来关一下
+   *  再开」那两道。**重载是要紧的一步**:只抄文件不重载,面板上仍是旧的,
+   *  看着就像什么也没变。 */
+  async installSelf(): Promise<void> {
+    const vault = this.vaultRoot();
+    const pairs = plan(this.settings.repoDir, vault);
+    const v = await this.view();
+    if (!pairs.length) {
+      new Notice("还不知道仓库或库在哪儿 —— 先「认一下仓库」。", 8000);
+      void this.openSetup();
+      return;
+    }
+    try {
+      mkdirSync(destDir(vault), { recursive: true });
+      for (const p of pairs) copyFileSync(p.from, p.to);
+    } catch (e) {
+      const msg = "抄不过去:" + String(e);
+      new Notice(msg, 10000);
+      v?.write(msg, "err");
+      return;
+    }
+    v?.write("装上了:" + pairs.map((p) => p.name).join("、") + " —— 这就重载。", "note");
+
+    /* app.plugins 不在公开的 API 里,可它是 Obsidian 自己重载插件用的那一套,
+       社区插件一直这么做。万一哪天没了,就退回去让人手动关一下再开。 */
+    const mgr = (this.app as unknown as {
+      plugins?: {
+        disablePlugin(id: string): Promise<void>;
+        enablePlugin(id: string): Promise<void>;
+      };
+    }).plugins;
+    if (!mgr?.disablePlugin || !mgr?.enablePlugin) {
+      new Notice("装上了。这套 Obsidian 里重载不动 —— 去 设置 → 第三方插件," +
+                 "把「电子工业地图流程」关一下再开。", 12000);
+      return;
+    }
+    new Notice("装上了,正在重载……");
+    await mgr.disablePlugin(PLUGIN_ID);
+    await mgr.enablePlugin(PLUGIN_ID);
+    new Notice("新的这一份生效了。面板重开一下就是新的。", 8000);
   }
 
   stop(): void {

@@ -5,8 +5,10 @@
 
 ## 一、**动手一律走插件**
 
-除了**装更新**那一件事(`tools/obsidian-plugin/装.ps1` 要在 PowerShell 里跑),
-其余每一步都在 Obsidian 插件的面板上点 —— `tools/obsidian-plugin/`。
+除了**头一回装插件**那一件事(`tools/obsidian-plugin/装.ps1` 要在 PowerShell
+里跑 —— 那时插件还不在库里,没有面板可点),其余每一步都在 Obsidian 插件的
+面板上点 —— `tools/obsidian-plugin/`。**往后的更新也在面板里**:
+「插件自己 → 装上新的」抄文件、重载,一按了事(`src/install.ts`)。
 
 所以:
 

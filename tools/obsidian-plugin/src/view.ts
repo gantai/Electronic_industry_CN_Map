@@ -32,6 +32,21 @@ export class FlowView extends ItemView {
     return "map";
   }
 
+  /** 装着的那一份跟仓库里对不对得上,就写在这一行。 */
+  private installRow(parent: HTMLElement): void {
+    const stale = this.plugin.installState() === "stale";
+    const row = parent.createDiv({ cls: "gaz-step" });
+    const btn = row.createEl("button", {
+      cls: "gaz-step-btn" + (stale ? " gaz-fresh" : ""),
+    });
+    const icon = btn.createSpan({ cls: "gaz-step-icon" });
+    setIcon(icon, stale ? "download" : "check");
+    const txt = btn.createDiv({ cls: "gaz-step-text" });
+    txt.createEl("div", { cls: "gaz-step-name", text: "装上新的(更新插件)" });
+    txt.createEl("div", { cls: "gaz-step-blurb", text: this.plugin.installSay() });
+    btn.onclick = () => void this.plugin.installSelf();
+  }
+
   async onOpen(): Promise<void> {
     const root = this.contentEl;
     root.empty();
@@ -51,6 +66,12 @@ export class FlowView extends ItemView {
       steps.createEl("div", { cls: "gaz-group", text: g });
       for (const s of STEPS.filter((x) => x.group === g)) this.stepRow(steps, s);
     }
+
+    /* 插件自己的更新。**摆在这儿是有缘故的** —— 从前更新要拉取、开 PowerShell
+       跑 装.ps1、再回来把插件关一下再开,三样漏一样,面板上看着就是「什么也
+       没变」,而且看不出是没装上。如今状态直接写在这一行上。 */
+    steps.createEl("div", { cls: "gaz-group", text: "插件自己" });
+    this.installRow(steps);
 
     /* git 那几条不在 STEPS 里 —— 它们不是 gaz,确认的方式也不一样 */
     steps.createEl("div", { cls: "gaz-group", text: "上线" });
