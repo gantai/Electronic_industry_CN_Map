@@ -5,7 +5,7 @@
 
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULTS, GazSettingTab, ctxOf, settingsGap, type GazSettings } from "./settings";
-import { STEPS, missing, type Cmd, type Step, type Vals } from "./steps";
+import { STEPS, missing, reviewBookOf, type Cmd, type Step, type Vals } from "./steps";
 import { blockPublish, commitPlan, pendingCmd, publishPlan, pullPlan, statusCmd, type Plan } from "./gitops";
 import { capture, describe, runAll, type RunHandle } from "./runner";
 import { ConfirmModal, PromptModal, StepFormModal } from "./modal";
@@ -16,6 +16,8 @@ export default class GazPlugin extends Plugin {
   settings: GazSettings = { ...DEFAULTS };
   /** 上回每一步填过什么 —— 同一章往往要跑好几遍,不该每次从头填 */
   private seeds: Record<string, Vals> = {};
+  /** 眼下在办哪一份稿子 —— 一步步传下去,不必每一步重挑一遍 */
+  private draft = "";
   private running: RunHandle | null = null;
 
   async onload(): Promise<void> {
@@ -116,14 +118,35 @@ export default class GazPlugin extends Plugin {
     return false;
   }
 
+  /** 这一步的表单该预先填上什么 —— 上回填过的,加上从手头这份稿子推出来的。
+   *  第二步挑了稿子,第三步就不必再挑;第三步抽完,第四、五步的待核工作簿
+   *  也就有了(跟稿子同目录同名,只换个后缀)。 */
+  private seedFor(step: Step): Vals {
+    const seed: Vals = { ...(this.seeds[step.id] ?? {}) };
+    for (const f of step.fields ?? []) {
+      if (seed[f.key]) continue;
+      if (f.key === "md" && this.draft) seed[f.key] = this.draft;
+      if ((f.key === "xlsx" || f.key === "from") && this.draft) {
+        seed[f.key] = reviewBookOf(this.draft);
+      }
+    }
+    return seed;
+  }
+
+  /** 表单填完:记住这一份稿子,底下几步跟着走 */
+  private remember(v: Vals): void {
+    if (v.md) this.draft = v.md;
+  }
+
   async runStep(step: Step): Promise<void> {
     if (!this.ready()) return;
 
     /* 「核对」那一步不跑命令,是拿系统默认的程序把工作簿开起来 —— 多半是 Excel。
        这一步没有捷径,也不该有:判断的活儿归人。 */
     if (step.id === "review") {
-      new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, ctxOf(this.settings), (v) => {
+      new StepFormModal(this.app, step, this.seedFor(step), ctxOf(this.settings), (v) => {
         this.seeds[step.id] = v;
+        this.remember(v);
         void this.openExternally(v.xlsx);
       }).open();
       return;
@@ -131,6 +154,7 @@ export default class GazPlugin extends Plugin {
 
     const go = (v: Vals) => {
       this.seeds[step.id] = v;
+      this.remember(v);
       const cmds = step.build(v, ctxOf(this.settings));
       const needAsk = !step.readOnly || this.settings.confirmReadOnly;
       if (!needAsk) return void this.exec(cmds, step.name);
@@ -150,7 +174,7 @@ export default class GazPlugin extends Plugin {
       go({});
       return;
     }
-    new StepFormModal(this.app, step, this.seeds[step.id] ?? {}, ctxOf(this.settings), (v) => {
+    new StepFormModal(this.app, step, this.seedFor(step), ctxOf(this.settings), (v) => {
       const gap = missing(step, v);
       if (gap) {
         new Notice(gap);

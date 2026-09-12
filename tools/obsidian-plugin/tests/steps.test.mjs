@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { STEPS, gaz, gazPath, missing, stepById, groups } from "../build/steps.js";
+import { STEPS, gaz, gazPath, missing, reviewBookOf, stepById, groups } from "../build/steps.js";
 import { blockPublish, parseLog, parseStatus, publishPlan } from "../build/gitops.js";
 
 const WIN = {
@@ -65,29 +65,36 @@ test("第一步:没开「重转」就不该有 --force", () => {
   assert.ok(b.args.includes("--force"));
 });
 
-test("第三步 抽:关键词拆成几个,城市传上", () => {
-  const [c] = run("volume", { key: "第四篇", city: "Beijing", statsYear: "1995" });
+const MD = "D:\\Coding\\CN_Map\\转换稿\\《北京工业志·电子志》2001 第四篇.md";
+
+test("第三步 抽:接着第二步那一份稿子跑,不再要人打关键词", () => {
+  /* 先前这儿用 `gaz volume <关键词>`,按名字里的一截去搜 —— 可第二步
+     已经把那一份挑出来了,再让人描述一遍没道理。book 是指名道姓的那一条。 */
+  const [c] = run("volume", { md: MD, city: "Beijing", statsYear: "1995" });
   assert.deepEqual(c.args.slice(1), [
-    "volume", "第四篇", "--city", "Beijing", "--stats-year", "1995",
+    "book", MD, "--city", "Beijing", "--stats-year", "1995",
   ]);
 });
 
-test("第三步:关键词写好几截,一截一个参数", () => {
-  const [c] = run("volume", { key: "北京 第四篇", city: "Beijing" });
-  assert.deepEqual(c.args.slice(1, 4), ["volume", "北京", "第四篇"]);
+test("第三步:整条路径是一个参数 —— 书名号、空格都在里头", () => {
+  const [c] = run("volume", { md: MD, city: "Beijing" });
+  assert.equal(c.args[2], MD);
+  assert.equal(c.args.filter((a) => a.includes("第四篇")).length, 1);
 });
 
 test("第三步:空着的选项一个也不传 —— 让 gaz 用自己的默认值", () => {
-  const [c] = run("volume", { key: "第三章", city: "Shanghai", statsYear: "", reflow: "", dir: "" });
+  const [c] = run("volume", { md: MD, city: "Shanghai", statsYear: "", reflow: "" });
   assert.ok(!c.args.includes("--stats-year"));
   assert.ok(!c.args.includes("--reflow"));
-  assert.ok(!c.args.includes("--dir"));
+  assert.ok(!c.args.includes("--dir"), "路径是整条给的,不必再说去哪个目录找");
 });
 
-test("第三步:设置里填了转换稿目录就跟着传", () => {
-  const ctx = { ...WIN, draftsDir: "D:\\Archive\\转换稿" };
-  const [c] = run("volume", { key: "第三章", city: "Shanghai" }, ctx);
-  assert.deepEqual(c.args.slice(-2), ["--dir", "D:\\Archive\\转换稿"]);
+test("第三步:稿子那一栏跟第二步同一种 —— 都从转换稿里挑", () => {
+  const f2 = stepById("inspect").fields.find((x) => x.key === "md");
+  const f3 = stepById("volume").fields.find((x) => x.key === "md");
+  assert.equal(f3.type, f2.type);
+  assert.equal(f3.pickFrom, f2.pickFrom);
+  assert.deepEqual(f3.exts, f2.exts, "键名与类型都一样,面板才带得过去");
 });
 
 test("第五步 并表:默认先空跑 —— 头一回不该真写", () => {
@@ -234,4 +241,14 @@ test("PDF 那一栏留着手填 —— 原件不在转换稿里,而且要说明�
   const f = stepById("convert").fields.find((x) => x.key === "pdf");
   assert.equal(f.type, "path");
   assert.match(f.hint, /贴|浏览/, "得告诉人贴路径最稳");
+});
+
+test("待核工作簿跟稿子同目录同名 —— 第四、五步据此自己带过来", () => {
+  assert.equal(
+    reviewBookOf("D:\\CN_Map\\转换稿\\《某某志》第三章.md"),
+    "D:\\CN_Map\\转换稿\\《某某志》第三章.xlsx",
+  );
+  assert.equal(reviewBookOf("/home/u/转换稿/某某志.md"), "/home/u/转换稿/某某志.xlsx");
+  assert.equal(reviewBookOf(""), "", "没挑稿子就没得推");
+  assert.equal(reviewBookOf("某某志.xlsx"), "", "本来就不是稿子,不硬推");
 });

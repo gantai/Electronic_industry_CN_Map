@@ -178,8 +178,11 @@ export const STEPS: Step[] = [
     name: "抽成待核工作簿",
     blurb: "按名字找稿子,抽出一份待核 Excel。总表这时还没动。",
     fields: [
-      { key: "key", label: "稿子名里的一截", type: "text", required: true,
-        placeholder: "第四篇", hint: "如「第三章」。写好几截也行,空格隔开。" },
+      /* 跟第二步挑的是同一份稿子 —— 上一步挑过,这一步就已经填好了。
+         先前这儿要人手打「稿子名里的一截」,等于把刚挑好的文件再描述一遍。 */
+      { key: "md", label: "稿子", type: "pick", required: true, exts: ["md"],
+        pickFrom: "drafts", placeholder: "转换稿\\《某某志》1999 第三章.md",
+        hint: "第二步挑的那一份 —— 这儿会自己带过来。" },
       { key: "city", label: "City 列(市志填这个)", type: "text",
         placeholder: "Beijing", hint: CITY_HINT },
       { key: "province", label: "省名(省志填这个)", type: "text",
@@ -198,18 +201,19 @@ export const STEPS: Step[] = [
         ],
         hint: "稿子照原书行宽硬断的话不接回去,厂名会被断成两截,整家认不出来。",
       },
-      { key: "dir", label: "稿子在哪个目录", type: "text",
-        hint: "空着就是仓库里的 `转换稿\\`(或设置里填的那个)。" },
     ],
+    /* 用 `gaz book <稿子>` 而不是 `gaz volume <关键词>`:
+       两条命令干的是同一件事,只是找稿子的法子不同 —— volume 按名字里的
+       一截去搜,book 指名道姓。面板上第二步已经把那一份挑出来了,再让人
+       描述一遍没道理。`--dir` 也因此不必了:路径是整条给的。 */
     build: (v, ctx) => {
-      let a = ["volume", ...v.key.trim().split(/\s+/)];
+      let a = ["book", v.md];
       // 省志与市志二选一 —— 两个都填的话以省为准,那是更要紧的那一个
       a = (v.province ?? "").trim()
         ? [...a, "--province", v.province.trim()]
         : opt(a, "--city", v.city);
       a = opt(a, "--stats-year", v.statsYear);
       a = opt(a, "--reflow", v.reflow);
-      a = opt(a, "--dir", (v.dir ?? "").trim() || ctx.draftsDir);
       return [gaz(ctx, a)];
     },
   },
@@ -355,4 +359,13 @@ export function missing(step: Step, v: Vals): string | null {
 export function draftsDir(ctx: Ctx): string {
   const sep = ctx.repoDir.includes("\\") ? "\\" : "/";
   return ctx.draftsDir.trim() || (ctx.repoDir.replace(/[\\/]+$/, "") + sep + "转换稿");
+}
+
+
+/** 一份稿子抽出来的待核工作簿在哪儿 —— 跟稿子同目录同名,只换个后缀。
+ *  (`gaz book` 的 `--out` 默认就是这么定的,见 gaz.py 里 cmd_book。)
+ *  第四、五步据此把稿子那一份带过来,不必再挑一遍。 */
+export function reviewBookOf(md: string): string {
+  const t = String(md || "").trim();
+  return t && /\.md$/i.test(t) ? t.replace(/\.md$/i, ".xlsx") : "";
 }
