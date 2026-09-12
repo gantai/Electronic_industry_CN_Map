@@ -605,6 +605,11 @@ def cmd_book(args):
         f.write(text)
 
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
+    # 总表现有的行 —— 重跑一本核过的志书时据以标「已收」、据以摆「补格子」。
+    # 头一回跑一本新志书,这两样都是空的,跟从前一模一样。
+    master = ({r["raw"]: r for r in toxlsx.read_units_full(args.xlsx)}
+              if os.path.exists(args.xlsx) else {})
+    kidx = EX.known_index(known)
     res = EX.extract(text, book=book, known=known, stats_year=args.stats_year,
                      city=args.city, province=getattr(args, "province", ""),
                      min_mentions=args.min_mentions, auto_keep=args.auto_keep)
@@ -624,7 +629,8 @@ def cmd_book(args):
               "宁滥勿缺,核对时留意" % guess)
 
     out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.md)), stem + ".xlsx")
-    BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year)
+    BOOK.write_xlsx(out, res, city=args.city, book=book, stats_year=args.stats_year,
+                    master=master, kidx=kidx)
     print("待核 TSV 另存一份在 %s" % rd)
     print()
     # 别写第几列 —— 加一列就说错一次。列名不会变
@@ -632,8 +638,8 @@ def cmd_book(args):
           % BOOK.REVIEW_UNITS)
     print("  名字认错的当场改;同一家的几个名字改成同一个,追加时会并作一行;")
     print("  要的行「取否」写 y。")
-    print("  **冠「待核·」的四张都要核** —— 器件、整机、名称沿革那三张的「取否」")
-    print("  也都在 A 列,一张漏了那一张就整张不进总表。核完:")
+    print("  **冠「待核·」的几张都要核** —— 器件、整机、名称沿革(重跑时还有补格子)")
+    print("  那几张的「取否」也都在 A 列,一张漏了那一张就整张不进总表。核完:")
     print('    %s xlsx --from "%s"' % (SELF, out))
     return 0
 
@@ -909,6 +915,7 @@ def cmd_xlsx(args):
                         ("comp", "comp.tsv"), ("names", "names.tsv")):
             p = os.path.join(rd, fn)
             bundle[tag] = tsvio.kept(tsvio.read(p)) if os.path.exists(p) else []
+        bundle["fills"] = []      # 补格子只在工作簿里,TSV 那条路没有这一张
         where = "四张 TSV 的 keep 列"
         seen = {}
         label = args.book or args.slug
@@ -923,6 +930,10 @@ def cmd_xlsx(args):
         for k, zh in (("units", "家单位"), ("semi", "条器件"),
                       ("comp", "条整机"), ("names", "段名称沿革")))
     print("将追加:%s" % tally)
+    fills = bundle.get("fills") or []
+    if fills or seen.get("fills"):
+        print("另外要补 %d/%d 个格子 —— 那几行是总表里早有的单位,只填格子,不新增。"
+              % (len(fills), seen.get("fills", len(fills))))
     if seen.get("units") and len(bundle["units"]) == seen["units"] and seen["units"] > 20:
         print("  注意:%d 家一家不落全点了头。核名字本是要挑的,整列填 y 与不核无异。"
               % seen["units"])
@@ -930,11 +941,28 @@ def cmd_xlsx(args):
         for r in bundle["units"]:
             print("   + %s %s %s" % (r.get("Unit"), r.get("Industry", ""),
                                      cndate.fmt(r.get("Start Date", ""))))
+        for f in fills:
+            print("   ~ %s %s:「%s」→「%s」(%s)"
+                  % (f.get("Unit"), f.get("栏"), f.get("总表现值", ""), f.get("值"),
+                     f.get("种类", "")))
         print("(--dry-run,未落笔)")
         return 0
     rep = toxlsx.append(args.xlsx, allow_dup=args.allow_dup, **bundle)
     print("已写入 %s:单位 +%d、器件 +%d、整机 +%d、沿革 +%d"
           % (os.path.basename(args.xlsx), rep["units"], rep["semi"], rep["comp"], rep["names"]))
+    fr = rep["fills"]
+    if fills:
+        print("补格子:填上 %d 格" % fr["filled"]
+              + (",%d 格原本就是这个值" % fr["same"] if fr["same"] else ""))
+        if fr["overwrote"]:
+            print("  其中 %d 格是盖掉原有的值 —— 你点了头的,过一眼:" % len(fr["overwrote"]))
+            for nm, label, old, new in fr["overwrote"][:10]:
+                print("     %s %s:「%s」→「%s」" % (nm, label, old, new))
+        if fr["missing"]:
+            print("  %d 格没找着对应的行,一格也没填:%s"
+                  % (len(fr["missing"]), "、".join(fr["missing"][:6])))
+            print("  「补格子」只往表里已有的行上填,不新建行 —— 那一家要收进来,"
+                  "得在「待核·厂所」那张里写 y。")
     if rep["skipped"]:
         # 跳过的分两类:单位按名字(连别名一起)比,产品与沿革按整条记录比
         units_hit = [x for x in rep["skipped"] if not x.startswith(("semi:", "comp:", "names:"))]

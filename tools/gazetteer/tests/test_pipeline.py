@@ -415,9 +415,9 @@ def test_book():
         bookmd.write_xlsx(out, res, city="Beijing", book="北京工业志·电子志",
                           log=lambda *a: None)
         wb = openpyxl.load_workbook(out)
-        eq(wb.sheetnames, [bookmd.REVIEW_UNITS, bookmd.PREVIEW, bookmd.REVIEW_SEMI,
-                           bookmd.REVIEW_COMP, bookmd.REVIEW_NAMES],
-           "五张表,要核的那张排在头一个")
+        eq(wb.sheetnames, [bookmd.REVIEW_UNITS, bookmd.REVIEW_SEMI, bookmd.REVIEW_COMP,
+                           bookmd.REVIEW_NAMES, bookmd.PREVIEW],
+           "五张表:要核的几张挨在前头,改了不算数的那张垫底")
         # 要核的四张一律冠「待核·」。从前只有头一张叫「待核」,另三张挂着总表的
         # 名字(器件 / 整机 / 名称沿革),看着像成品 —— 整章核完了漏掉三张。
         eq([n for n in wb.sheetnames if n.startswith("待核·")],
@@ -436,7 +436,11 @@ def test_book():
         # 核的是名字,名字与据以判断的原文都摆在最左边
         eq(rv.cell(row=1, column=2).value, "单位", "待核表第二列就是单位名")
         eq(rv.cell(row=1, column=3).value, "别名", "别名紧挨着正名 —— 核的是名字")
-        eq(rv.cell(row=1, column=6).value, "据以立论的原文", "原文也在近处,不用横拉")
+        head = [c.value for c in rv[1]]
+        # 原文在近处,不必横拉 —— 位置别写死,添一列就说错一次
+        check(head.index("据以立论的原文") + 1 <= 7, "原文也在近处,不用横拉")
+        # 「已收」也在冻住的那几列之内:它答的是「这一行还要不要看」
+        check(head.index("已收") + 1 <= 4, "「已收」在名字近处,一眼看得见")
         check(rv.max_row == len(res["units"]) + 1, "待核表一家一行")
 
         # 核过再读回来:「取否」写 y 的才算数,名字改成一样的并作一行
@@ -1051,6 +1055,190 @@ def test_province_review_city():
         eq(got.get("无锡甲字无线电厂"), "无锡", "无锡那一家归无锡")
         eq(got.get("苏州乙字电子厂"), "苏州", "苏州那一家归苏州")
         eq(city, "", "一本里两个市,就不报「这本志是哪个市的」—— 宁可不说")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_refine():
+    """粗的一概不报 —— 重跑一遍最容易干的坏事,就是拿粗的盖掉细的。"""
+    print("细与粗")
+    from gazetteer.bookmd import refine
+    eq(refine("19560000", "19560000"), "同", "一样就是一样")
+    eq(refine("19870000", "19870500"), "细", "只知道年 → 知道了月,是长进")
+    eq(refine("19820100", "19820000"), "粗", "知道月 → 只剩年,是退步,不报")
+    eq(refine("19581027", "19580000"), "粗", "知道日 → 只剩年,同上")
+    eq(refine("19700000", "19790000"), "不一", "换了个年份,那是两回事")
+    eq(refine("19780300", "19780500"), "不一", "月份不同,也是两回事")
+    # 地址是断行最容易切坏的一栏:门牌号常被切掉
+    eq(refine("虹桥路951弄2号", "虹桥路951弄"), "粗",
+       "门牌号被切掉了 —— 拿它盖过去就是把门牌丢了")
+    eq(refine("虹桥路951弄", "虹桥路951弄2号"), "细", "反过来是补上了门牌")
+    eq(refine("半导体", "电子计算机"), "不一", "两个不同的词就是两说")
+
+
+def test_plan_fills():
+    """重跑一本核过的志书:该报哪几格,不该报哪几格。"""
+    print("补格子报什么")
+    master = {"甲厂": {"raw": "甲厂", "Industry": "", "隶属": "", "性质": "集体",
+                       "Start Date": "19580000", "Add.": "解放路5号2号",
+                       "Product": "收音机", "City": "Beijing"},
+              "乙所": {"raw": "乙所", "隶属": "市属"}}
+    kidx = {"甲无线电厂": "甲厂"}
+
+    def fills(units):
+        return {(f["Unit"], f["栏"]): f for f in bookmd.plan_fills(units, master, kidx)}
+
+    got = fills([{"Unit": "甲厂", "role": "专条", "隶属": "部属", "性质": "全民",
+                  "Start Date": "19580300", "Add.": "解放路5号", "Product": "电视机",
+                  "Industry": "半导体", "City": "Shanghai"}])
+    eq(got[("甲厂", "隶属")]["种类"], "补", "总表空着的,报「补」")
+    eq(got[("甲厂", "Industry")]["种类"], "补", "行业空着,也报")
+    eq(got[("甲厂", "Start Date")]["种类"], "更细", "1958年 → 1958年3月,报「更细」")
+    check(("甲厂", "Add.") not in got, "地址被切掉了门牌,那是粗的,不报")
+    check(("甲厂", "Product") not in got,
+          "产品是长栏:总表那一份人核过、动手改过,机器再读一遍不算新证据")
+    eq(got[("甲厂", "性质")]["种类"], "对不上", "性质两边都有值而不同,报「对不上」")
+    eq(got[("甲厂", "City")]["种类"], "对不上", "City 也是短栏")
+    eq(got[("甲厂", "性质")]["总表现值"], "集体", "把总表现在那一格摆出来,好判断")
+
+    # 凭据摆的是立这一格的那一句,不是整行拼起来的那三句
+    got = fills([{"Unit": "甲厂", "role": "专条", "隶属": "部属",
+                  "ev": {"隶属": "该厂为第四机械工业部直属"},
+                  "evidence": "另一句 ⏐ 又一句"}])
+    eq(got[("甲厂", "隶属")]["evidence"], "该厂为第四机械工业部直属",
+       "一格一句 —— 整行那三句未必含着这一句")
+    # 据章节标题定的,原文里没有那一句,凭据在备注里 —— 那一句最该看见
+    got = fills([{"Unit": "甲厂", "role": "专条", "隶属": "归口",
+                  "Remark": "市未定；隶属据章节标题「第三章行业归口」,页序或有错乱,须核",
+                  "evidence": "某句"}])
+    check("章节标题" in got[("甲厂", "隶属")]["evidence"],
+          "据标题定的要把那句告诫摆出来(得 %r)" % got[("甲厂", "隶属")]["evidence"])
+
+    # 顺带提到的一家:填空可以,跟人核过的值争不行
+    got = fills([{"Unit": "甲厂", "role": "提及", "隶属": "部属", "性质": "全民",
+                  "City": "Shanghai"}])
+    eq(got[("甲厂", "隶属")]["种类"], "补", "空格子照旧补得上")
+    check(("甲厂", "性质") not in got, "提及一句,不足以盖掉核过的性质")
+    check(("甲厂", "City") not in got,
+          "City 是照书名推的 —— 顺带提到的一家,那是「这本书讲哪个市」,不是它在哪儿")
+
+    # 别名认得出是同一家;总表没有的单位不归这张表管
+    got = fills([{"Unit": "甲无线电厂", "role": "专条", "隶属": "部属"},
+                 {"Unit": "丙厂", "role": "专条", "隶属": "部属"}])
+    eq(got[("甲厂", "隶属")]["值"], "部属", "别名认得出是表里那家,名字照总表写")
+    check(("丙厂", "隶属") not in got, "总表没有的单位走「待核·厂所」,不在这张表里")
+
+
+def test_rerun_fills_end_to_end():
+    """整条路:重跑 → 只核那几格 → 填进总表。行数一行不长。"""
+    print("重跑一本核过的志书")
+    tmp = tempfile.mkdtemp(prefix="gaz-rerun-")
+    try:
+        import openpyxl
+        md = ("# 第一章行业归口电子工业企业\n\n"
+              "## 第一节北京甲字无线电厂\n\n"
+              "北京甲字无线电厂建于1958年，是集体企业。厂址位于朝阳区酒仙桥路5号。\n")
+        res = EX.extract(md, book="试志", city="Beijing")
+
+        master = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), master)
+        # 头一回:这一家收进总表,隶属、性质那时还没这两栏
+        toxlsx.append(master, backup=False, units=[
+            {"Unit": "北京甲字无线电厂", "City": "Beijing", "Source": "试志·一页"}])
+        before = len(toxlsx.read_units_full(master))
+
+        # 重跑:把总表递进去
+        rows = {r["raw"]: r for r in toxlsx.read_units_full(master)}
+        x = os.path.join(tmp, "重跑.xlsx")
+        bookmd.write_xlsx(x, res, city="Beijing", master=rows, log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        check(bookmd.REVIEW_FILL in wb.sheetnames, "重跑多出「%s」一张" % bookmd.REVIEW_FILL)
+        # 多出一张之后,要核的那张还得排在头一个 —— 从前次序是按位移算的,
+        # 添一张就把它挪到了倒数第二张,一开文件停回改了不算数的预览表上
+        eq(wb.sheetnames[:2], [bookmd.REVIEW_UNITS, bookmd.REVIEW_FILL],
+           "要核的两张排在最前头")
+        eq(wb.sheetnames[-1], bookmd.PREVIEW, "改了不算数的那张垫底")
+        eq(wb.active.title, bookmd.REVIEW_UNITS, "打开还是停在「待核·厂所」上")
+        rv = wb[bookmd.REVIEW_UNITS]
+        h = {c.value: c.column for c in rv[1]}
+        eq(rv.cell(row=2, column=h["已收"]).value, "已在表内",
+           "这一家早已在总表里,标出来 —— 不必再核一遍名字")
+
+        fw = wb[bookmd.REVIEW_FILL]
+        fh = {c.value: c.column for c in fw[1]}
+        cols = [fw.cell(row=i, column=fh["栏"]).value for i in range(2, fw.max_row + 1)]
+        for want in ("隶属", "性质"):
+            check(want in cols, "「%s」那一格要补(得 %r)" % (want, cols))
+        # 只点「性质」那一格的头
+        for i in range(2, fw.max_row + 1):
+            if fw.cell(row=i, column=fh["栏"]).value == "性质":
+                fw.cell(row=i, column=1).value = "y"
+        wb.save(x)
+
+        bundle, _city, seen = bookmd.read_review(x)
+        eq(len(bundle["units"]), 0, "「待核·厂所」一行没点,一家也不新增")
+        eq(len(bundle["fills"]), 1, "补格子只点了一格")
+        check(seen["fills"] >= 2, "分母要报出来:一共几格待核")
+
+        rep = toxlsx.append(master, backup=False, **bundle)
+        eq(rep["units"], 0, "没有新单位")
+        eq(rep["fills"]["filled"], 1, "填上一格")
+        eq(len(toxlsx.read_units_full(master)), before, "总表行数一行不长")
+        got = {r["raw"]: r for r in toxlsx.read_units_full(master)}["北京甲字无线电厂"]
+        eq(got["性质"], "集体", "点了头的那一格填上了")
+        eq(got["隶属"], None, "没点头的那一格一个字也没动")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_apply_fills_never_adds_rows():
+    """补格子找不着行就不动 —— 凭一个名字新建一行,那是 append 的事,不是它的。"""
+    print("补格子不新增行")
+    tmp = tempfile.mkdtemp(prefix="gaz-fillrow-")
+    try:
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        before = len(toxlsx.read_units_full(x))
+        rep = toxlsx.apply_fills(x, [{"Unit": "查无此厂", "栏": "隶属", "值": "市属",
+                                      "种类": "补"}], backup=False, log=lambda *a: None)
+        eq(rep["filled"], 0, "一格也没填")
+        eq(len(rep["missing"]), 1, "没找着的要报出来,不能闷着")
+        eq(len(toxlsx.read_units_full(x)), before, "行数一行不长")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_keep_carried_over():
+    """重跑会把待核工作簿整个重写 —— 「取否」得抄过来,不然核到一半的人白干。"""
+    print("重跑抄旧「取否」")
+    tmp = tempfile.mkdtemp(prefix="gaz-keep-")
+    try:
+        import openpyxl
+        md, _enc = bookmd.read_text(os.path.join(HERE, "fixture", "上海电子仪表工业志.md"))
+        res = EX.extract(md, book="试志", city="Shanghai")
+        x = os.path.join(tmp, "核.xlsx")
+        bookmd.write_xlsx(x, res, city="Shanghai", log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        rv = wb[bookmd.REVIEW_UNITS]
+        who = rv.cell(row=3, column=2).value
+        rv.cell(row=3, column=1).value = "y"
+        wb[bookmd.REVIEW_COMP].cell(row=2, column=1).value = "y"
+        wb.save(x)
+
+        said = []
+        bookmd.write_xlsx(x, res, city="Shanghai", log=said.append)
+        wb2 = openpyxl.load_workbook(x)
+        rv2 = wb2[bookmd.REVIEW_UNITS]
+        keep = {rv2.cell(row=i, column=2).value: rv2.cell(row=i, column=1).value
+                for i in range(2, rv2.max_row + 1)}
+        eq(keep.get(who), "y", "上一遍点过头的那一家,这一遍照旧点着头")
+        eq(sum(1 for v in keep.values() if v), 1, "没点过的还是空着 —— 不替人点头")
+        eq(wb2[bookmd.REVIEW_COMP].cell(row=2, column=1).value, "y", "整机那张也抄")
+        check(any("取否" in t and "抄" in t for t in said), "抄了几行要说一句")
+        check(any("改过的字没抄" in t for t in said),
+              "抄不过来的也要说明白 —— 不说,以为改过的字还在")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2099,7 +2287,10 @@ def main():
                test_dups_abbrev, test_city_of,
                test_model_dash, test_product_attributive,
                test_review_name_sheet, test_review_four_tabs,
-               test_province_review_city, test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
+               test_province_review_city,
+               test_refine, test_plan_fills, test_rerun_fills_end_to_end,
+               test_apply_fills_never_adds_rows, test_keep_carried_over,
+               test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
                test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
                test_old_sheet_name,
