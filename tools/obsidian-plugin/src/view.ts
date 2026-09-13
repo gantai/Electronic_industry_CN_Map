@@ -62,25 +62,27 @@ export class FlowView extends ItemView {
     this.setupEl = root.createDiv({ cls: "gaz-setup" });
 
     const steps = root.createDiv({ cls: "gaz-steps" });
+    /* 设置摆在最上头。库的路径、仓库的路径常要改,从前得跑到
+       设置 → 第三方插件 里,左边一列拉到最底下才找得着。 */
+    this.actionRow(steps, "设置", "仓库在哪儿、库里哪一支、python 怎么敲、在哪一支上干活。",
+                   () => this.plugin.openSettings());
     for (const g of groups()) {
       steps.createEl("div", { cls: "gaz-group", text: g });
       for (const s of STEPS.filter((x) => x.group === g)) this.stepRow(steps, s);
     }
 
-    /* 插件自己的更新。**摆在这儿是有缘故的** —— 从前更新要拉取、开 PowerShell
-       跑 装.ps1、再回来把插件关一下再开,三样漏一样,面板上看着就是「什么也
-       没变」,而且看不出是没装上。如今状态直接写在这一行上。 */
-    steps.createEl("div", { cls: "gaz-group", text: "插件自己" });
-    this.installRow(steps);
-
-    /* git 那几条不在 STEPS 里 —— 它们不是 gaz,确认的方式也不一样 */
-    steps.createEl("div", { cls: "gaz-group", text: "上线" });
+    /* 这一段不是 gaz,是 git 与插件自己 —— 确认的方式也跟那几步不一样。
+       **四条摆在一处**:拿新的下来(拉取)、把新的装上(更新插件)是一件事的
+       两半,拆成两段,人拉完了看不见还要装。次序就是实际的次序:
+       先提交、再拉取、再装上、末了才上线。 */
+    steps.createEl("div", { cls: "gaz-group", text: "更新与上线" });
     this.actionRow(steps, "提交改动", "把眼下改过的存进这一支。", () =>
       this.plugin.doCommit(),
     );
     this.actionRow(steps, "拉取更新", "把远端这一支的新提交拿下来。", () =>
       this.plugin.doPull(),
     );
+    this.installRow(steps);
     this.actionRow(
       steps,
       "第八步 · 合进 main 上线",
@@ -147,7 +149,7 @@ export class FlowView extends ItemView {
       cls: "gaz-step-btn" + (danger ? " gaz-danger" : ""),
     });
     const icon = btn.createSpan({ cls: "gaz-step-icon" });
-    setIcon(icon, danger ? "upload-cloud" : "git-branch");
+    setIcon(icon, danger ? "upload-cloud" : name === "设置" ? "settings" : "git-branch");
     const txt = btn.createDiv({ cls: "gaz-step-text" });
     txt.createEl("div", { cls: "gaz-step-name", text: name });
     txt.createEl("div", { cls: "gaz-step-blurb", text: blurb });

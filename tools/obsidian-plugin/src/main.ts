@@ -8,7 +8,8 @@ import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { PLUGIN_ID, compare, destDir, plan, state, stateText,
          type InstallState } from "./install";
-import { DEFAULTS, GazSettingTab, ctxOf, settingsGap, type GazSettings } from "./settings";
+import { DEFAULTS, GazSettingTab, SettingsModal, ctxOf, settingsGap,
+         type GazSettings } from "./settings";
 import { STEPS, draftOut, missing, reviewBookOf, slugOf,
          type Cmd, type Step, type Vals } from "./steps";
 import { blockPublish, commitPlan, pendingCmd, publishPlan, pullPlan, statusCmd, type Plan } from "./gitops";
@@ -41,6 +42,11 @@ export default class GazPlugin extends Plugin {
       id: "setup",
       name: "认一下仓库(重新设置)",
       callback: () => void this.openSetup(),
+    });
+    this.addCommand({
+      id: "settings",
+      name: "设置(仓库、库、python、分支)",
+      callback: () => this.openSettings(),
     });
     this.addCommand({
       id: "install",
@@ -168,6 +174,12 @@ export default class GazPlugin extends Plugin {
   private vaultRoot(): string {
     const a = this.app.vault.adapter as { getBasePath?: () => string };
     return typeof a.getBasePath === "function" ? a.getBasePath() : "";
+  }
+
+  /** 设置那张卡片。**面板上开得出来** —— 从前要去 设置 → 第三方插件 里翻,
+   *  那不合「动手一律走插件」的规矩,库的路径尤其常改。 */
+  openSettings(): void {
+    new SettingsModal(this.app, this, this.vaultRoot()).open();
   }
 
   /** 头一回用的那张卡片:挑个文件,别的几样它自己认 */

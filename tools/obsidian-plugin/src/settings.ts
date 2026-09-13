@@ -1,42 +1,94 @@
 /* 设置:路径几条,别的一概不问。 */
 
-import { App, PluginSettingTab, Setting } from "obsidian";
-import type { Ctx } from "./steps";
+import { App, Modal, PluginSettingTab, Setting, TFolder } from "obsidian";
 import type GazPlugin from "./main";
+import { FIELDS, absFolders } from "./config";
 
-export interface GazSettings {
-  repoDir: string;
-  python: string;
-  draftsDir: string;
-  vaultUnits: string;
-  branch: string;
-  /** 面板上是否连只读的那几步也显示确认 */
-  confirmReadOnly: boolean;
+/* 纯的那几样搬去了 config.ts(那边测得动)。这儿照旧转出去,
+   别处的 import 一个也不必改。 */
+export { DEFAULTS, FIELDS, ctxOf, settingsGap } from "./config";
+export type { GazSettings, SettingField } from "./config";
+
+/** 库里的文件夹,连整条路径 —— 「库」那几栏从这儿挑,不必自己打字。
+ *  `base` 是库自己在硬盘上的位置;问不出就只好手填。 */
+export function vaultFolders(app: App, base: string): string[] {
+  const rel: string[] = [];
+  for (const f of app.vault.getAllLoadedFiles()) {
+    if (f instanceof TFolder) rel.push(f.path);
+  }
+  return absFolders(base, rel);
 }
 
-export const DEFAULTS: GazSettings = {
-  repoDir: "",
-  python: "python",
-  draftsDir: "",
-  vaultUnits: "",
-  branch: "claude/local-gazetteer-ocr-md-extract-po9dtk",
-  confirmReadOnly: false,
-};
-
-export function ctxOf(s: GazSettings): Ctx {
-  return {
-    repoDir: s.repoDir.trim(),
-    python: s.python.trim() || "python",
-    draftsDir: s.draftsDir.trim(),
-    vaultUnits: s.vaultUnits.trim(),
-    branch: s.branch.trim() || DEFAULTS.branch,
-  };
+/** 把那几栏画出来。设置页与面板上那张卡片共用这一份。 */
+export function renderFields(
+  where: HTMLElement,
+  app: App,
+  plugin: GazPlugin,
+  base: string,
+): void {
+  for (const f of FIELDS) {
+    const s = new Setting(where).setName(f.name).setDesc(f.desc);
+    if (f.kind === "toggle") {
+      s.addToggle((t) =>
+        t.setValue(plugin.settings[f.key] as boolean).onChange(async (v) => {
+          (plugin.settings[f.key] as boolean) = v;
+          await plugin.saveSettings();
+        }),
+      );
+      continue;
+    }
+    let box: HTMLInputElement | null = null;
+    s.addText((t) => {
+      t.setPlaceholder(f.placeholder ?? "")
+        .setValue(plugin.settings[f.key] as string)
+        .onChange(async (v) => {
+          /* 不走 normalizePath —— 那是给库内相对路径用的,
+             拿它套 D:\\Archive\\转换稿 会把反斜杠换成斜杠 */
+          (plugin.settings[f.key] as string) = v.trim();
+          await plugin.saveSettings();
+        });
+      box = t.inputEl;
+    });
+    if (f.kind !== "folder") continue;
+    const dirs = vaultFolders(app, base);
+    if (!dirs.length) continue;
+    s.addDropdown((d) => {
+      d.addOption("", "—— 挑库里的一个文件夹 ——");
+      for (const full of dirs) d.addOption(full, full === base ? "(库根)" : full.slice(base.length + 1));
+      d.setValue("");
+      d.onChange(async (v) => {
+        if (!v) return;
+        (plugin.settings[f.key] as string) = v;
+        if (box) box.value = v;
+        await plugin.saveSettings();
+      });
+    });
+  }
 }
 
-/** 设置齐不齐 —— 缺哪一样,回一句话;齐了回 null */
-export function settingsGap(s: GazSettings): string | null {
-  if (!s.repoDir.trim()) return "还没说仓库在哪儿 —— 先去设置里填「仓库目录」。";
-  return null;
+/** 面板上那张设置卡片 —— 不必再去 设置 → 第三方插件 里翻。 */
+export class SettingsModal extends Modal {
+  constructor(app: App, private plugin: GazPlugin, private base: string) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("gaz-form");
+    contentEl.createEl("h3", { text: "设置" });
+    contentEl.createEl("p", {
+      cls: "gaz-blurb",
+      text: "改了就算数,不必按「好」。同样几栏在 设置 → 第三方插件 底下也有。",
+    });
+    renderFields(contentEl, this.app, this.plugin, this.base);
+    new Setting(contentEl).addButton((b) =>
+      b.setButtonText("好了").setCta().onClick(() => this.close()),
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 export class GazSettingTab extends PluginSettingTab {
@@ -47,27 +99,6 @@ export class GazSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  private text(
-    name: string,
-    desc: string,
-    placeholder: string,
-    get: () => string,
-    set: (v: string) => void,
-  ) {
-    new Setting(this.containerEl)
-      .setName(name)
-      .setDesc(desc)
-      .addText((t) =>
-        t
-          .setPlaceholder(placeholder)
-          .setValue(get())
-          .onChange(async (v) => {
-            set(v);
-            await this.plugin.saveSettings();
-          }),
-      );
-  }
-
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -76,59 +107,12 @@ export class GazSettingTab extends PluginSettingTab {
       cls: "gaz-settings-note",
       text:
         "这个插件不自己抽数据 —— 它替你跑仓库里的 gaz(Python)。" +
-        "所以 Python 与 openpyxl 还是要装;装了没有,面板上「本机装了什么」那一条会说。",
+        "所以 Python 与 openpyxl 还是要装;装了没有,面板上「本机装了什么」那一条会说。" +
+        "同样几栏在面板顶上「设置」那一条里也改得动。",
     });
 
-    this.text(
-      "仓库目录",
-      "CN_Map 在哪儿。底下每一条命令都在这个目录里跑。",
-      "D:\\Coding\\CN_Map",
-      () => this.plugin.settings.repoDir,
-      (v) => (this.plugin.settings.repoDir = v.trim()),
-    );
-
-    this.text(
-      "python 怎么敲",
-      "多半就是 python。装了好几个版本、或者用虚拟环境的,写整条路径。",
-      "python",
-      () => this.plugin.settings.python,
-      (v) => (this.plugin.settings.python = v.trim()),
-    );
-
-    this.text(
-      "转换稿目录",
-      "空着就是仓库里的 转换稿\\。稿子放在库里的话,写 D:\\Archive\\转换稿。",
-      "(空着用仓库里的)",
-      () => this.plugin.settings.draftsDir,
-      /* 不走 normalizePath —— 那是给库内相对路径用的,
-         拿它套 D:\\Archive\\转换稿 会把反斜杠换成斜杠 */
-      (v) => (this.plugin.settings.draftsDir = v.trim()),
-    );
-
-    this.text(
-      "库里厂所笔记那一支",
-      "gaz push / pull 往这儿写。不用这两条就空着。",
-      "D:\\Archive\\厂所",
-      () => this.plugin.settings.vaultUnits,
-      (v) => (this.plugin.settings.vaultUnits = v.trim()),
-    );
-
-    this.text(
-      "在哪一支上干活",
-      "改动提交到这一支;上线是把它合进 main。",
-      DEFAULTS.branch,
-      () => this.plugin.settings.branch,
-      (v) => (this.plugin.settings.branch = v.trim()),
-    );
-
-    new Setting(containerEl)
-      .setName("只看不动的那几步也先确认")
-      .setDesc("默认不问 —— 看状态、验一验这类一个格子也不动,拦一道纯属碍事。")
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.confirmReadOnly).onChange(async (v) => {
-          this.plugin.settings.confirmReadOnly = v;
-          await this.plugin.saveSettings();
-        }),
-      );
+    const a = this.app.vault.adapter as { getBasePath?: () => string };
+    renderFields(containerEl, this.app, this.plugin,
+                 typeof a.getBasePath === "function" ? a.getBasePath() : "");
   }
 }

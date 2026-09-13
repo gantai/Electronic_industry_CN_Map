@@ -152,7 +152,8 @@ test("每一步的 id 不重样,分组次序照 STEPS 排", () => {
   const ids = STEPS.map((s) => s.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual(groups()[0], "动手之前");
-  assert.ok(groups().includes("上线") === false, "上线那几条是 git,不在 STEPS 里");
+  assert.ok(groups().includes("更新与上线") === false,
+            "那一段是 git 与插件自己,不在 STEPS 里");
 });
 
 test("凡是要人动手的 gaz 子命令,面板上都得有一条", () => {
@@ -200,6 +201,40 @@ test("末尾那一行不带换行,也得喂出来", async () => {
   const r = await capture({ exe: "node", cwd: process.cwd(),
     args: ["-e", "process.stdout.write('头一行\\n末一行没换行')"] });
   assert.equal(r.out.trim().split("\n").at(-1), "末一行没换行");
+});
+
+// ------------------------------------------------------- 设置
+
+test("设置那几栏摆成一份 —— 设置页与面板上那张卡片共用", async () => {
+  /* 两处各写一遍,迟早对不上:改了这边忘了那边,人在另一处看见的是过时的话。
+     所以字段表只此一份,两处都照着画。 */
+  const { FIELDS, DEFAULTS } = await import("../build/config.js");
+  const keys = FIELDS.map((f) => f.key);
+  assert.deepEqual(keys.slice().sort(), Object.keys(DEFAULTS).sort(),
+                   "每一项设置都得有一栏,不能有改不着的");
+  for (const f of FIELDS) {
+    assert.ok(f.name && f.desc, f.key + " 得有名字与说明");
+    assert.ok(["text", "folder", "toggle"].includes(f.kind), f.key + " 的种类不认得");
+  }
+});
+
+test("设置:「库」那两栏可以从库里的文件夹里挑", async () => {
+  /* 从前只能手打 D:\\Archive\\厂所 —— 打错一个字,push 就写到别处去了,
+     而且不报错。库里有哪些文件夹,Obsidian 自己就知道。 */
+  const { FIELDS } = await import("../build/config.js");
+  const folder = FIELDS.filter((f) => f.kind === "folder").map((f) => f.key);
+  assert.deepEqual(folder.sort(), ["draftsDir", "vaultUnits"]);
+});
+
+test("设置:库里的文件夹拼成整条路径,库根也算一条", async () => {
+  const { absFolders } = await import("../build/config.js");
+  assert.deepEqual(absFolders("D:\\Archive", ["厂所", "材料/志书", "/"]), [
+    "D:\\Archive",
+    "D:\\Archive\\厂所",
+    "D:\\Archive\\材料\\志书",
+  ]);
+  assert.deepEqual(absFolders("", ["厂所"]), [], "问不出库在哪儿就不拼,免得拼出半条路径");
+  assert.deepEqual(absFolders("/home/u/库", ["厂所"]), ["/home/u/库", "/home/u/库/厂所"]);
 });
 
 // ------------------------------------------------------- 装自己
