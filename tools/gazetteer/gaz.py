@@ -605,7 +605,7 @@ def cmd_book(args):
         f.write(text)
 
     known = toxlsx.merge_known(args.xlsx, DEFAULT_GEOCODE) if os.path.exists(args.xlsx) else {}
-    # 总表现有的行 —— 重跑一本核过的志书时据以标「已收」、据以摆「补格子」。
+    # 总表现有的行 —— 重跑一本核过的志书时据以标「已收」、据以摆「补全已有记录」。
     # 头一回跑一本新志书,这两样都是空的,跟从前一模一样。
     master = ({r["raw"]: r for r in toxlsx.read_units_full(args.xlsx)}
               if os.path.exists(args.xlsx) else {})
@@ -638,7 +638,7 @@ def cmd_book(args):
           % BOOK.REVIEW_UNITS)
     print("  名字认错的当场改;同一家的几个名字改成同一个,追加时会并作一行;")
     print("  要的行「取否」写 y。")
-    print("  **冠「待核·」的几张都要核** —— 器件、整机、名称沿革(重跑时还有补格子)")
+    print("  **冠「待核·」的几张都要核** —— 器件、整机、名称沿革(重跑时还有补全已有记录)")
     print("  那几张的「取否」也都在 A 列,一张漏了那一张就整张不进总表。核完:")
     print('    %s xlsx --from "%s"' % (SELF, out))
     return 0
@@ -915,7 +915,7 @@ def cmd_xlsx(args):
                         ("comp", "comp.tsv"), ("names", "names.tsv")):
             p = os.path.join(rd, fn)
             bundle[tag] = tsvio.kept(tsvio.read(p)) if os.path.exists(p) else []
-        bundle["fills"] = []      # 补格子只在工作簿里,TSV 那条路没有这一张
+        bundle["fills"] = []      # 补全已有记录只在工作簿里,TSV 那条路没有这一张
         where = "四张 TSV 的 keep 列"
         seen = {}
         label = args.book or args.slug
@@ -952,7 +952,7 @@ def cmd_xlsx(args):
           % (os.path.basename(args.xlsx), rep["units"], rep["semi"], rep["comp"], rep["names"]))
     fr = rep["fills"]
     if fills:
-        print("补格子:填上 %d 格" % fr["filled"]
+        print("补全已有记录:填上 %d 格" % fr["filled"]
               + (",%d 格原本就是这个值" % fr["same"] if fr["same"] else ""))
         if fr["overwrote"]:
             print("  其中 %d 格是盖掉原有的值 —— 你点了头的,过一眼:" % len(fr["overwrote"]))
@@ -961,7 +961,7 @@ def cmd_xlsx(args):
         if fr["missing"]:
             print("  %d 格没找着对应的行,一格也没填:%s"
                   % (len(fr["missing"]), "、".join(fr["missing"][:6])))
-            print("  「补格子」只往表里已有的行上填,不新建行 —— 那一家要收进来,"
+            print("  「补全已有记录」只往表里已有的行上填,不新建行 —— 那一家要收进来,"
                   "得在「待核·厂所」那张里写 y。")
     if rep["skipped"]:
         # 跳过的分两类:单位按名字(连别名一起)比,产品与沿革按整条记录比

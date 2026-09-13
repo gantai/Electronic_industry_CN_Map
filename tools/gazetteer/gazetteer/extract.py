@@ -1040,7 +1040,7 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["known"] = "已在表内" if nm in (known or {}) else ""
         pick = list(dict.fromkeys(ev.values())) or [h["sent"] for h in hits[:2]]
         row["evidence"] = " ⏐ ".join(pick[:3])[:400]
-        # 哪一句话立的哪一格 —— 重跑时「补格子」那张要一格一句地摆出凭据。
+        # 哪一句话立的哪一格 —— 重跑时「补全已有记录」那张要一格一句地摆出凭据。
         # 摆整行的 evidence 不顶用:那是三句话拼的,未必含着这一格的那一句
         row["ev"] = {k: str(v)[:300] for k, v in ev.items() if v}
         units.append(row)

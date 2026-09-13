@@ -1078,7 +1078,7 @@ def test_refine():
 
 def test_plan_fills():
     """重跑一本核过的志书:该报哪几格,不该报哪几格。"""
-    print("补格子报什么")
+    print("补全已有记录报什么")
     master = {"甲厂": {"raw": "甲厂", "Industry": "", "隶属": "", "性质": "集体",
                        "Start Date": "19580000", "Add.": "解放路5号2号",
                        "Product": "收音机", "City": "Beijing"},
@@ -1178,7 +1178,7 @@ def test_rerun_fills_end_to_end():
 
         bundle, _city, seen = bookmd.read_review(x)
         eq(len(bundle["units"]), 0, "「待核·厂所」一行没点,一家也不新增")
-        eq(len(bundle["fills"]), 1, "补格子只点了一格")
+        eq(len(bundle["fills"]), 1, "补全已有记录只点了一格")
         check(seen["fills"] >= 2, "分母要报出来:一共几格待核")
 
         rep = toxlsx.append(master, backup=False, **bundle)
@@ -1192,9 +1192,38 @@ def test_rerun_fills_end_to_end():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_old_fill_sheet_name():
+    """这张表从前叫「待核·补格子」—— 手里那样的本子照样读得回来。"""
+    print("补全已有记录的旧名字")
+    tmp = tempfile.mkdtemp(prefix="gaz-fillname-")
+    try:
+        import openpyxl
+        md = ("# 第一章行业归口电子工业企业\n\n"
+              "## 第一节北京甲字无线电厂\n\n"
+              "北京甲字无线电厂建于1958年，是集体企业。\n")
+        res = EX.extract(md, book="试志", city="Beijing")
+        master = {"北京甲字无线电厂": {"raw": "北京甲字无线电厂", "City": "Beijing"}}
+        x = os.path.join(tmp, "重跑.xlsx")
+        bookmd.write_xlsx(x, res, city="Beijing", master=master, log=lambda *a: None)
+
+        wb = openpyxl.load_workbook(x)
+        eq(bookmd.REVIEW_FILL, "待核·补全已有记录", "新名字说得出补的是什么")
+        # 改回旧名,当作改名以前做的那一份
+        wb[bookmd.REVIEW_FILL].title = bookmd.REVIEW_FILL_OLD
+        fw = wb[bookmd.REVIEW_FILL_OLD]
+        fw.cell(row=2, column=1).value = "y"
+        wb.save(x)
+
+        bundle, _city, seen = bookmd.read_review(x)
+        eq(len(bundle["fills"]), 1, "旧名字那一张照样读得回来")
+        check(seen["fills"] >= 1, "分母也报得出来")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_apply_fills_never_adds_rows():
-    """补格子找不着行就不动 —— 凭一个名字新建一行,那是 append 的事,不是它的。"""
-    print("补格子不新增行")
+    """补全已有记录找不着行就不动 —— 凭一个名字新建一行,那是 append 的事,不是它的。"""
+    print("补全已有记录不新增行")
     tmp = tempfile.mkdtemp(prefix="gaz-fillrow-")
     try:
         x = os.path.join(tmp, "总表.xlsx")
@@ -2289,6 +2318,7 @@ def main():
                test_review_name_sheet, test_review_four_tabs,
                test_province_review_city,
                test_refine, test_plan_fills, test_rerun_fills_end_to_end,
+               test_old_fill_sheet_name,
                test_apply_fills_never_adds_rows, test_keep_carried_over,
                test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,

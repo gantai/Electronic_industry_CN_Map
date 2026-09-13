@@ -285,7 +285,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), fills=(), backup=Tru
             % (os.path.basename(xlsx_path), report["backup"] or "(这次没备份)"))
     if fills:
         # 上头备份过了,这儿不再来一份。新收的行这时已经在表里 ——
-        # 补格子若指着其中一家,也填得上
+        # 补全已有记录若指着其中一家,也填得上
         report["fills"] = apply_fills(xlsx_path, fills, backup=False, log=log)
     return report
 
@@ -408,7 +408,7 @@ def read_places(geocode_js):
 
 UNIT_LABELS = ["Industry", "Product", "Start Date", "End Date", "Founder", "City", "Add.",
                "Remark", "Source", "Name EN", "Lat", "Lng",
-               # 别名从前没读出来 —— 于是「补格子」以为整表一个别名也没有,
+               # 别名从前没读出来 —— 于是「补全已有记录」以为整表一个别名也没有,
                # 十三家早已填过别名的又报一遍。判重那边一直是另走 read_known 的
                "别名"]
 
@@ -501,17 +501,17 @@ def _ensure_column(ws, label, header_row=1):
 
 
 def apply_fills(xlsx_path, fills, backup=True, log=print):
-    """核过的「补格子」写进总表 —— **只动点了头的那几格,一行也不新增。**
+    """核过的「补全已有记录」写进总表 —— **只动点了头的那几格,一行也不新增。**
 
     fills: [{"Unit": ..., "栏": "隶属", "值": "市属", "总表现值": "", "种类": "补"}]
-    —— `bookmd.read_review` 从「待核·补格子」那张读出来的样子。
+    —— `bookmd.read_review` 从「待核·补全已有记录」那张读出来的样子。
 
     重跑一本核过的志书,单位大半早已在表里,`append` 一概跳过 —— 跳过的同时
     也就把这一遍新认出来的隶属、性质一并扔了。这个函数补的正是那一处:行还是
     原来的行,只把空格子填上。
 
     找不着那一行就**不动**,记在 missing 里:宁可不填,不能凭一个名字新建一行
-    ——「补格子」这张表从设计上就不该增行,增行走 `append`。
+    ——「补全已有记录」这张表从设计上就不该增行,增行走 `append`。
 
     盖掉原有值的记在 overwrote 里,一格一条摆出来。那是人点头要盖的
     (「对不上」那种),可盖掉的是核过的东西,不能不声不响。"""

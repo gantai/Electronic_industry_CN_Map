@@ -31,11 +31,15 @@ REVIEW_SEMI = "待核·器件"
 REVIEW_COMP = "待核·整机"
 REVIEW_NAMES = "待核·名称沿革"
 
-#: 第五张:已在总表里的单位,这一遍新认出来的**格子**。
+#: 第五张:已在总表里的单位,这一遍新认出来的那几格。
 #: 重跑一本核过的志书,单位大半早已收进总表 —— 那些行 append 一概跳过,
 #: 于是新认出来的隶属、性质也就一并进不去。一家一家重核 126 家,换来的是
-#: 九十几个格子,划不来;把格子单摆一张表,核的就只是那九十几格。
-REVIEW_FILL = "待核·补格子"
+#: 九十几个格子,划不来;单摆一张表,核的就只是那九十几格。
+#:
+#: 从前叫「待核·补格子」——「格子」是口语,「补格子」更像在补一张网,
+#: 看不出补的是**总表里已有那几行**。读的一头两个名字都认。
+REVIEW_FILL = "待核·补全已有记录"
+REVIEW_FILL_OLD = "待核·补格子"
 
 #: 照总表体例摆的那一张,只供看与粘,改它不算数。
 #: 从前叫「厂所名录-Shanghai」—— 跟总表那张正表同名,又缀个市名,
@@ -350,7 +354,7 @@ def read_keeps(path):
     return out
 
 
-# ---------------------------------------------------------------- 补格子
+# ---------------------------------------------------------------- 补全已有记录
 
 #: 哪些栏值得回头补,以及补法。
 #:
@@ -446,7 +450,7 @@ def _remark_for(remark, label):
 
 
 def master_name(master, kidx, nm):
-    """总表里那一行挂的是哪个名字 —— 补格子要照总表的名字写,不然对不上行。"""
+    """总表里那一行挂的是哪个名字 —— 补全已有记录要照总表的名字写,不然对不上行。"""
     if nm in master:
         return nm
     canon = (kidx or {}).get(nm, nm)
@@ -534,7 +538,7 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print,
     另附几张「待核·」表,把出处、原文、置信一并摆上,好在 Excel 里逐条核对。
 
     `master` 给了(`{单位名: 总表那一行}`),就替你把重跑一本核过的志书这件事
-    办省一点:已在总表里的行标上「已收」,新认出来的格子另摆一张「待核·补格子」。
+    办省一点:已在总表里的行标上「已收」,新认出来的格子另摆一张「待核·补全已有记录」。
     不给就照旧,像头一回跑一本新志书那样。"""
     import openpyxl
     from openpyxl.styles import Alignment, Font
@@ -676,7 +680,7 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print,
     for row in rv.iter_rows(min_row=2, min_col=ev_col, max_col=ev_col):
         row[0].alignment = Alignment(wrap_text=False, vertical="top")
 
-    # ---- 待核·补格子:已在总表里的单位,这一遍新认出来的格子
+    # ---- 待核·补全已有记录:已在总表里的单位,这一遍新认出来的格子
     fills = plan_fills(res["units"], master or {}, kidx) if master else []
     if fills:
         fw = wb.create_sheet(REVIEW_FILL)
@@ -691,8 +695,9 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print,
         for i, wid in enumerate([6, 26, 12, 34, 34, 8, 90, 30], start=1):
             fw.column_dimensions[get_column_letter(i)].width = wid
         note = fw.cell(row=1, column=10,
-                       value="↑ 一行 = 总表里某家的某一个格子。这些单位早已在总表里,"
-                             "「待核·厂所」那张不必再核一遍 —— 重跑一本核过的志书,"
+                       value="↑ **一行 = 总表里某一家的某一栏**,不是一家一行。"
+                             "这些单位早已在总表里(「待核·厂所」那张给它们标着"
+                             "「已收」),那张不必再核一遍 —— 重跑一本核过的志书,"
                              "所得就是这几格。"
                              "「补」= 总表那一格空着,写 y 就填上去。"
                              "「更细」= 总表里已有,而这一遍说得更具体"
@@ -790,7 +795,7 @@ REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页"
                "地址": "Add.", "省": "省", "区": "district",
                "City": "City", "城市": "City", "市": "City",
                "隶属": "隶属", "主管单位": "主管单位", "性质": "性质",
-               # 补格子那张。「已收」只是给人看的记号,不是字段
+               # 补全已有记录那张。「已收」只是给人看的记号,不是字段
                "已收": None, "栏": "栏", "总表现值": "总表现值",
                "这一遍认出的": "值", "种类": "种类", "凭据(原文)": "evidence",
                "备注": "Remark", "出处": "Source", "统计年": "统计年",
@@ -882,7 +887,7 @@ def merge_by_name(rows):
 #: 读回来的时候,每一张认哪些标签 —— 新名在前,从前用过的跟在后头。
 #: 改名那天谁手上正核着一章,那一章的工夫不能白费。
 REVIEW_TABS = {
-    "fills": (REVIEW_FILL,),
+    "fills": (REVIEW_FILL, REVIEW_FILL_OLD),
     "units": (REVIEW_UNITS, "待核"),
     "semi": (REVIEW_SEMI, toxlsx.SHEET_SEMI, toxlsx.OLD_NAMES[toxlsx.SHEET_SEMI]),
     "comp": (REVIEW_COMP, toxlsx.SHEET_COMP, toxlsx.OLD_NAMES[toxlsx.SHEET_COMP]),
@@ -918,7 +923,7 @@ def read_review(path):
     算数就说不清了。
 
     返回 (各表的行, 城市, 各表看过几行)。重跑一本核过的志书时另有一张
-    「待核·补格子」,读回来挂在 `fills` 上 —— 那几行不新增单位,只往总表
+    「待核·补全已有记录」,读回来挂在 `fills` 上 —— 那几行不新增单位,只往总表
     已有的行里填格子(见 `toxlsx.apply_fills`)。
 
     城市认的是**每一行自己的 City 列**。从前认的是预览表名末尾那一截
