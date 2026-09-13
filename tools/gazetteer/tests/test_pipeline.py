@@ -1099,7 +1099,7 @@ def test_plan_fills():
           "产品是长栏:总表那一份人核过、动手改过,机器再读一遍不算新证据")
     eq(got[("甲厂", "性质")]["种类"], "对不上", "性质两边都有值而不同,报「对不上」")
     eq(got[("甲厂", "City")]["种类"], "对不上", "City 也是短栏")
-    eq(got[("甲厂", "性质")]["总表现值"], "集体", "把总表现在那一格摆出来,好判断")
+    eq(got[("甲厂", "性质")]["总表原值"], "集体", "总表里原有的那一格也摆出来,好判断")
 
     # 凭据摆的是立这一格的那一句,不是整行拼起来的那三句
     got = fills([{"Unit": "甲厂", "role": "专条", "隶属": "部属",
@@ -1193,7 +1193,8 @@ def test_rerun_fills_end_to_end():
 
 
 def test_old_fill_sheet_name():
-    """这张表从前叫「待核·补格子」—— 手里那样的本子照样读得回来。"""
+    """这张表从前叫「待核·补格子」,那一栏从前叫「总表现值」—— 手里那样的本子
+    照样读得回来。(「总表现值」本意是「总表·现值」,可念起来先撞见「总表现」。)"""
     print("补全已有记录的旧名字")
     tmp = tempfile.mkdtemp(prefix="gaz-fillname-")
     try:
@@ -1208,15 +1209,21 @@ def test_old_fill_sheet_name():
 
         wb = openpyxl.load_workbook(x)
         eq(bookmd.REVIEW_FILL, "待核·补全已有记录", "新名字说得出补的是什么")
-        # 改回旧名,当作改名以前做的那一份
+        # 改回旧名、旧表头,当作改名以前做的那一份
         wb[bookmd.REVIEW_FILL].title = bookmd.REVIEW_FILL_OLD
         fw = wb[bookmd.REVIEW_FILL_OLD]
+        head = {c.value: c.column for c in fw[1]}
+        eq(sorted(k for k in head if k and str(k).startswith("总表")), ["总表里原有的"],
+           "新本子那一栏叫「总表里原有的」,跟「这一遍认出的」成对")
+        fw.cell(row=1, column=head["总表里原有的"]).value = "总表现值"
         fw.cell(row=2, column=1).value = "y"
         wb.save(x)
 
         bundle, _city, seen = bookmd.read_review(x)
         eq(len(bundle["fills"]), 1, "旧名字那一张照样读得回来")
         check(seen["fills"] >= 1, "分母也报得出来")
+        check("总表原值" in bundle["fills"][0], "旧表头也对得上字段(得 %r)"
+              % sorted(bundle["fills"][0]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

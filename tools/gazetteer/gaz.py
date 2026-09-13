@@ -943,7 +943,7 @@ def cmd_xlsx(args):
                                      cndate.fmt(r.get("Start Date", ""))))
         for f in fills:
             print("   ~ %s %s:「%s」→「%s」(%s)"
-                  % (f.get("Unit"), f.get("栏"), f.get("总表现值", ""), f.get("值"),
+                  % (f.get("Unit"), f.get("栏"), f.get("总表原值", ""), f.get("值"),
                      f.get("种类", "")))
         print("(--dry-run,未落笔)")
         return 0

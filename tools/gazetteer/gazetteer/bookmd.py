@@ -521,7 +521,7 @@ def plan_fills(units, master, kidx=None):
                    or _remark_for(r.get("Remark", ""), key)
                    or r.get("evidence", ""))
             out.append({"keep": "", "Unit": master_name(master, kidx, nm), "栏": head,
-                        "总表现值": old, "值": new, "种类": kind,
+                        "总表原值": old, "值": new, "种类": kind,
                         "evidence": why, "Source": r.get("Source", ""),
                         "role": r.get("role", "")})
     # 一家一家挨着摆,同一家的几格排在一处 —— 一个单位判一回,不必来回翻
@@ -684,12 +684,15 @@ def write_xlsx(path, res, city="", book="", stats_year=1990, log=print,
     fills = plan_fills(res["units"], master or {}, kidx) if master else []
     if fills:
         fw = wb.create_sheet(REVIEW_FILL)
-        fw.append(["取否", "单位", "栏", "总表现值", "这一遍认出的", "种类",
+        # 表头两两成对:「总表里原有的」对「这一遍认出的」,一眼看出在比什么。
+        # 从前作「总表现值」—— 本意是「总表·现值」,可念起来先撞见「总表现」
+        # (总体表现),是个自己给自己下绊的词。
+        fw.append(["取否", "单位", "栏", "总表里原有的", "这一遍认出的", "种类",
                    "凭据(原文)", "出处"])
         for c in range(1, 9):
             fw.cell(row=1, column=c).font = Font(bold=True)
         for f in fills:
-            fw.append([keep_of("fills", f), f["Unit"], f["栏"], f["总表现值"], f["值"],
+            fw.append([keep_of("fills", f), f["Unit"], f["栏"], f["总表原值"], f["值"],
                        f["种类"], f["evidence"], f["Source"]])
         fw.freeze_panes = "C2"
         for i, wid in enumerate([6, 26, 12, 34, 34, 8, 90, 30], start=1):
@@ -796,7 +799,8 @@ REVIEW_COLS = {"取否": "keep", "来路": "role", "置信": "confidence", "页"
                "City": "City", "城市": "City", "市": "City",
                "隶属": "隶属", "主管单位": "主管单位", "性质": "性质",
                # 补全已有记录那张。「已收」只是给人看的记号,不是字段
-               "已收": None, "栏": "栏", "总表现值": "总表现值",
+               "已收": None, "栏": "栏",
+               "总表里原有的": "总表原值", "总表现值": "总表原值",   # 旧本子那个写法也认
                "这一遍认出的": "值", "种类": "种类", "凭据(原文)": "evidence",
                "备注": "Remark", "出处": "Source", "统计年": "统计年",
                "据以立论的原文": "evidence"}

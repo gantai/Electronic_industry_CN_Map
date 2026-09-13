@@ -503,7 +503,7 @@ def _ensure_column(ws, label, header_row=1):
 def apply_fills(xlsx_path, fills, backup=True, log=print):
     """核过的「补全已有记录」写进总表 —— **只动点了头的那几格,一行也不新增。**
 
-    fills: [{"Unit": ..., "栏": "隶属", "值": "市属", "总表现值": "", "种类": "补"}]
+    fills: [{"Unit": ..., "栏": "隶属", "值": "市属", "总表原值": "", "种类": "补"}]
     —— `bookmd.read_review` 从「待核·补全已有记录」那张读出来的样子。
 
     重跑一本核过的志书,单位大半早已在表里,`append` 一概跳过 —— 跳过的同时
