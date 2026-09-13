@@ -1245,6 +1245,47 @@ def test_apply_fills_never_adds_rows():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_fill_column_typo():
+    """「栏」写岔了不许默默添一列 —— 那一列一添,数据就分了家,还没人看得出。"""
+    print("补全已有记录:栏名写岔")
+    tmp = tempfile.mkdtemp(prefix="gaz-badcol-")
+    try:
+        import openpyxl
+        x = os.path.join(tmp, "总表.xlsx")
+        shutil.copy(os.path.join(REPO, "CN_Electronic_Industry.xlsx"), x)
+        wb = openpyxl.load_workbook(x)
+        ws = toxlsx.units_sheet(wb)
+        who = str(ws.cell(row=3, column=1).value).strip()
+        cols_before = ws.max_column
+        wb.close()
+
+        rep = toxlsx.apply_fills(x, [
+            {"Unit": who, "栏": "隶書", "值": "市属", "种类": "补"},       # 写成繁体
+            {"Unit": who, "栏": "性質", "值": "全民", "种类": "补"},       # 同上
+            {"Unit": who, "栏": "隶属 ", "值": "市属", "种类": "补"},      # 末尾多个空格
+        ], backup=False, log=lambda *a: None)
+        # 末尾的空格宽着办(前后空白一律去掉);字写岔了才拦
+        eq(rep["filled"], 1, "只填那一格 —— 末尾多个空格不算写岔")
+        eq(len(rep["bad"]), 2, "写成繁体的两格报出来,不闷着")
+        ws2 = toxlsx.units_sheet(openpyxl.load_workbook(x))
+        eq(ws2.max_column, cols_before + 1, "只添「隶属」一列,写岔的一列也没添")
+
+        # 名单外的栏名,总表里已有那一列的照旧填得进去(如「统计年」)
+        rep2 = toxlsx.apply_fills(x, [{"Unit": who, "栏": "统计年", "值": 1995}],
+                                  backup=False, log=lambda *a: None)
+        eq(rep2["filled"], 1, "总表里已有的列,名单外也认")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_fillable_matches_fields():
+    """两处名单要对得上 —— 一边添了栏、另一边没添,那一栏就永远填不进去。"""
+    print("两处栏名名单")
+    heads = {head for _key, head, _lit, _clash in bookmd.FILL_FIELDS}
+    gap = sorted(heads - set(toxlsx.FILLABLE))
+    eq(gap, [], "这几栏 FILL_FIELDS 报得出来,apply_fills 却不认:%r" % gap)
+
+
 def test_keep_carried_over():
     """重跑会把待核工作簿整个重写 —— 「取否」得抄过来,不然核到一半的人白干。"""
     print("重跑抄旧「取否」")
@@ -2326,7 +2367,8 @@ def main():
                test_province_review_city,
                test_refine, test_plan_fills, test_rerun_fills_end_to_end,
                test_old_fill_sheet_name,
-               test_apply_fills_never_adds_rows, test_keep_carried_over,
+               test_apply_fills_never_adds_rows,
+               test_fill_column_typo, test_fillable_matches_fields, test_keep_carried_over,
                test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
                test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,

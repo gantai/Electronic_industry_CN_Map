@@ -149,7 +149,7 @@ def append(xlsx_path, units=(), semi=(), comp=(), names=(), fills=(), backup=Tru
     wb = _open(xlsx_path)
     report = {"backup": "", "units": 0, "semi": 0, "comp": 0, "names": 0,
               "skipped": [], "near": [],
-              "fills": {"filled": 0, "same": 0, "overwrote": [], "missing": []}}
+              "fills": {"filled": 0, "same": 0, "overwrote": [], "missing": [], "bad": []}}
 
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -500,6 +500,18 @@ def _ensure_column(ws, label, header_row=1):
     return col
 
 
+#: 「补全已有记录」那张准往哪几栏里填。
+#:
+#: **栏名打错一个字,从前会在总表尾上默默添一列出来。** 那张表的「栏」是一格
+#: 普通的字,人核对时手一滑(多打个空格、把「隶属」写成「隶書」)就成了新的
+#: 一列 —— 不报错,也没人看得出,数据从此分了家。所以这儿认死一份名单:
+#: 不在名单上、总表里又没有这一列,就不填,记进 report["bad"] 报出来。
+#:
+#: 这一份与 `bookmd.FILL_FIELDS` 的表头那一列是同一套,测试盯着两边一致。
+FILLABLE = ("Industry", "Product", "Start Date", "End Date", "Founder", "Add.",
+            "City", "省", "区", "隶属", "主管单位", "性质", "别名")
+
+
 def apply_fills(xlsx_path, fills, backup=True, log=print):
     """核过的「补全已有记录」写进总表 —— **只动点了头的那几格,一行也不新增。**
 
@@ -517,7 +529,8 @@ def apply_fills(xlsx_path, fills, backup=True, log=print):
     (「对不上」那种),可盖掉的是核过的东西,不能不声不响。"""
     wb = _open(xlsx_path)
     ws = units_sheet(wb)
-    report = {"filled": 0, "same": 0, "overwrote": [], "missing": [], "backup": ""}
+    report = {"filled": 0, "same": 0, "overwrote": [], "missing": [], "bad": [],
+              "backup": ""}
     if not fills:
         return report
 
@@ -545,6 +558,10 @@ def apply_fills(xlsx_path, fills, backup=True, log=print):
         row = where.get(_bare(nm)) or where.get(nm)
         if row is None:
             report["missing"].append("%s(%s)" % (nm, label))
+            continue
+        # 栏名认死那一份名单;名单外的,总表里已有这一列才认
+        if label not in FILLABLE and label not in _headers(ws, 2):
+            report["bad"].append("%s(栏写着「%s」)" % (nm, label))
             continue
         col = _ensure_column(ws, label, header_row=1)
         cur = ws.cell(row=row, column=col).value

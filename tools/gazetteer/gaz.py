@@ -958,6 +958,11 @@ def cmd_xlsx(args):
             print("  其中 %d 格是盖掉原有的值 —— 你点了头的,过一眼:" % len(fr["overwrote"]))
             for nm, label, old, new in fr["overwrote"][:10]:
                 print("     %s %s:「%s」→「%s」" % (nm, label, old, new))
+        if fr.get("bad"):
+            print("  %d 格的「栏」不认得,一格也没填:%s"
+                  % (len(fr["bad"]), "、".join(fr["bad"][:6])))
+            print("  栏名要照总表的表头写(隶属、性质、Add.、Start Date…)—— "
+                  "写岔了从前会在总表尾上默默添一列出来。")
         if fr["missing"]:
             print("  %d 格没找着对应的行,一格也没填:%s"
                   % (len(fr["missing"]), "、".join(fr["missing"][:6])))
