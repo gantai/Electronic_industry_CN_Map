@@ -71,6 +71,29 @@ def in_address(sent):
     return [m.group(1) for m in addr_city_re().finditer(str(sent or "")) if _ok(m.group(1))]
 
 
+# 抽出来的那条地址,开头那个市县。**贴着头认**,所以不必要「厂址」字样领着。
+_HEAD_CITY = re.compile(r"^(?:[一-龥]{2,4}省)?([一-龥]{2,4}?)" + KIND)
+
+
+def in_addr_field(addr):
+    """**已经抽出来的那条地址**开头写着哪个市。认不出回 ""。
+
+    这一条补的是 `in_address` 够不着的地方:那边要「厂址」「位于」一类字样
+    领着,可 `extract.find_address` 还有第二遍 —— 不带字样、只要有门牌号也算
+    地址(「该厂在苏州市人民路45号建成投产」「……南通市青年中路9号。」)。
+    那两句抽得出地址,`in_address` 却一个市名也认不出,于是市空着 ——
+    而市名就明摆在抽出来那条地址的头上。省志里这是常事。
+
+    **只认贴着头的那一个**,所以「获得北京市科技进步奖」进不来 —— 那种句子
+    根本不会被当成地址;就算当成了,市名也不在头上。
+
+    也不问这个市在不在本书认下的那一套市名里(`vocab`)：这条地址本就是
+    这一家自己的,地址对,头上那个市就对。按行业编的省志里,一个市往往
+    通篇只在这一条地址里露一面,拿 vocab 去卡,正好把它卡掉。"""
+    m = _HEAD_CITY.match(str(addr or "").strip())
+    return m.group(1) if m and _ok(m.group(1)) else ""
+
+
 #: 名录表里,这几个表头底下写的是「在哪儿」
 LOC_HEADS = ("所在地", "地址", "厂址", "所在市", "驻地", "地点")
 
@@ -120,13 +143,15 @@ def harvest(blocks, md_text=""):
     return vocab, heads, addrs
 
 
-def city_for(unit, head_path, sents, vocab, roster=None):
+def city_for(unit, head_path, sents, vocab, roster=None, addr=""):
     """这一家归哪个市。回 (市, 据什么)。定不下来回 ("", "")。
 
-    次序是**标题 > 厂址 > 名录表 > 厂名**:
+    次序是**标题 > 厂址 > 地址栏 > 名录表 > 厂名**:
     * 标题是志书自己的分法,最直截 —— 但转换稿页序会乱(见 affil.py 篇首),
       所以调用方要把「据标题」这件事记进备注,由人回稿子上核;
     * 厂址是明写的;
+    * 地址栏是**抽出来那条地址头上**的市名 —— 跟厂址是同一件事,只是那一句
+      没带「厂址」字样,`in_address` 够不着(见 `in_addr_field`);
     * 名录表那一栏同样是明写的,只是离得远些;
     * 厂名冠的市名最弱 ——「江苏电视机厂」冠的是省名不是市名,
       「吴县半导体厂」冠的是县名而它归苏州,都指望不上,故排在最后。
@@ -140,6 +165,9 @@ def city_for(unit, head_path, sents, vocab, roster=None):
         for p in in_address(s):
             if p in vocab:
                 return p, "厂址"
+    p = in_addr_field(addr)
+    if p:
+        return p, "地址「%s」" % str(addr).strip()[:12]
     if roster:
         p = roster.get(unit) or roster.get(re.sub(r"[（(].*?[)）]", "", unit))
         if p and p in vocab:

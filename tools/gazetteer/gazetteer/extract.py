@@ -1016,13 +1016,13 @@ def extract(md_text, book="", known=None, stats_year=1990, city="Shanghai",
         row["End Date"] = end
         row["Founder"] = founder
         if province:
-            got, why = place.city_for(nm, head0, sents, city_vocab, city_roster)
+            got, why = place.city_for(nm, head0, sents, city_vocab, city_roster, addr)
             # 名字冠着别的省的市名(外地协作单位),那一条照旧压得住本省的推断
             named = city_of(nm, "")
             row["City"] = named or got
             row["省"] = "" if named else province
             if not row["City"]:
-                remark.append("市未定 —— 标题、厂址、名录表都没说,只记到省")
+                remark.append("市未定 —— 标题、厂址、地址、名录表都没说,只记到省")
             elif not named and why.startswith("标题"):
                 remark.append("市据章节标题(%s),页序或有错乱,须核" % why[3:])
         else:

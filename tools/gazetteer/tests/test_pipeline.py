@@ -2347,6 +2347,43 @@ def test_province_volume():
     eq(by.get("省电子器件研究所", {}).get("省", ""), "", "市志不填省那一栏")
 
 
+def test_city_from_address_field():
+    """市名就明摆在抽出来那条地址头上 —— 别再说「市未定」。
+
+    `in_address` 要「厂址」「位于」一类字样领着,可 `find_address` 还有第二遍:
+    不带字样、只要有门牌号也算地址。于是「该厂在苏州市人民路45号建成投产」
+    「……南通市青年中路9号。」这两种,地址抽得出来,市却空着 ——
+    而市名就在那条地址的头上。省志里这是常事。"""
+    print("市从地址栏认")
+    from gazetteer import place
+
+    eq(place.in_addr_field("苏州市人民路45号"), "苏州", "贴着头的那一个")
+    eq(place.in_addr_field("江苏省常熟县城关镇虞山路8号"), "常熟", "省名跳过去")
+    eq(place.in_addr_field("解放路5号"), "", "地址上没写市,就没有")
+    eq(place.in_addr_field("市中心路5号"), "", "「市中心」不是某一个市")
+    eq(place.in_addr_field(""), "", "空地址不炸")
+    # 只认贴着头的 —— 奖项那类根本进不了地址栏,就算进了也不在头上
+    eq(place.in_addr_field("人民路45号（获北京市科技进步奖)"), "",
+       "市名不在头上,不算")
+
+    md = ("# 第一章 无线电整机\n\n"
+          "## 第一节 江苏甲字无线电厂\n\n"
+          "江苏甲字无线电厂建于1958年，厂址位于无锡市解放路5号。\n\n"
+          "## 第二节 江苏乙字电子厂\n\n"
+          "江苏乙字电子厂建于1960年，该厂在苏州市人民路45号建成投产。\n\n"
+          "## 第三节 江苏丁字仪表厂\n\n"
+          "江苏丁字仪表厂建于1965年。全厂占地2万平方米，南通市青年中路9号。\n")
+    res = EX.extract(md, book="江苏省志·电子工业志", province="江苏省")
+    by = {r["Unit"]: r for r in res["units"]}
+    eq(by["江苏甲字无线电厂"]["City"], "无锡", "带「厂址位于」的照旧从厂址认")
+    eq(by["江苏乙字电子厂"]["City"], "苏州", "「该厂在…」没有厂址字样,从地址栏认")
+    eq(by["江苏丁字仪表厂"]["City"], "南通", "整句没字样,同上")
+    for u in ("江苏乙字电子厂", "江苏丁字仪表厂"):
+        check("市未定" not in (by[u]["Remark"] or ""), "%s 不该再说市未定" % u)
+    # 南通通篇只在这一条地址里露一面 —— 拿 vocab 去卡正好把它卡掉,所以不卡
+    check("南通" not in place.harvest([], "")[0], "这一条本来就不在 vocab 里")
+
+
 def test_province_column():
     """省那一栏:写进总表、读得回来、写错了拦得住。"""
     print("省那一栏")
@@ -2435,7 +2472,7 @@ def main():
                test_later_rename,
                test_i18n_key_parity,
                test_affiliation, test_affiliation_pipeline,
-               test_province_volume, test_province_column,
+               test_province_volume, test_city_from_address_field, test_province_column,
                test_console_marks):
         fn()
     print()
