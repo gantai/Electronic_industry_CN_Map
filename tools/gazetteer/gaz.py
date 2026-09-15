@@ -909,7 +909,7 @@ DONE_DIR = "已并入总表"
 
 
 def stow_book(path, log=print):
-    """把并过的待核工作簿挪进 `已并入总表\`。回新路径;挪不动就回空。"""
+    r"""把并过的待核工作簿挪进 `已并入总表\`。回新路径;挪不动就回空。"""
     src = os.path.abspath(path)
     if not os.path.exists(src):
         return ""
@@ -926,7 +926,7 @@ def stow_book(path, log=print):
     except OSError as e:
         # Excel 还开着就挪不动 —— 说一句就完,别把并表那一步判成失败
         log("！挪不动 %s（%s)—— 多半还开在 Excel 里。并表已经成了,"
-            "回头自己挪进 %s\ 就是。" % (os.path.basename(src), e, DONE_DIR))
+            "回头自己挪进 %s\\ 就是。" % (os.path.basename(src), e, DONE_DIR))
         return ""
     return dest
 
@@ -1020,7 +1020,7 @@ def cmd_xlsx(args):
     if args.from_xlsx and not args.keep_book:
         moved = stow_book(args.from_xlsx)
         if moved:
-            print("\n这一份已并过,挪到 %s\ 底下 —— 免得跟没并的混在一处。"
+            print("\n这一份已并过,挪到 %s\\ 底下 —— 免得跟没并的混在一处。"
                   % DONE_DIR)
             print("  还要再并一轮(「%s」那张留着没核完),就从那儿开回来 —— "
                   "第五步那个「并完挪进…」开关关掉,它就留在原处。" % BOOK.REVIEW_FILL)
