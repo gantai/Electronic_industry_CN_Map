@@ -259,10 +259,15 @@ export const STEPS: Step[] = [
         pickFrom: "drafts" },
       { key: "dryRun", label: "先空跑一遍(不写)", type: "toggle", value: "true",
         hint: "**头一回先空跑。** 看清楚要添几行、跳过几行,再关掉这个开关真跑。" },
+      { key: "stow", label: "并完挪进「已并入总表」", type: "toggle", value: "true",
+        hint: "并过的跟没并的混在转换稿一处,隔几天回来认不出哪一份还欠核 ——" +
+              "工作簿是二进制,看不出里头的「取否」打没打过。挪开的那一份挑稿子时" +
+              "也不再列出来。还要再并一轮就关掉这个开关。" },
     ],
     build: (v, ctx) => {
       const a = ["xlsx", "--from", v.from];
       if (on(v.dryRun)) a.push("--dry-run");
+      if (!on(v.stow)) a.push("--keep-book");
       return [gaz(ctx, a)];
     },
   },

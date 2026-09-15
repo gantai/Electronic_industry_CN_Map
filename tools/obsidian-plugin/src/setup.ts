@@ -104,6 +104,9 @@ export const SKIP_DIRS = new Set([
   "Program Files (x86)", "ProgramData", "$Recycle.Bin", "System Volume Information",
   "OneDriveTemp", "Recovery", "PerfLogs", "dist", "build", "__pycache__", "venv",
   ".venv", "site-packages", "Temp", "Cache",
+  /* 并过的待核工作簿挪进这儿(gaz.py 的 DONE_DIR,两处是同一个名字)。
+     挑稿子时不列它 —— 挪开就是为了不跟没并的混在一处,再列出来等于白挪。 */
+  "已并入总表",
 ]);
 
 export interface Fs {

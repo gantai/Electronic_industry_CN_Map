@@ -35,8 +35,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import unicodedata
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -899,6 +901,36 @@ def cmd_geocode(args):
     return 0
 
 
+#: 并过的待核工作簿挪到哪儿去。**挪开是要紧的** —— 并过的跟没并的混在
+#: `转换稿\` 一处,隔几天回来谁也认不出哪一份还欠核:工作簿是二进制,
+#: 看不出里头的「取否」打没打过。
+#: (插件那头 `src/setup.ts` 的 SKIP_DIRS 里也有这个名字,挑稿子时不列它。)
+DONE_DIR = "已并入总表"
+
+
+def stow_book(path, log=print):
+    """把并过的待核工作簿挪进 `已并入总表\`。回新路径;挪不动就回空。"""
+    src = os.path.abspath(path)
+    if not os.path.exists(src):
+        return ""
+    dest_dir = os.path.join(os.path.dirname(src), DONE_DIR)
+    os.makedirs(dest_dir, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(src))
+    # 同一本志并过两回(补过一轮格子),名字撞上就缀个日子,不覆盖前一份
+    dest = os.path.join(dest_dir, stem + ext)
+    if os.path.exists(dest):
+        dest = os.path.join(dest_dir, "%s-%s%s"
+                            % (stem, datetime.now().strftime("%Y%m%d-%H%M%S"), ext))
+    try:
+        shutil.move(src, dest)
+    except OSError as e:
+        # Excel 还开着就挪不动 —— 说一句就完,别把并表那一步判成失败
+        log("！挪不动 %s（%s)—— 多半还开在 Excel 里。并表已经成了,"
+            "回头自己挪进 %s\ 就是。" % (os.path.basename(src), e, DONE_DIR))
+        return ""
+    return dest
+
+
 def cmd_xlsx(args):
     if args.from_xlsx:
         bundle, city, seen = BOOK.read_review(args.from_xlsx)
@@ -983,6 +1015,18 @@ def cmd_xlsx(args):
             print("   新收「%s」 ↔ 表内「%s」" % (new_nm, old_nm))
         print("   同一台机器就把一条并掉,另一个名字填进「别名」列;")
         print("   真是两台(如 DJS-130 与 DJS-130B)就不用管。gaz dups 随时再查。")
+    # 并过的挪开,免得跟没并的混在一处 —— 工作簿是二进制,
+    # 看不出里头的「取否」打没打过,隔几天回来就认不出哪一份还欠核
+    if args.from_xlsx and not args.keep_book:
+        moved = stow_book(args.from_xlsx)
+        if moved:
+            print("\n这一份已并过,挪到 %s\ 底下 —— 免得跟没并的混在一处。"
+                  % DONE_DIR)
+            print("  还要再并一轮(「%s」那张留着没核完),就从那儿开回来 —— "
+                  "第五步那个「并完挪进…」开关关掉,它就留在原处。" % BOOK.REVIEW_FILL)
+    elif args.from_xlsx:
+        print("\n(--keep-book:工作簿留在原处,没挪。)")
+
     # 一行一条 —— PowerShell 5.1 不认 &&
     print("核对无误后提交:")
     print("  git add -A")
@@ -1148,6 +1192,8 @@ def main(argv=None):
     p.set_defaults(func=cmd_geocode_city)
 
     p = sub.add_parser("xlsx", help="取否=y 的行 → 追加进工作簿", parents=[common])
+    p.add_argument("--keep-book", action="store_true",
+                   help="并完把待核工作簿留在原处(默认挪进「已并入总表」)")
     p.add_argument("--from", dest="from_xlsx", metavar="XLSX",
                    help="读 book 那一步生成的工作簿(你核过的),而不是 TSV")
     p.add_argument("--allow-dup", action="store_true")

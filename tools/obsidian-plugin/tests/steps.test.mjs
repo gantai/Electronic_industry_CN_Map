@@ -115,6 +115,35 @@ test("第三步:稿子那一栏跟第二步同一种 —— 都从转换稿里�
   assert.deepEqual(f3.exts, f2.exts, "键名与类型都一样,面板才带得过去");
 });
 
+test("第五步:并完把工作簿挪开,是默认的", () => {
+  /* 并过的跟没并的混在转换稿一处,隔几天回来认不出哪一份还欠核 ——
+     工作簿是二进制,看不出里头的「取否」打没打过。 */
+  const step = stepById("merge");
+  const stow = step.fields.find((f) => f.key === "stow");
+  assert.equal(stow.value, "true", "默认就挪");
+  const [a] = step.build({ from: "a.xlsx", stow: "true" }, WIN);
+  assert.ok(!a.args.includes("--keep-book"), "挪是默认的,不必传什么");
+  const [b] = step.build({ from: "a.xlsx", stow: "false" }, WIN);
+  assert.ok(b.args.includes("--keep-book"), "关掉开关才留在原处");
+});
+
+test("挑稿子时不列「已并入总表」里的", async () => {
+  /* 挪开就是为了不跟没并的混在一处,再列出来等于白挪。
+     (listDrafts 往下找两层,不挡着的话正好把归档目录里的一并列出来。) */
+  const { listDrafts, SKIP_DIRS } = await import("../build/setup.js");
+  assert.ok(SKIP_DIRS.has("已并入总表"));
+  const files = {
+    "D:\\稿": ["新的.xlsx"],
+    "D:\\稿\\已并入总表": ["并过的.xlsx"],
+  };
+  const fs = {
+    exists: (p) => p in files,
+    listFiles: (p) => files[p] ?? [],
+    listDirs: (p) => (p === "D:\\稿" ? ["已并入总表"] : []),
+  };
+  assert.deepEqual(listDrafts("D:\\稿", ["xlsx"], fs), ["D:\\稿\\新的.xlsx"]);
+});
+
 test("第五步 并表:默认先空跑 —— 头一回不该真写", () => {
   const step = stepById("merge");
   const dry = step.fields.find((f) => f.key === "dryRun");

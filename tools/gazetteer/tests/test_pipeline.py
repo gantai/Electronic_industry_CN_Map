@@ -1286,6 +1286,39 @@ def test_fillable_matches_fields():
     eq(gap, [], "这几栏 FILL_FIELDS 报得出来,apply_fills 却不认:%r" % gap)
 
 
+def test_stow_book():
+    """并过的待核工作簿挪进「已并入总表」—— 免得跟没并的混在转换稿一处。"""
+    print("并过的挪开")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gazcli", os.path.join(REPO, "tools",
+                                                                        "gazetteer", "gaz.py"))
+    gazcli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gazcli)
+
+    tmp = tempfile.mkdtemp(prefix="gaz-stow-")
+    try:
+        book = os.path.join(tmp, "某某志.xlsx")
+        with open(book, "w", encoding="utf-8") as f:
+            f.write("x")
+        moved = gazcli.stow_book(book, log=lambda *a: None)
+        eq(os.path.basename(os.path.dirname(moved)), gazcli.DONE_DIR, "挪进那个目录")
+        check(not os.path.exists(book), "原处不再留着 —— 留着就还会混进来")
+        check(os.path.exists(moved), "挪过去的那一份在")
+
+        # 同一本并第二回,名字撞上就缀个日子,不覆盖前一份
+        with open(book, "w", encoding="utf-8") as f:
+            f.write("y")
+        again = gazcli.stow_book(book, log=lambda *a: None)
+        check(again != moved, "不覆盖前一份(得 %s)" % os.path.basename(again))
+        check(os.path.exists(moved) and os.path.exists(again), "两份都在")
+
+        # 本来就没有那个文件,不炸
+        eq(gazcli.stow_book(os.path.join(tmp, "没有这一份.xlsx"), log=lambda *a: None), "",
+           "文件不在就回空,不抛")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_keep_carried_over():
     """重跑会把待核工作簿整个重写 —— 「取否」得抄过来,不然核到一半的人白干。"""
     print("重跑抄旧「取否」")
@@ -2368,7 +2401,8 @@ def main():
                test_refine, test_plan_fills, test_rerun_fills_end_to_end,
                test_old_fill_sheet_name,
                test_apply_fills_never_adds_rows,
-               test_fill_column_typo, test_fillable_matches_fields, test_keep_carried_over,
+               test_fill_column_typo, test_fillable_matches_fields,
+               test_stow_book, test_keep_carried_over,
                test_rename_verbs, test_diff_workbooks, test_tidy_names, test_verify, test_accepted,
                test_verify_knows_geocode_aliases,
                test_point_in_district, test_places_dupe_key, test_road_of, test_lineage_sheet, test_accepted_survives_rename,
