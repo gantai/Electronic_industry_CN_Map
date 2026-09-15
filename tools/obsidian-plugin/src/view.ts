@@ -1,7 +1,7 @@
 /* 右边那块面板:八步一条一条摆着,底下是跑出来的字。 */
 
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
-import { STEPS, groups, type Cmd, type Step } from "./steps";
+import { PANEL, stepById, type ActionId, type Cmd, type Step } from "./steps";
 import { describe } from "./runner";
 import { settingsGap } from "./settings";
 import type GazPlugin from "./main";
@@ -66,30 +66,21 @@ export class FlowView extends ItemView {
        设置 → 第三方插件 里,左边一列拉到最底下才找得着。 */
     this.actionRow(steps, "设置", "仓库在哪儿、库里哪一支、python 怎么敲、在哪一支上干活。",
                    () => this.plugin.openSettings());
-    for (const g of groups()) {
-      steps.createEl("div", { cls: "gaz-group", text: g });
-      for (const s of STEPS.filter((x) => x.group === g)) this.stepRow(steps, s);
-    }
 
-    /* 这一段不是 gaz,是 git 与插件自己 —— 确认的方式也跟那几步不一样。
-       **四条摆在一处**:拿新的下来(拉取)、把新的装上(更新插件)是一件事的
-       两半,拆成两段,人拉完了看不见还要装。次序就是实际的次序:
-       先提交、再拉取、再装上、末了才上线。 */
-    steps.createEl("div", { cls: "gaz-group", text: "更新与上线" });
-    this.actionRow(steps, "提交改动", "把眼下改过的存进这一支。", () =>
-      this.plugin.doCommit(),
-    );
-    this.actionRow(steps, "拉取更新", "把远端这一支的新提交拿下来。", () =>
-      this.plugin.doPull(),
-    );
-    this.installRow(steps);
-    this.actionRow(
-      steps,
-      "第八步 · 合进 main 上线",
-      "只有这一步能让线上那张图变。跑之前先摆出要发布的是哪几条。",
-      () => this.plugin.doPublish(),
-      true,
-    );
+    /* **面板的样子在 steps.ts 的 PANEL 里,这儿只管画。** 从前分两处管:
+       哪一步归哪一段写在每一条 Step 上,git 那几条另在这儿手写 —— 两处
+       对不上就看不出来。 */
+    for (const sec of PANEL) {
+      steps.createEl("div", { cls: "gaz-group", text: sec.group });
+      for (const r of sec.rows) {
+        if ("step" in r) {
+          const st = stepById(r.step);
+          if (st) this.stepRow(steps, st);
+        } else {
+          this.actRow(steps, r.act);
+        }
+      }
+    }
 
     const bar = root.createDiv({ cls: "gaz-bar" });
     this.statusEl = bar.createEl("span", { cls: "gaz-status", text: "闲着" });
@@ -135,6 +126,27 @@ export class FlowView extends ItemView {
     });
     txt.createEl("div", { cls: "gaz-step-blurb", text: s.blurb });
     btn.onclick = () => this.plugin.runStep(s);
+  }
+
+  /** git 与插件自己那几条。**一条一句话**,摆在这儿好跟 PANEL 对着看。 */
+  private actRow(parent: HTMLElement, act: ActionId): void {
+    if (act === "install") return this.installRow(parent);
+    if (act === "commit") {
+      return this.actionRow(parent, "提交改动", "把眼下改过的存进这一支。",
+                            () => this.plugin.doCommit());
+    }
+    if (act === "pull") {
+      return this.actionRow(parent, "拉取更新", "把远端这一支的新提交拿下来。",
+                            () => this.plugin.doPull());
+    }
+    // publish:唯一能让线上那张图变的一步,所以标成危险色,跑前先摆清单
+    return this.actionRow(
+      parent,
+      "第八步 · 合进 main 上线",
+      "只有这一步能让线上那张图变。跑之前先摆出要发布的是哪几条。",
+      () => this.plugin.doPublish(),
+      true,
+    );
   }
 
   private actionRow(

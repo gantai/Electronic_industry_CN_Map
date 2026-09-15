@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { STEPS, draftOut, gaz, gazPath, missing, reviewBookOf, slugOf,
+import { PANEL, STEPS, draftOut, gaz, gazPath, missing, reviewBookOf, slugOf,
         stepById, groups } from "../build/steps.js";
 import { blockPublish, parseLog, parseStatus, publishPlan } from "../build/gitops.js";
 
@@ -177,12 +177,45 @@ test("必填的没填,拦下来并说缺哪一样", () => {
   assert.notEqual(missing(step, { pdf: "   ", first: "1", last: "2", out: "o.md" }), null);
 });
 
-test("每一步的 id 不重样,分组次序照 STEPS 排", () => {
+test("每一步的 id 不重样", () => {
   const ids = STEPS.map((s) => s.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(groups()[0], "动手之前");
-  assert.ok(groups().includes("更新与上线") === false,
-            "那一段是 git 与插件自己,不在 STEPS 里");
+});
+
+test("面板一处说了算:每一步都摆着,且只摆一回", () => {
+  /* 从前分两处管:哪一步归哪一段写在每一条 Step 上,git 那几条另在 view.ts
+     里手写 —— 两处对不上就看不出来。添一步忘了摆上面板,等于那一步不存在
+     (规矩见仓库根的 CLAUDE.md)。 */
+  const placed = PANEL.flatMap((s) => s.rows).filter((r) => "step" in r).map((r) => r.step);
+  const missing = STEPS.map((s) => s.id).filter((id) => !placed.includes(id));
+  assert.deepEqual(missing, [], "这几步面板上没摆:" + missing.join("、"));
+  assert.equal(new Set(placed).size, placed.length, "同一步摆了两回");
+  for (const id of placed) assert.ok(stepById(id), "面板上摆着不存在的一步:" + id);
+});
+
+test("面板的次序就是干活的次序", () => {
+  const names = groups();
+  assert.deepEqual(names.length, new Set(names).size, "段名不重样");
+  assert.match(names[0], /更新/, "头一段是「先看手里这份新不新」");
+  assert.equal(names.at(-1), "更新线上地图", "末一段是把改动发出去");
+  // 抽 → 核 → 落点,这三段的先后不许乱
+  assert.deepEqual(names.slice(1, 4), ["抽录", "核校", "落点"]);
+});
+
+test("拿新的下来跟把新的装上,挨在一处", () => {
+  /* 一件事的两半。隔着一个小标题,人拉完了看不见还要装 —— 为这件事
+     来回过三趟。 */
+  const first = PANEL[0].rows.map((r) => ("act" in r ? r.act : r.step));
+  const i = first.indexOf("pull");
+  const j = first.indexOf("install");
+  assert.ok(i > -1 && j === i + 1, "「装上新的」得紧跟着「拉取更新」:得 " + first.join(","));
+});
+
+test("上线那一条排在末段,跟库里那几条分得开", () => {
+  const last = PANEL.at(-1).rows.map((r) => ("act" in r ? r.act : r.step));
+  assert.ok(last.indexOf("commit") < last.indexOf("publish"), "先提交,再上线");
+  // 库里那几条排在上线之后 —— 它们不动线上那张图
+  assert.ok(last.indexOf("publish") < last.indexOf("vaultPush"));
 });
 
 test("凡是要人动手的 gaz 子命令,面板上都得有一条", () => {

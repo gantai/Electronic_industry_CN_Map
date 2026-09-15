@@ -51,7 +51,6 @@ export type Vals = Record<string, string>;
 export interface Step {
   id: string;
   /** 面板上归在哪一段 */
-  group: string;
   /** 「第三步」之类;准备与收尾的没有 */
   n?: string;
   name: string;
@@ -101,7 +100,6 @@ const CITY_HINT =
 export const STEPS: Step[] = [
   {
     id: "update",
-    group: "动手之前",
     name: "看状态:手里这份是什么时候的",
     blurb: "取远端、报版本、看工作簿动过没有。一个格子也不动。",
     readOnly: true,
@@ -113,7 +111,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "check",
-    group: "动手之前",
     name: "本机装了什么、缺什么",
     blurb: "openpyxl、zhiconv、git 署名、Node,一样一样报。",
     readOnly: true,
@@ -122,7 +119,6 @@ export const STEPS: Step[] = [
 
   {
     id: "convert",
-    group: "抽录",
     n: "第一步",
     name: "把 PDF 转成稿子",
     blurb: "扫描件 → Markdown。全程最慢的一步,挂着让它跑。",
@@ -174,7 +170,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "inspect",
-    group: "抽录",
     n: "第二步",
     name: "看一眼稿子的成色",
     blurb: "标题层级、页码锚点、有没有硬断行。本来就是 .md 的稿子也要跑。",
@@ -188,7 +183,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "volume",
-    group: "抽录",
     n: "第三步",
     name: "抽成待核工作簿",
     blurb: "上一步那份稿子 → 一份待核 Excel。总表这时还没动。",
@@ -234,7 +228,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "review",
-    group: "核校",
     n: "第四步",
     name: "核对 —— 只有人能干的活",
     blurb: "打开待核工作簿,「取否」写 y 的行才收。冠「待核·」的四张都要核 ——" +
@@ -250,7 +243,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "merge",
-    group: "核校",
     n: "第五步",
     name: "并进总表",
     blurb: "核过的行追加进 CN_Electronic_Industry.xlsx。只添不改,先自动备份。",
@@ -273,7 +265,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "verify",
-    group: "核校",
     n: "第六步",
     name: "验一验",
     blurb: "日期、坐标、出处、隶属取值、沿革 —— 只报,一个格子也不动。",
@@ -290,7 +281,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "accept",
-    group: "核校",
     name: "认下眼前这些 —— 往后不再报",
     blurb: "verify 报的这些,你看过了、决定不改,就记进《已核》。一锅端。",
     fields: [
@@ -302,7 +292,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "tidy",
-    group: "核校",
     name: "理一理沿革表",
     blurb: "按单位与年份排好,编序号、补「至」。动过沿革表就跑一遍。",
     fields: [
@@ -317,7 +306,6 @@ export const STEPS: Step[] = [
 
   {
     id: "geocode",
-    group: "落点",
     n: "第七步",
     name: "落点草稿",
     blurb: "新单位 → src/geocode.js 的条目草稿。只有写明厂址的章才做。",
@@ -345,7 +333,6 @@ export const STEPS: Step[] = [
        省志一跑,苏州、无锡、常熟这些市冒出来,正靠这一条把它们摆成一张
        按路排的单子。 */
     id: "geocodeCity",
-    group: "落点",
     name: "按路排的落点草稿(总表里欠坐标的)",
     blurb: "总表里「有地址、没坐标」的单位,按路排成一张单子 —— " +
            "同一条路的门牌摆在一处,开着地图从街这头看到那头,顺次填下去。",
@@ -364,7 +351,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "geocodeCheck",
-    group: "落点",
     name: "核一核落点",
     blurb: "填好的坐标落在哪个区,跟表里写的对不对得上。差一个区它一定报。",
     readOnly: true,
@@ -373,7 +359,6 @@ export const STEPS: Step[] = [
 
   {
     id: "vaultPush",
-    group: "库",
     name: "工作簿 → 库",
     blurb: "全部厂所各写一则笔记,字段在 frontmatter。",
     fields: [
@@ -390,7 +375,6 @@ export const STEPS: Step[] = [
     /* 《流程》那份文档在仓库里,可干活的地方是库 —— 隔着一个文件夹,
        临时要查一句就得切出去翻。写进库里,搜得到、链得上。 */
     id: "guide",
-    group: "库",
     name: "《流程》写进库",
     blurb: "把《电子工业地图流程》抄一份进 Obsidian 库,好在干活的地方随手查。",
     readOnly: true,
@@ -409,7 +393,6 @@ export const STEPS: Step[] = [
   },
   {
     id: "vaultPull",
-    group: "库",
     name: "库 → 工作簿",
     blurb: "在库里改过的字段写回原行。",
     fields: [
@@ -428,9 +411,76 @@ export function stepById(id: string): Step | undefined {
 }
 
 /** 面板上分几段,按 STEPS 里头一次出现的次序 */
+/** 面板上那几条 git / 插件自己的动作 —— 不是 gaz,确认的方式也不一样,
+ *  所以不在 STEPS 里;可它们跟那几步摆在同一张面板上,次序得一处说了算。 */
+export type ActionId = "commit" | "pull" | "install" | "publish";
+
+export type PanelRow = { step: string } | { act: ActionId };
+
+/**
+ * **面板从上到下就是这一份。**
+ *
+ * 从前分两处管:哪一步归哪一段写在 STEPS 每一条的 `group` 上,git 那几条
+ * 另在 view.ts 里手写 —— 两处对不上就看不出来(「拉取更新」与「装上新的」
+ * 一度隔着一个小标题,拿新的下来跟把新的装上是一件事的两半)。
+ * 如今一处摆齐,添一步、挪一段,都改这儿;测试盯着「每一步都在面板上,
+ * 且只出现一回」。
+ *
+ * 次序就是干活的次序:先看手里这份新不新 → 抽 → 核 → 落点 → 发出去。
+ */
+export const PANEL: { group: string; rows: PanelRow[] }[] = [
+  {
+    // 「动手之前」与「更新」本是一件事:手里这份是什么时候的,该不该先更新
+    group: "更新:先看手里这份新不新",
+    rows: [
+      { step: "update" },
+      { act: "pull" },
+      { act: "install" },
+      { step: "check" },
+    ],
+  },
+  {
+    group: "抽录",
+    rows: [{ step: "convert" }, { step: "inspect" }, { step: "volume" }],
+  },
+  {
+    group: "核校",
+    rows: [{ step: "review" }, { step: "merge" }, { step: "verify" },
+           { step: "accept" }, { step: "tidy" }],
+  },
+  {
+    group: "落点",
+    rows: [{ step: "geocode" }, { step: "geocodeCity" }, { step: "geocodeCheck" }],
+  },
+  {
+    /* 「上线」与「库」并作一段,可两件事分得开:上头两条是把改动发出去
+       (只有「合进 main」那一条能让线上那张图变),底下三条是库里那一摊。 */
+    group: "更新线上地图",
+    rows: [
+      { act: "commit" },
+      { act: "publish" },
+      { step: "vaultPush" },
+      { step: "vaultPull" },
+      { step: "guide" },
+    ],
+  },
+];
+
 export function groups(): string[] {
-  const out: string[] = [];
-  for (const s of STEPS) if (!out.includes(s.group)) out.push(s.group);
+  return PANEL.map((s) => s.group);
+}
+
+/** 面板上摆着的那几步(按面板的次序) */
+export function panelSteps(): Step[] {
+  const out: Step[] = [];
+  for (const sec of PANEL) {
+    for (const r of sec.rows) {
+      if ("step" in r) {
+        const st = stepById(r.step);
+        if (st) out.push(st);
+      }
+    }
+  }
   return out;
 }
 

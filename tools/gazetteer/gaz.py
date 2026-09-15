@@ -285,8 +285,9 @@ def cmd_version(args):
         print("       (这是上次 git fetch 时的账;要看准数,先 git fetch)")
 
     print("\n认得的命令:%s" % "、".join(SUBCOMMANDS))
-    print("少了哪一个,就是这一份旧了。更新:")
-    print("  git -C %s pull origin %s"
+    print("少了哪一个,就是这一份旧了 —— **面板上按「拉取更新」**,")
+    print("跟着按「装上新的」把插件也换成新的。")
+    print("(不用面板的话:git -C %s pull origin %s)"
           % (REPO, git("rev-parse", "--abbrev-ref", "HEAD") or "<分支>"))
     return 0
 
@@ -669,7 +670,8 @@ def cmd_pull(args):
     """库 → 工作簿。只改动过的格子,写前先列清单。"""
     rep = VAULT.pull(args.xlsx, _vault_dir(args), dry_run=args.dry_run)
     if rep["units"] and not args.dry_run:
-        print("核对无误后:git add -A && git commit -m \"据库中校订更新数据\" && git push")
+        print("核对无误后 **面板上按「提交改动」**,写一句「据库中校订更新数据」。")
+        print("(不用面板的话:git add -A && git commit -m \"…\" && git push)")
     return 0
 
 
@@ -1027,13 +1029,13 @@ def cmd_xlsx(args):
     elif args.from_xlsx:
         print("\n(--keep-book:工作簿留在原处,没挪。)")
 
+    print("核对无误后 **面板上按「提交改动」**,写一句「补录 %s」。" % label)
     # 一行一条 —— PowerShell 5.1 不认 &&
-    print("核对无误后提交:")
-    print("  git add -A")
-    print('  git commit -m "补录 %s"' % label)
-    print("  git push")
+    print("(不用面板的话:git add -A;git commit -m \"补录 %s\";git push)" % label)
     if args.from_xlsx:
-        print("追错了要退回:git checkout -- %s(或用上面那份备份覆盖回去)"
+        print("追错了要退回:**拿上头那份备份盖回去**(%s)——"
+              % (os.path.basename(rep["backup"]) if rep.get("backup") else "这次没备份"))
+        print("  在资源管理器里把它改回 %s 就是,不必动 git。"
               % os.path.basename(args.xlsx))
     return 0
 
