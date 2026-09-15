@@ -91,7 +91,8 @@ Known-good samples, used by `-SelfTest`:
 | `-StartDate` / `-EndDate` | `1949-01-01` / `1949-12-31` | Date window to probe — **widen this if the collection spans other years** |
 | `-Papers` | all 47 | e.g. `-Papers 21221909_7,21211909_014` |
 | `-Concurrency` | `6` | Simultaneous requests. It is a public library server — please do not crank this |
-| `-DelayMs` | `150` | Pause between batches |
+| `-DelayMs` | `150` | Pause between batches, milliseconds |
+| `-DelaySeconds` | off | Same pause in seconds; overrides `-DelayMs` |
 | `-Retries` | `3` | Retry attempts for timeouts/5xx |
 | `-MaxPages` | `60` | Ceiling on pages per issue |
 | `-Dpi` | `200` | Assumed scan resolution when the JPEG has no density tag |
@@ -101,14 +102,32 @@ Known-good samples, used by `-SelfTest`:
 | `-RemovePagesAfterPdf` | off | Delete JPEGs once the PDF is written |
 | `-SelfTest` | off | Fetch the two sample pages, report dimensions, build a test PDF |
 
-## Timing
+## Pacing
 
-Discovery is one request per title per day: 47 titles × 365 days ≈ 17,000 `HEAD`
-requests, about **15–25 minutes** at the default concurrency of 6. It only
-happens once — after that `index.csv` is reused.
+The pause sits **between batches of `-Concurrency` requests**. So for a literal
+*one download every 5 seconds*:
 
-Download time depends on how many issues exist, which is unknown until discovery
-finishes. Budget roughly 4–6 pages per second at the default settings.
+```powershell
+.\Get-ZslibNewspapers.ps1 -OutputRoot D:\zslib -Concurrency 1 -DelaySeconds 5
+```
+
+Discovery is one request per title per day — 47 titles × 365 days ≈ 17,155
+`HEAD` requests — so the pacing choice dominates the run. The script prints its
+own estimate at startup before doing any work:
+
+| Setting | Discovery phase |
+|---|---|
+| `-Concurrency 6` (default `-DelayMs 150`) | ~21 minutes |
+| `-Concurrency 6 -DelaySeconds 5` | ~4h 15m |
+| `-Concurrency 1 -DelaySeconds 5` | ~25 hours |
+
+Discovery only happens once — `index.csv` is written after **each title**, so
+Ctrl-C and re-run resumes rather than restarting. Downloading afterwards is far
+smaller: only the dates that actually have issues.
+
+A reasonable middle ground is `-Concurrency 2 -DelaySeconds 2` (~3 hours of
+discovery, one request per second average). Narrowing `-StartDate`/`-EndDate`
+cuts the probe count proportionally and helps more than anything else.
 
 ## Troubleshooting
 

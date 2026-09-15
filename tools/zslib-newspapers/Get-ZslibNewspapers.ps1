@@ -77,6 +77,11 @@ param(
     # Pause between request batches, milliseconds.
     [int]$DelayMs = 150,
 
+    # Same pause expressed in seconds; overrides -DelayMs when supplied.
+    # The pause sits between batches of -Concurrency requests, so for a literal
+    # "one download every 5 seconds" use -Concurrency 1 -DelaySeconds 5.
+    [double]$DelaySeconds = 0,
+
     # Assumed scan resolution when the JPEG carries no JFIF density.
     # Only affects the PDF page dimensions, never the image data.
     [ValidateRange(36, 1200)][int]$Dpi = 200,
@@ -99,6 +104,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 [System.Net.ServicePointManager]::DefaultConnectionLimit = 64
+
+if ($DelaySeconds -gt 0) { $DelayMs = [int][Math]::Round($DelaySeconds * 1000) }
 
 # ---------------------------------------------------------------- logging ----
 
@@ -687,9 +694,27 @@ try {
     $scannedAll  = $cache.Scanned
 
     $rangeKey = '{0}-{1}' -f $StartDate.ToString('yyyyMMdd'), $EndDate.ToString('yyyyMMdd')
+    $days     = [int]($EndDate - $StartDate).TotalDays + 1
+    $toScan   = @($targetIds | Where-Object {
+                    $RefreshIndex -or -not $scannedAll.ContainsKey($_) -or $scannedAll[$_] -ne $rangeKey })
+
     Write-Log "output root : $OutputRoot"
-    Write-Log "titles       : $($targetIds.Count)"
-    Write-Log "date window  : $($StartDate.ToString('yyyy-MM-dd')) .. $($EndDate.ToString('yyyy-MM-dd'))"
+    Write-Log "titles       : $($targetIds.Count)  ($($toScan.Count) still need probing)"
+    Write-Log "date window  : $($StartDate.ToString('yyyy-MM-dd')) .. $($EndDate.ToString('yyyy-MM-dd'))  ($days days)"
+    Write-Log ("pacing       : {0} at a time, {1:N1}s between batches" -f $Concurrency, ($DelayMs / 1000.0))
+
+    if ($toScan.Count -gt 0) {
+        # one HEAD per title per day, plus ~0.3s of round trip per batch
+        $batches = [Math]::Ceiling(($toScan.Count * $days) / [double]$Concurrency)
+        $est     = [TimeSpan]::FromSeconds($batches * (($DelayMs / 1000.0) + 0.3))
+        $pretty  = if ($est.TotalHours -ge 1) { '{0:0}h {1:00}m' -f [Math]::Floor($est.TotalHours), $est.Minutes }
+                   else { '{0:0}m' -f [Math]::Ceiling($est.TotalMinutes) }
+        $level   = if ($est.TotalHours -ge 3) { 'WARN' } else { 'INFO' }
+        Write-Log ("discovery    : ~{0:N0} probes, roughly {1} at this pacing" -f ($toScan.Count * $days), $pretty) $level
+        if ($est.TotalHours -ge 3) {
+            Write-Log "             raise -Concurrency or lower -DelaySeconds to shorten it; index.csv is saved after each title, so Ctrl-C and resume is safe" 'WARN'
+        }
+    }
 
     $tally = [pscustomobject]@{ Ok = 0; Partial = 0; Skipped = 0; Failed = 0; Issues = 0; Unreachable = 0 }
 
