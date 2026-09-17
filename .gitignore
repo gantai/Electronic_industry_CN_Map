@@ -19,3 +19,7 @@ geoBoundaries-*.zip
 
 # 更新前另存的那一份(见《更新工具》)—— 对完就删,不入库
 我的改动*.xlsx
+
+# pull_pdf_series.sh 抓下来的整套刊物 —— 几十上百 MB 的原件不入库,
+# 只有 manifest.csv 值得留(想留就单独 git add -f)。
+AlumniExpress/

@@ -83,6 +83,20 @@ Markdown → 待核记录 → 追加进工作簿,顺带生成 Obsidian 笔记
 每家一行、末列是据以立论的原文。编码(GB18030 / UTF-16)、照原书行宽硬断的行、
 各式各样的页码写法,都由它认。
 
+### 成套的刊物、年鉴 PDF
+
+`tools/fetch/pull_pdf_series.sh` 抓一串按序号编排的 PDF,默认是清华计算机系的
+《AlumniExpress》校友通讯(`…/fujian/AlumniExpress001.pdf` 起)。刊物出到第几期
+事先不知道,故以「连续缺 8 期即止」收尾 —— 中间断号跨得过去,末尾自然停住;
+每份都验 `%PDF` 魔数,挡住那种回 200 的伪 404 页。重跑会跳过已抓下的,
+断在哪接着抓便是,同时留一份 `manifest.csv` 记着期号、字节数与校验和。
+
+```bash
+tools/fetch/pull_pdf_series.sh -n                    # 先干跑,摸清到底出到第几期
+tools/fetch/pull_pdf_series.sh -o 资料/AlumniExpress  # 再落盘
+tools/fetch/pull_pdf_series.sh -h                    # 换刊物:-u 前缀 -x 后缀 -p 补零位数
+```
+
 ## 结构
 
 ```
@@ -96,6 +110,7 @@ src/
   china.geo.json     省界底图(全国尺度)
   city.geo.json      上海区界底图(城市尺度)
 tools/gazetteer/     地方志 Markdown → 待核记录 → 工作簿(见其 README)
+tools/fetch/         按序号成套的 PDF(刊物、年鉴)抓取
 .github/workflows/deploy.yml   push 即自动构建并发布到 GitHub Pages
 ```
 
