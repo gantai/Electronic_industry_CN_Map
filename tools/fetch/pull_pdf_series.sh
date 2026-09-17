@@ -12,7 +12,7 @@
 #   tools/fetch/pull_pdf_series.sh                 # 001 起,连缺 8 期即停
 #   tools/fetch/pull_pdf_series.sh -s 40 -e 120    # 只取 040–120
 #   tools/fetch/pull_pdf_series.sh -n              # 干跑,只探测不落盘
-#   tools/fetch/pull_pdf_series.sh -o ~/pdf -d 2   # 换目录、每次间隔 2 秒
+#   tools/fetch/pull_pdf_series.sh -o ~/pdf -d 5   # 换目录、每次间隔 5 秒
 #
 # 断点续抓:重跑即可,已存在且校验通过的文件会跳过(-f 强制重下)。
 
@@ -26,7 +26,7 @@ END=0                 # 0 = 自动,靠 MISS_LIMIT 收尾
 CEILING=999           # 自动模式下的硬上限,防跑飞
 MISS_LIMIT=8          # 连续缺这么多期就认为刊物到头了
 PAD=3
-DELAY=1
+DELAY=3
 FORCE=0
 DRY_RUN=0
 UA="Mozilla/5.0 (compatible; pull_pdf_series/1.0; +archival use)"
@@ -44,7 +44,7 @@ usage() {
   -m N     连续缺号阈值             (默认 8)
   -c N     自动模式硬上限           (默认 999)
   -p N     序号补零位数             (默认 3 → 001)
-  -d SEC   每次请求间隔秒数         (默认 1)
+  -d SEC   每次请求间隔秒数         (默认 3)
   -f       已存在的文件也重下
   -n       干跑:只探测远端有哪些期,不保存(可先摸清总期数)
   -h       本帮助

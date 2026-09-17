@@ -85,16 +85,54 @@ Markdown → 待核记录 → 追加进工作簿,顺带生成 Obsidian 笔记
 
 ### 成套的刊物、年鉴 PDF
 
-`tools/fetch/pull_pdf_series.sh` 抓一串按序号编排的 PDF,默认是清华计算机系的
-《AlumniExpress》校友通讯(`…/fujian/AlumniExpress001.pdf` 起)。刊物出到第几期
-事先不知道,故以「连续缺 8 期即止」收尾 —— 中间断号跨得过去,末尾自然停住;
-每份都验 `%PDF` 魔数,挡住那种回 200 的伪 404 页。重跑会跳过已抓下的,
-断在哪接着抓便是,同时留一份 `manifest.csv` 记着期号、字节数与校验和。
+一套按序号编排的 PDF,`tools/fetch/` 里有两份等效的抓取脚本 ——
+Windows 用 `pull_pdf_series.ps1`,macOS / Linux 用 `pull_pdf_series.sh`,
+选项名不同,脾气一样。默认抓清华计算机系的《AlumniExpress》校友通讯
+(`…/fujian/AlumniExpress001.pdf` 起)。
+
+刊物出到第几期,站方没有目录页可查,故以「连续缺 8 期即止」收尾 ——
+中间断号跨得过去,末尾自然停住,另有 999 的硬上限防跑飞。每份都验 `%PDF`
+魔数:该站缺件时会回 200 加一页 HTML,光看状态码能存下一堆错误页当刊物。
+两次请求之间默认歇 3 秒,别把人家站点打疼了。重跑跳过已抓下且校验通过的,
+断在哪接着抓便是,同时留一份 `manifest.csv` 记着期号、字节数与 sha256。
+
+#### Windows 上一步步来
+
+1. **开 PowerShell。** 右键「开始」→「终端」或「Windows PowerShell」。
+   系统自带的 5.1 版就够,装了 PowerShell 7 更好。
+2. **进到仓库目录**(路径换成你自己的):
+
+   ```powershell
+   cd D:\Electronic_industry_CN_Map
+   ```
+3. **先干跑一遍**,摸清这套刊物到底出到第几期 —— 只探测,不落盘:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\tools\fetch\pull_pdf_series.ps1 -DryRun
+   ```
+
+   `-ExecutionPolicy Bypass` 只对这一次调用生效,不改系统设置。
+   照 3 秒一期算,一百来期约五六分钟。
+4. **再正式抓**,落到你想要的目录:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\tools\fetch\pull_pdf_series.ps1 -OutDir D:\资料\AlumniExpress
+   ```
+5. **中途断了就重跑同一条命令。** 已抓下且校验通过的会跳过;
+   若因断网停在某期,屏幕上会直接给出 `-Start <期号>` 的续抓命令。
+
+常用选项:`-Start` / `-End` 圈定期号,`-DelaySeconds` 改间隔,
+`-MissLimit` 改「连续缺几期算完」,`-Force` 重下已有文件,
+`-BaseUrl` / `-Suffix` / `-Pad` 换成别的连号刊物。`Get-Help .\tools\fetch\pull_pdf_series.ps1 -Full` 列全。
+
+> 中文提示若显示成乱码,先在同一窗口执行 `chcp 65001` 再跑。
+
+#### macOS / Linux
 
 ```bash
-tools/fetch/pull_pdf_series.sh -n                    # 先干跑,摸清到底出到第几期
-tools/fetch/pull_pdf_series.sh -o 资料/AlumniExpress  # 再落盘
-tools/fetch/pull_pdf_series.sh -h                    # 换刊物:-u 前缀 -x 后缀 -p 补零位数
+tools/fetch/pull_pdf_series.sh -n                      # 干跑,摸清总期数
+tools/fetch/pull_pdf_series.sh -o 资料/AlumniExpress    # 再落盘
+tools/fetch/pull_pdf_series.sh -h                      # 换刊物:-u 前缀 -x 后缀 -p 补零位数
 ```
 
 ## 结构
@@ -110,7 +148,7 @@ src/
   china.geo.json     省界底图(全国尺度)
   city.geo.json      上海区界底图(城市尺度)
 tools/gazetteer/     地方志 Markdown → 待核记录 → 工作簿(见其 README)
-tools/fetch/         按序号成套的 PDF(刊物、年鉴)抓取
+tools/fetch/         按序号成套的 PDF(刊物、年鉴)抓取(.ps1 / .sh 各一份)
 .github/workflows/deploy.yml   push 即自动构建并发布到 GitHub Pages
 ```
 

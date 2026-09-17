@@ -7,3 +7,9 @@ tools/gazetteer/tests/fixture/** -text
 
 *.xlsx binary
 *.pdf  binary
+
+# PowerShell 5.1 只在带 BOM 时才把 .ps1 当 UTF-8 读,中文提示全指着它;
+# 换行也一并钉死:.ps1 检出成 CRLF,.sh 无论在哪都保持 LF —— 带 \r 的
+# shebang 在 bash 里是当场报错的。
+*.ps1 text eol=crlf
+*.sh  text eol=lf
