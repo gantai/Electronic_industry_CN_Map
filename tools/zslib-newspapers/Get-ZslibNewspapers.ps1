@@ -86,6 +86,18 @@ param(
     # Only affects the PDF page dimensions, never the image data.
     [ValidateRange(36, 1200)][int]$Dpi = 200,
 
+    # Reconnaissance only: work out each title's date range and page-name range
+    # cheaply, write survey.csv / survey_dates.csv, download nothing.
+    [switch]$Survey,
+
+    # Coarse pass step, in days, used when the server exposes no directory index.
+    # Smaller finds sparser titles; larger is cheaper. 5 avoids aliasing with
+    # weekly publication the way 7 would.
+    [ValidateRange(1, 90)][int]$Stride = 5,
+
+    # Skip the directory-index attempt and go straight to probing.
+    [switch]$NoDirectoryListing,
+
     # Probe and cache the catalogue, download nothing.
     [switch]$DiscoverOnly,
 
@@ -235,7 +247,10 @@ function Invoke-HttpBatchWithRetry {
 
     if (-not $Items -or $Items.Count -eq 0) { return ,([object[]]@()) }
 
-    $best      = @{}   # Url -> best result seen so far
+    # Ordinal, NOT a plain @{} hashtable: PowerShell hashtables compare keys
+    # case-insensitively, so two URLs differing only in case (001.jpg vs
+    # 001.JPG) would collide and one result would overwrite the other.
+    $best      = New-Object 'System.Collections.Generic.Dictionary[string,object]' -ArgumentList ([System.StringComparer]::Ordinal)
     $remaining = @($Items)
     $attempt   = 0
 
@@ -260,7 +275,9 @@ function Invoke-HttpBatchWithRetry {
         $attempt++
     }
 
-    $final = foreach ($item in $Items) { $best[$item.Url] }
+    $final = foreach ($item in $Items) {
+        if ($best.ContainsKey($item.Url)) { $best[$item.Url] }
+    }
     return ,([object[]]$final)
 }
 
@@ -512,13 +529,191 @@ function Export-IndexCache {
     if ($srows) { $srows | Export-Csv -LiteralPath $ScannedPath -NoTypeInformation -Encoding UTF8 }
 }
 
+# ---------------------------------------------------------------- survey -----
+
+# Static file servers often expose a directory index. Where this one does, a
+# title's whole date list arrives in ONE request instead of 365 probes, and an
+# issue's page list in one more. Always worth trying before brute force.
+function Get-RemoteListing {
+    param($Client, [string]$Url)
+    try {
+        $req  = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ([System.Net.Http.HttpMethod]::Get), $Url
+        $resp = $Client.SendAsync($req).GetAwaiter().GetResult()
+        $ok   = $resp.IsSuccessStatusCode
+        $body = ''
+        if ($ok) { $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() }
+        $resp.Dispose(); $req.Dispose()
+    } catch { return $null }
+
+    if (-not $ok -or [string]::IsNullOrWhiteSpace($body)) { return $null }
+    if ($body -notmatch '(?i)<a\s') { return $null }
+
+    $names = New-Object System.Collections.ArrayList
+    foreach ($m in [regex]::Matches($body, '(?i)href\s*=\s*"([^"?#]+)"')) {
+        $n = $m.Groups[1].Value.TrimEnd('/')
+        $n = $n.Substring($n.LastIndexOf('/') + 1)
+        if ($n -and $n -ne '..' -and $n -ne '.') { [void]$names.Add($n) }
+    }
+    if ($names.Count -eq 0) { return $null }
+    return ,([string[]]@($names | Select-Object -Unique))
+}
+
+# Coarse pass: probe every Nth day to locate where a title's issues sit, without
+# paying for every day in a wide window.
+function Find-DateBounds {
+    param(
+        $Client, [string]$BookId, [datetime]$Start, [datetime]$End,
+        [int]$Stride, [int]$Concurrency, [int]$DelayMs, [int]$Retries
+    )
+    $probes = New-Object System.Collections.ArrayList
+    for ($d = $Start; $d -le $End; $d = $d.AddDays($Stride)) {
+        $ds = $d.ToString('yyyyMMdd')
+        [void]$probes.Add([pscustomobject]@{ Url = "$BaseUrl/$BookId/$ds/001.jpg"; Date = $ds })
+    }
+    $res = Invoke-HttpBatchWithRetry -Items ([object[]]$probes.ToArray()) -Method Head -Client $Client `
+              -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries `
+              -Activity "$BookId  coarse pass, every $Stride days"
+
+    $hits = @($res | Where-Object { $_.Ok } | ForEach-Object { $_.Item.Date } | Sort-Object)
+    return [pscustomobject]@{
+        Hits   = $hits
+        Probed = $probes.Count
+        Failed = @($res | Where-Object { -not $_.Ok -and $_.Status -ne 404 }).Count
+    }
+}
+
+# Which filename shape do the pages use, and does numbering start at 001?
+function Test-PageNaming {
+    param($Client, [string]$BookId, [string]$Date, [int]$Concurrency, [int]$DelayMs, [int]$Retries)
+    $cands = @('001.jpg', '0001.jpg', '01.jpg', '1.jpg', '000.jpg', '001.JPG', '001.jpeg')
+    $items = foreach ($c in $cands) {
+        [pscustomobject]@{ Url = "$BaseUrl/$BookId/$Date/$c"; Name = $c }
+    }
+    $res = Invoke-HttpBatchWithRetry -Items ([object[]]$items) -Method Head -Client $Client `
+              -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries
+    return ,([string[]]@($res | Where-Object { $_.Ok } | ForEach-Object { $_.Item.Name }))
+}
+
+function Invoke-Survey {
+    param(
+        $Client, [string[]]$BookIds, [datetime]$Start, [datetime]$End,
+        [int]$Stride, [int]$Concurrency, [int]$DelayMs, [int]$Retries,
+        [string]$SurveyPath, [string]$DatesPath, [switch]$NoDirectoryListing
+    )
+
+    $rows     = New-Object System.Collections.ArrayList
+    $dateRows = New-Object System.Collections.ArrayList
+
+    foreach ($bookId in $BookIds) {
+        $method = 'probe'
+        $dates  = @()
+        $probes = 0
+        $note   = ''
+
+        if (-not $NoDirectoryListing) {
+            $listing = Get-RemoteListing -Client $Client -Url "$BaseUrl/$bookId/"
+            $probes++
+            if ($DelayMs -gt 0) { Start-Sleep -Milliseconds $DelayMs }
+            if ($listing) {
+                $found = @($listing | Where-Object { $_ -match '^\d{8}$' } | Sort-Object)
+                if ($found.Count -gt 0) {
+                    $method = 'listing'
+                    $dates  = $found
+                }
+            }
+        }
+
+        if ($method -eq 'probe') {
+            $b = Find-DateBounds -Client $Client -BookId $bookId -Start $Start -End $End `
+                    -Stride $Stride -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries
+            $dates   = $b.Hits
+            $probes += $b.Probed
+            if ($b.Failed -gt 0) { $note = "$($b.Failed) probe(s) got no answer" }
+        }
+
+        $naming  = ''
+        $maxPage = 0
+        if ($dates.Count -gt 0) {
+            $sample = $dates[0]
+            if ($method -eq 'listing') {
+                $pl = Get-RemoteListing -Client $Client -Url "$BaseUrl/$bookId/$sample/"
+                $probes++
+                if ($DelayMs -gt 0) { Start-Sleep -Milliseconds $DelayMs }
+                if ($pl) {
+                    $imgs = @($pl | Where-Object { $_ -match '(?i)\.(jpe?g)$' } | Sort-Object)
+                    if ($imgs.Count -gt 0) {
+                        $naming  = $imgs[0]
+                        $maxPage = $imgs.Count
+                    }
+                }
+            }
+            if (-not $naming) {
+                $hitNames = Test-PageNaming -Client $Client -BookId $bookId -Date $sample `
+                               -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries
+                $probes  += 7
+                $naming   = ($hitNames -join ' ')
+            }
+        }
+
+        # a probe pass can only bracket the range to within one stride
+        $first = ''; $last = ''
+        if ($dates.Count -gt 0) {
+            $first = $dates[0]
+            $last  = $dates[-1]
+            if ($method -eq 'probe') {
+                $fd = [datetime]::ParseExact($first, 'yyyyMMdd', $null).AddDays(-($Stride - 1))
+                $ld = [datetime]::ParseExact($last,  'yyyyMMdd', $null).AddDays(  $Stride - 1 )
+                if ($fd -lt $Start) { $fd = $Start }
+                if ($ld -gt $End)   { $ld = $End }
+                $first = $fd.ToString('yyyyMMdd')
+                $last  = $ld.ToString('yyyyMMdd')
+            }
+            foreach ($d in $dates) {
+                [void]$dateRows.Add([pscustomobject]@{ BookId = $bookId; Date = $d; Method = $method })
+            }
+        }
+
+        [void]$rows.Add([pscustomobject]@{
+            BookId     = $bookId
+            Method     = $method
+            FirstDate  = $first
+            LastDate   = $last
+            DatesFound = $dates.Count
+            Requests   = $probes
+            PageNaming = $naming
+            MaxPage    = $maxPage
+            Note       = $note
+        })
+
+        $shown = if ($dates.Count -gt 0) { "$first .. $last" } else { 'nothing found' }
+        $lvl   = if ($dates.Count -gt 0) { 'OK' } else { 'WARN' }
+        Write-Log ("{0,-13} {1,-8} {2,-21} {3,4} date(s), {4,4} request(s)  {5}" -f `
+                   $bookId, $method, $shown, $dates.Count, $probes, $naming) $lvl
+    }
+
+    if ($rows.Count -gt 0)     { $rows     | Export-Csv -LiteralPath $SurveyPath -NoTypeInformation -Encoding UTF8 }
+    if ($dateRows.Count -gt 0) { $dateRows | Export-Csv -LiteralPath $DatesPath  -NoTypeInformation -Encoding UTF8 }
+    return ,([object[]]$rows.ToArray())
+}
+
 # Probes every date in the window for page 001, then walks up the page numbers.
 function Find-Issues {
     param(
         $Client, [string]$BookId,
         [datetime]$Start, [datetime]$End,
-        [int]$MaxPages, [int]$Concurrency, [int]$DelayMs, [int]$Retries
+        [int]$MaxPages, [int]$Concurrency, [int]$DelayMs, [int]$Retries,
+        [string[]]$KnownDates, [switch]$TryListing
     )
+
+    # A survey that read a directory index already knows every date for this
+    # title - go straight to counting pages and probe nothing.
+    if ($KnownDates -and $KnownDates.Count -gt 0) {
+        Write-Log "$BookId  $($KnownDates.Count) date(s) known from the survey; counting pages"
+        $dates  = @($KnownDates | Sort-Object)
+        $probed = 0
+        $failed = 0
+    }
+    else {
 
     $probes = New-Object System.Collections.ArrayList
     for ($d = $Start; $d -le $End; $d = $d.AddDays(1)) {
@@ -537,6 +732,8 @@ function Find-Issues {
     $failed = @($res | Where-Object { -not $_.Ok -and $_.Status -ne 404 }).Count
     $dates  = @($res | Where-Object { $_.Ok } | ForEach-Object { $_.Item.Date } | Sort-Object)
 
+    }   # end dense-probe branch
+
     if ($failed -gt 0) {
         $sample = @($res | Where-Object { -not $_.Ok -and $_.Status -ne 404 })[0]
         $why = if ($sample.Error) { $sample.Error } else { "HTTP $($sample.Status)" }
@@ -546,10 +743,32 @@ function Find-Issues {
         return [pscustomobject]@{ Issues = @{}; Probed = $probed; Failed = $failed }
     }
 
-    Write-Log "$BookId  found $($dates.Count) issue date(s); counting pages"
+    if (-not $KnownDates) { Write-Log "$BookId  found $($dates.Count) issue date(s); counting pages" }
 
     $issues = @{}
     foreach ($ds in $dates) {
+        $count = 0
+
+        # One directory read gives the whole page list; walking page numbers
+        # costs a request per page. Only worth trying where the survey already
+        # proved this server serves an index.
+        if ($TryListing) {
+            $pl = Get-RemoteListing -Client $Client -Url "$BaseUrl/$BookId/$ds/"
+            if ($DelayMs -gt 0) { Start-Sleep -Milliseconds $DelayMs }
+            if ($pl) {
+                $nums = @($pl |
+                    Where-Object { $_ -match '(?i)^(\d+)\.jpe?g$' } |
+                    ForEach-Object { [int]($_ -replace '(?i)\.jpe?g$', '') } |
+                    Sort-Object -Unique)
+                # count only the unbroken run from page 1
+                $n = 0
+                foreach ($v in $nums) { if ($v -eq ($n + 1)) { $n++ } else { break } }
+                if ($n -gt 0) { $count = [Math]::Min($n, $MaxPages) }
+            }
+        }
+
+        if ($count -gt 0) { $issues[$ds] = $count; continue }
+
         $count = 1
         $page  = 2
         while ($page -le $MaxPages) {
@@ -693,6 +912,54 @@ try {
     $issuesAll   = $cache.Issues
     $scannedAll  = $cache.Scanned
 
+    $surveyPath = Join-Path $OutputRoot 'survey.csv'
+    $datesPath  = Join-Path $OutputRoot 'survey_dates.csv'
+
+    if ($Survey) {
+        Write-Log "survey       : $($targetIds.Count) title(s), $($StartDate.ToString('yyyy-MM-dd')) .. $($EndDate.ToString('yyyy-MM-dd'))"
+        Write-Log "               directory index first; coarse pass every $Stride days where there is none"
+        $rows = Invoke-Survey -Client $client -BookIds $targetIds -Start $StartDate -End $EndDate `
+                    -Stride $Stride -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries `
+                    -SurveyPath $surveyPath -DatesPath $datesPath -NoDirectoryListing:$NoDirectoryListing
+
+        $listed  = @($rows | Where-Object { $_.Method -eq 'listing' })
+        $empty   = @($rows | Where-Object { [int]$_.DatesFound -eq 0 })
+        $totalRq = ($rows | Measure-Object -Property Requests -Sum).Sum
+
+        Write-Log '--------------------------------------------------'
+        Write-Log ("{0} title(s) surveyed in {1:N0} request(s)" -f $rows.Count, $totalRq) 'OK'
+        if ($listed.Count -gt 0) {
+            Write-Log "$($listed.Count) title(s) came from a directory index - those date lists are complete, so the main run skips probing them entirely" 'OK'
+        }
+        if ($empty.Count -gt 0) {
+            Write-Log "$($empty.Count) title(s) found nothing. Either they hold no issues in this window, or the coarse pass stepped over them - re-survey those with -Stride 1" 'WARN'
+        }
+        Write-Log "survey       : $surveyPath"
+        Write-Log "dates        : $datesPath"
+        return
+    }
+
+    # A survey narrows (or removes) the dense scan.
+    $surveyBounds = @{}
+    $surveyDates  = @{}
+    if (Test-Path -LiteralPath $surveyPath) {
+        foreach ($row in (Import-Csv -LiteralPath $surveyPath -Encoding UTF8)) {
+            if ($row.FirstDate -and $row.LastDate) {
+                $surveyBounds[$row.BookId] = [pscustomobject]@{
+                    First = $row.FirstDate; Last = $row.LastDate; Method = $row.Method
+                }
+            }
+        }
+        Write-Log "survey       : $($surveyBounds.Count) title(s) bounded by $surveyPath"
+    }
+    if (Test-Path -LiteralPath $datesPath) {
+        foreach ($row in (Import-Csv -LiteralPath $datesPath -Encoding UTF8)) {
+            if ($row.Method -ne 'listing') { continue }
+            if (-not $surveyDates.ContainsKey($row.BookId)) { $surveyDates[$row.BookId] = New-Object System.Collections.ArrayList }
+            [void]$surveyDates[$row.BookId].Add($row.Date)
+        }
+    }
+
     $rangeKey = '{0}-{1}' -f $StartDate.ToString('yyyyMMdd'), $EndDate.ToString('yyyyMMdd')
     $days     = [int]($EndDate - $StartDate).TotalDays + 1
     $toScan   = @($targetIds | Where-Object {
@@ -721,8 +988,26 @@ try {
     foreach ($bookId in $targetIds) {
         $needScan = $RefreshIndex -or -not $scannedAll.ContainsKey($bookId) -or $scannedAll[$bookId] -ne $rangeKey
         if ($needScan) {
-            $scan = Find-Issues -Client $client -BookId $bookId -Start $StartDate -End $EndDate `
-                        -MaxPages $MaxPages -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries
+            $winStart = $StartDate
+            $winEnd   = $EndDate
+            $known    = $null
+
+            if ($surveyDates.ContainsKey($bookId)) {
+                $known = [string[]]$surveyDates[$bookId].ToArray()
+            }
+            elseif ($surveyBounds.ContainsKey($bookId)) {
+                $b = $surveyBounds[$bookId]
+                $bs = [datetime]::ParseExact($b.First, 'yyyyMMdd', $null)
+                $be = [datetime]::ParseExact($b.Last,  'yyyyMMdd', $null)
+                if ($bs -gt $winStart) { $winStart = $bs }
+                if ($be -lt $winEnd)   { $winEnd   = $be }
+                $saved = ([int]($EndDate - $StartDate).TotalDays + 1) - ([int]($winEnd - $winStart).TotalDays + 1)
+                if ($saved -gt 0) { Write-Log "$bookId  survey narrows the scan by $saved day(s)" }
+            }
+
+            $scan = Find-Issues -Client $client -BookId $bookId -Start $winStart -End $winEnd `
+                        -MaxPages $MaxPages -Concurrency $Concurrency -DelayMs $DelayMs -Retries $Retries `
+                        -KnownDates $known -TryListing:($null -ne $known -and -not $NoDirectoryListing)
 
             if ($scan.Failed -eq $scan.Probed -and $scan.Probed -gt 0) {
                 $tally.Unreachable++

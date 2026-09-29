@@ -15,10 +15,13 @@ cd <this folder>
 # 1. Confirm the URL patterns work from your machine (~30 seconds)
 .\Get-ZslibNewspapers.ps1 -SelfTest
 
-# 2. Build the catalogue: which titles have which dates (~15-25 minutes, no images)
+# 2. Survey first: where does each title's date range sit, and how are pages named?
+.\Get-ZslibNewspapers.ps1 -OutputRoot D:\zslib -Survey
+
+# 3. Build the catalogue (the survey above narrows or removes the scan)
 .\Get-ZslibNewspapers.ps1 -OutputRoot D:\zslib -DiscoverOnly
 
-# 3. Open D:\zslib\papers.csv, type the newspaper names into the Title column,
+# 4. Open D:\zslib\papers.csv, type the newspaper names into the Title column,
 #    save as UTF-8, then do the real run
 .\Get-ZslibNewspapers.ps1 -OutputRoot D:\zslib
 ```
@@ -96,11 +99,48 @@ Known-good samples, used by `-SelfTest`:
 | `-Retries` | `3` | Retry attempts for timeouts/5xx |
 | `-MaxPages` | `60` | Ceiling on pages per issue |
 | `-Dpi` | `200` | Assumed scan resolution when the JPEG has no density tag |
+| `-Survey` | off | Reconnaissance: find each title's date range and page-name range cheaply |
+| `-Stride` | `5` | Coarse-pass step in days, used only where there is no directory index |
+| `-NoDirectoryListing` | off | Skip the directory-index attempt, always probe |
 | `-DiscoverOnly` | off | Build the catalogue, download nothing |
 | `-RefreshIndex` | off | Ignore `index.csv` and re-probe |
 | `-Force` | off | Rebuild PDFs that already exist |
 | `-RemovePagesAfterPdf` | off | Delete JPEGs once the PDF is written |
 | `-SelfTest` | off | Fetch the two sample pages, report dimensions, build a test PDF |
+
+## Survey first
+
+`-Survey` answers two questions before you commit to a long run: **which dates
+does each title actually cover**, and **what are the page files called**. It
+tries the cheap route first and falls back:
+
+1. **Directory index.** If the server serves one, a title's entire date list
+   arrives in a single request, and each issue's page list in one more. This is
+   the difference between ~50 requests and ~17,000 — check for it first. Where
+   it works, the main run skips date probing altogether and reads page counts
+   straight from the index.
+2. **Coarse pass.** Otherwise the survey probes every `-Stride` days (default 5,
+   chosen so it does not alias with weekly publication the way 7 would) to
+   bracket where the issues sit. The reported range is widened by one stride at
+   each end, so the true first and last dates are inside it.
+
+It writes two files:
+
+| File | Contents |
+|---|---|
+| `survey.csv` | Per title: method, first/last date, dates found, requests spent, page naming, max page |
+| `survey_dates.csv` | Every date found, with the method that found it |
+
+Later runs read both automatically: a title surveyed by index needs no date
+probing at all, and a title surveyed by coarse pass gets its dense scan clipped
+to the bracketed range.
+
+**A title reporting `nothing found` is not proof it is empty** — a coarse pass
+steps over an isolated issue. Re-survey just those with `-Stride 1`:
+
+```powershell
+.\Get-ZslibNewspapers.ps1 -OutputRoot D:\zslib -Survey -Stride 1 -Papers 21211909_014
+```
 
 ## Pacing
 
