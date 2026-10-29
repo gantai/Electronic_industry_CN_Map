@@ -30,6 +30,10 @@ const segColor = (key) => (key === "undated" ? UNDATED_COLOR : TYPE_META[key].co
    像实测点位,超出数据本身的精度,故到此为止。 */
 const MAX_K = 1200;
 const FADE_FROM = 15, FADE_TO = 45;  // 省界底图在城市尺度上淡出
+/* 滚轮放大到省界开始淡出,全国图就换成城市视野 —— 柱子是一省一根的总数,
+   放到一座城里还立着,只剩一根孤零零的数字,底下的厂所反倒一个不见。
+   缩回去要缩到一半才换回全国:两道门槛错开,免得在边上来回跳。 */
+const TO_CITY_K = FADE_FROM, TO_NATION_K = FADE_FROM / 2;
 
 /* ---------- geo: rewind polygons for d3's spherical winding ---------- */
 function rewind(fc) {
@@ -120,6 +124,9 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
   const [view, setView] = useState({ mode: "national", city: "" });
   const [bars, setBars] = useState("stacked");   // stacked | grouped
   const [pickOpen, setPickOpen] = useState(false);
+  /* 最近一次缩放是不是人手滚的、滚在哪儿 —— 程序飞过去的(选城、回全国)
+     不该反过来再切一次视野 */
+  const gesture = useRef(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -136,7 +143,10 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
     const svg = svgRef.current;
     if (!svg) return;
     const s = d3.select(svg);
-    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => setZt(ev.transform));
+    const z = d3.zoom().scaleExtent([1, MAX_K]).on("zoom", (ev) => {
+      gesture.current = ev.sourceEvent ? { at: d3.pointer(ev.sourceEvent, svg) } : null;
+      setZt(ev.transform);
+    });
     zoomRef.current = z;
     s.call(z);
     return () => { s.on(".zoom", null); };
@@ -433,6 +443,39 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyReq, projection]);
 
+  /* 指针底下最近的那家在哪座城,就进哪座城;屏上一家都没有,就不冠城名 */
+  const cityNear = (at) => {
+    const [fx, fy] = at && isFinite(at[0]) && isFinite(at[1]) ? at : [size.w / 2, size.h / 2];
+    let best = "", bd = Infinity;
+    data.units.forEach((u) => {
+      const c = String(u.city || "").trim(), p = basePos[u.id];
+      if (!c || !p) return;
+      const sx = zt.x + zt.k * p[0], sy = zt.y + zt.k * p[1];
+      if (sx < 0 || sx > size.w || sy < 0 || sy > size.h) return;
+      const d = Math.hypot(sx - fx, sy - fy);
+      if (d < bd) { bd = d; best = c; }
+    });
+    return best;
+  };
+
+  /* 人手滚过门槛就换视野:往里滚进城市,往外滚回全国。只认滚的方向 ——
+     选城时程序套到的倍数若本就低于门槛,拖一下地图不该把人踢回全国。 */
+  const lastK = useRef(1);
+  useEffect(() => {
+    const g = gesture.current, prevK = lastK.current;
+    gesture.current = null;
+    lastK.current = zt.k;
+    if (!g || !size.w) return;
+    if (view.mode === "national" && zt.k >= TO_CITY_K && zt.k > prevK) {
+      setView({ mode: "city", city: cityNear(g.at) });
+      setPickOpen(false);
+    } else if (view.mode === "city" && zt.k <= TO_NATION_K && zt.k < prevK) {
+      setView({ mode: "national", city: "" });
+      setPickOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zt]);
+
   const onNodeHover = (ev, id) => {
     const r = wrapRef.current.getBoundingClientRect();
     setHover({ id, x: ev.clientX - r.left, y: ev.clientY - r.top });
@@ -723,14 +766,14 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
       )}
 
       {/* 视野切换 —— 从前是放大 / 缩小 / 回到数据范围三个钮。
-          滚轮与拖动照旧管用,这里管的是「看哪一片」,不是「放多大」。 */}
+          这里管的是「看哪一片」;滚轮滚过门槛时也会自己跟着换(见 TO_CITY_K)。 */}
       <div className="viewpick">
         <div className="seg">
           <button className={"segbtn" + (view.mode === "national" ? " on" : "")}
             onClick={goNational}>{t.viewNational}</button>
           <button className={"segbtn" + (view.mode === "city" ? " on" : "")}
             onClick={() => setPickOpen((v) => !v)} aria-expanded={pickOpen}>
-            {view.mode === "city" ? cityLabel(view.city, lang) : t.viewCity}
+            {view.mode === "city" && view.city ? cityLabel(view.city, lang) : t.viewCity}
             <svg width="8" height="5" viewBox="0 0 8 5" aria-hidden="true"><path d="M0,0 L4,5 L8,0" fill="currentColor" /></svg>
           </button>
         </div>
