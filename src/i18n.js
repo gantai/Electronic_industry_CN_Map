@@ -139,6 +139,7 @@ const zh = {
   barTip: (p, live, und, tot, y) =>
     `${p} · ${y} 年在册 ${live}` + (und ? ` · 无始建年 ${und}` : "") + ` · 共 ${tot}`,
   barsUnplaced: (n) => `另有 ${n} 家没有城市可归,柱子上没有它们`,
+  cityNote: "图上的点只标出厂所所在的区,不是它的确切位置",
   districtSuffix: (d) => d + "区",
   clusterTitle: (label, n) => label + " · 当前存续 " + n + " 个单位,点击放大",
   locVague: " · 坐标待定位",
@@ -303,6 +304,7 @@ const en = {
   barTip: (p, live, und, tot, y) =>
     `${p} · ${live} on record in ${y}` + (und ? ` · ${und} undated` : "") + ` · ${tot} total`,
   barsUnplaced: (n) => `${n} more have no city on record and appear on no bar`,
+  cityNote: "Each dot marks the district a factory or institute is in, not its exact location",
   districtSuffix: (d) => d + " District",
   clusterTitle: (label, n) => label + " · " + n + " active here, click to zoom in",
   locVague: " · location approximate",

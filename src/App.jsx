@@ -788,6 +788,8 @@ function MapView({ data, byId, year, sel, setSel, flyReq, shown, precShown, show
             {!cityList.length && <div className="cityrow dimrow">{t.noCities}</div>}
           </div>
         )}
+        {/* 城市尺度上的点只到区一级 —— 别让人拿它当门牌去找 */}
+        {view.mode === "city" && <div className="citynote mono">{t.cityNote}</div>}
       </div>
 
       {/* 国家尺度上柱子怎么排 */}
@@ -2024,6 +2026,9 @@ button{font-family:inherit;color:inherit;background:none;border:none;cursor:poin
 .sw-sq{border-radius:2px}
 .barnote{font-size:9.5px;color:var(--dim);text-align:right;line-height:1.5;
   background:rgba(10,24,43,.8);border-radius:3px;padding:4px 7px}
+/* 挂在视野开关底下 —— 右上角开屏时被使用说明盖着 */
+.citynote{max-width:250px;font-size:10.5px;color:var(--paper2);line-height:1.5;
+  background:rgba(10,24,43,.85);border:1px solid var(--line);border-radius:3px;padding:5px 9px}
 .provbar{cursor:default}
 .barval{fill:var(--paper);font-weight:600}
 .icobtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
